@@ -23,6 +23,7 @@ import os
 import sys
 import threading
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -232,6 +233,7 @@ def feature_mark_passing(
 
         feature.passes = True
         feature.in_progress = False
+        feature.completed_at = datetime.now()
         session.commit()
         session.refresh(feature)
 

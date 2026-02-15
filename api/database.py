@@ -8,9 +8,10 @@ SQLite database schema for feature storage using SQLAlchemy.
 from pathlib import Path
 from typing import Optional
 
-from sqlalchemy import Boolean, Column, Integer, String, Text, create_engine
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.sql import func
 from sqlalchemy.types import JSON
 
 Base = declarative_base()
@@ -29,6 +30,9 @@ class Feature(Base):
     steps = Column(JSON, nullable=False)  # Stored as JSON array
     passes = Column(Boolean, nullable=False, default=False, index=True)
     in_progress = Column(Boolean, nullable=False, default=False, index=True)
+    created_at = Column(DateTime, default=func.now())
+    modified_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    completed_at = Column(DateTime, nullable=True)
 
     def to_dict(self) -> dict:
         """Convert feature to dictionary for JSON serialization."""
@@ -42,6 +46,9 @@ class Feature(Base):
             # Handle legacy NULL values gracefully - treat as False
             "passes": self.passes if self.passes is not None else False,
             "in_progress": self.in_progress if self.in_progress is not None else False,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "modified_at": self.modified_at.isoformat() if self.modified_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
         }
 
 
@@ -86,6 +93,38 @@ def _migrate_fix_null_boolean_fields(engine) -> None:
         conn.commit()
 
 
+def _migrate_add_timestamp_columns(engine) -> None:
+    """Add timestamp columns to existing databases that don't have them."""
+    from datetime import datetime
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        # Check if columns exist
+        result = conn.execute(text("PRAGMA table_info(features)"))
+        columns = [row[1] for row in result.fetchall()]
+
+        if "created_at" not in columns:
+            # Add created_at (nullable first, then update existing rows)
+            conn.execute(text("ALTER TABLE features ADD COLUMN created_at DATETIME"))
+            # Set current timestamp for existing rows
+            current_time = datetime.now().isoformat()
+            conn.execute(text(f"UPDATE features SET created_at = '{current_time}' WHERE created_at IS NULL"))
+            conn.commit()
+
+        if "modified_at" not in columns:
+            # Add modified_at (nullable first, then update existing rows)
+            conn.execute(text("ALTER TABLE features ADD COLUMN modified_at DATETIME"))
+            # Set current timestamp for existing rows
+            current_time = datetime.now().isoformat()
+            conn.execute(text(f"UPDATE features SET modified_at = '{current_time}' WHERE modified_at IS NULL"))
+            conn.commit()
+
+        if "completed_at" not in columns:
+            # Add completed_at (nullable)
+            conn.execute(text("ALTER TABLE features ADD COLUMN completed_at DATETIME"))
+            conn.commit()
+
+
 def create_database(project_dir: Path) -> tuple:
     """
     Create database and return engine + session maker.
@@ -103,6 +142,7 @@ def create_database(project_dir: Path) -> tuple:
     # Migrate existing databases
     _migrate_add_in_progress_column(engine)
     _migrate_fix_null_boolean_fields(engine)
+    _migrate_add_timestamp_columns(engine)
 
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     return engine, SessionLocal
@@ -132,3 +172,4 @@ def get_db() -> Session:
         yield db
     finally:
         db.close()
+ 

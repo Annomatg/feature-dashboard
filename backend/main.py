@@ -47,6 +47,8 @@ def get_session():
 # Response models
 class FeatureResponse(BaseModel):
     """Feature data response."""
+    model_config = {"from_attributes": True}
+
     id: int
     priority: int
     category: str
@@ -55,6 +57,9 @@ class FeatureResponse(BaseModel):
     steps: list[str]
     passes: bool
     in_progress: bool
+    created_at: Optional[str] = None
+    modified_at: Optional[str] = None
+    completed_at: Optional[str] = None
 
 
 class StatsResponse(BaseModel):
@@ -79,7 +84,7 @@ async def root():
     }
 
 
-@app.get("/api/features", response_model=list[FeatureResponse])
+@app.get("/api/features", response_model=list[FeatureResponse], response_model_exclude_none=False)
 async def get_features(
     passes: Optional[bool] = None,
     in_progress: Optional[bool] = None,
@@ -132,7 +137,22 @@ async def get_stats():
         session.close()
 
 
-@app.get("/api/features/{feature_id}", response_model=FeatureResponse)
+@app.get("/api/debug/features/{feature_id}")
+async def get_feature_raw(feature_id: int):
+    """Get raw feature dict for debugging."""
+    session = get_session()
+    try:
+        feature = session.query(Feature).filter(Feature.id == feature_id).first()
+
+        if feature is None:
+            raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
+
+        return feature.to_dict()
+    finally:
+        session.close()
+
+
+@app.get("/api/features/{feature_id}", response_model=FeatureResponse, response_model_exclude_none=False)
 async def get_feature(feature_id: int):
     """Get a single feature by ID."""
     session = get_session()
@@ -150,3 +170,9 @@ async def get_feature(feature_id: int):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+ 
+
+
+ 
+
