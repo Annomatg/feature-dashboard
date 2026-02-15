@@ -20,7 +20,7 @@ def test_root():
     assert "databases" in data["endpoints"]
     assert "databases_active" in data["endpoints"]
     assert "databases_select" in data["endpoints"]
-    print("✓ Root endpoint includes database endpoints\n")
+    print("[PASS] Root endpoint includes database endpoints\n")
 
 
 def test_get_databases():
@@ -35,7 +35,7 @@ def test_get_databases():
     assert isinstance(data, list)
     assert len(data) > 0
     assert any(db["path"] == "features.db" for db in data)
-    print("✓ Databases list retrieved successfully\n")
+    print("[PASS] Databases list retrieved successfully\n")
 
 
 def test_get_active_database():
@@ -50,7 +50,7 @@ def test_get_active_database():
     assert "path" in data
     assert "is_active" in data
     assert data["is_active"] == True
-    print("✓ Active database retrieved successfully\n")
+    print("[PASS] Active database retrieved successfully\n")
 
 
 def test_select_database():
@@ -67,7 +67,7 @@ def test_select_database():
     # Should succeed
     assert response.status_code == 200
     assert "message" in data
-    print("✓ Database selection works\n")
+    print("[PASS] Database selection works\n")
 
     # Try to select non-existent database
     print("Testing invalid database path...")
@@ -77,7 +77,7 @@ def test_select_database():
 
     # Should fail with 404
     assert response.status_code == 404
-    print("✓ Invalid path correctly rejected\n")
+    print("[PASS] Invalid path correctly rejected\n")
 
 
 def test_features_still_work():
@@ -98,7 +98,7 @@ def test_features_still_work():
     print(f"  Retrieved {len(features)} features")
     assert response.status_code == 200
 
-    print("✓ Existing features endpoints still work\n")
+    print("[PASS] Existing features endpoints still work\n")
 
 
 if __name__ == "__main__":
@@ -115,13 +115,13 @@ if __name__ == "__main__":
         test_features_still_work()
 
         print("=" * 60)
-        print("✓ ALL TESTS PASSED!")
+        print("[SUCCESS] ALL TESTS PASSED!")
         print("=" * 60)
     except requests.exceptions.ConnectionError:
-        print("\n❌ ERROR: Cannot connect to backend server")
+        print("\n[ERROR] Cannot connect to backend server")
         print("Make sure DevServer is running:")
         print("  dotnet run --project DevServer")
     except AssertionError as e:
-        print(f"\n❌ TEST FAILED: {e}")
+        print(f"\n[FAIL] TEST FAILED: {e}")
     except Exception as e:
-        print(f"\n❌ UNEXPECTED ERROR: {e}")
+        print(f"\n[ERROR] UNEXPECTED ERROR: {e}")
