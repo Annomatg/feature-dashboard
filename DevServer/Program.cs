@@ -14,9 +14,29 @@ class Program
     private static readonly object _lock = new();
     private static DateTime _lastRestart = DateTime.MinValue;
     private static readonly TimeSpan DebounceTime = TimeSpan.FromSeconds(1);
+    private static Mutex? _instanceMutex;
 
     static async Task Main(string[] args)
     {
+        // Prevent multiple instances using a named mutex
+        const string mutexName = "FeatureDashboardDevServer_SingleInstance";
+        _instanceMutex = new Mutex(true, mutexName, out bool createdNew);
+
+        if (!createdNew)
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine("=== Feature Dashboard Dev Server ===");
+            Console.WriteLine();
+            Console.WriteLine("ERROR: DevServer is already running!");
+            Console.WriteLine("Only one instance of DevServer can run at a time.");
+            Console.WriteLine();
+            Console.WriteLine("If you believe this is an error, close all DevServer windows");
+            Console.WriteLine("and try again. Press any key to exit...");
+            Console.ResetColor();
+            Console.ReadKey();
+            return;
+        }
+
         Console.WriteLine("=== Feature Dashboard Dev Server ===");
         Console.WriteLine($"Project:  {ProjectDir}");
         Console.WriteLine($"Backend:  {BackendDir}");
@@ -65,6 +85,8 @@ class Program
             StopServer();
             foreach (var watcher in watchers)
                 watcher.Dispose();
+            _instanceMutex?.ReleaseMutex();
+            _instanceMutex?.Dispose();
             Environment.Exit(0);
         };
 

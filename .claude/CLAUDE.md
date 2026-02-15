@@ -22,7 +22,7 @@
 ### Development Tools
 - **DevServer** (C# .NET 8.0) - Auto-restart backend on file changes
 - **MCP Server** for feature management via Claude tools
-- **Playwright** for E2E testing
+- **Playwright** for E2E testing (Chromium only - other browsers not supported)
 - **ESLint** for code quality
 
 ## Project Structure
@@ -78,11 +78,15 @@ dotnet run --project DevServer
 # Frontend development server (port 5173)
 cd frontend && npm run dev
 
-# Run E2E tests
+# Run E2E tests (Chromium only)
 cd frontend && npm test
 ```
 
 **DO NOT manually start uvicorn** - DevServer manages the backend process automatically.
+
+### Testing
+
+**Browser Support**: Chromium only. We do not test on Firefox, Safari, or WebKit as the user exclusively uses Chromium-based browsers.
 
 ### Database
 ```bash

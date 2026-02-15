@@ -19,7 +19,8 @@ export default {
         'text-secondary': '#a3a3a3',
       },
       fontFamily: {
-        mono: ['JetBrains Mono', 'Consolas', 'monospace'],
+        mono: ['IBM Plex Mono', 'JetBrains Mono', 'Consolas', 'monospace'],
+        sans: ['Inter', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Arial', 'sans-serif'],
       },
     },
   },
