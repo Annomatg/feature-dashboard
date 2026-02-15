@@ -137,6 +137,39 @@ class SelectDatabaseRequest(BaseModel):
     path: str
 
 
+# Request models for CRUD operations
+class CreateFeatureRequest(BaseModel):
+    """Request to create a new feature."""
+    category: str
+    name: str
+    description: str
+    steps: list[str]
+
+
+class UpdateFeatureRequest(BaseModel):
+    """Request to update feature fields."""
+    category: Optional[str] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    steps: Optional[list[str]] = None
+
+
+class UpdateFeatureStateRequest(BaseModel):
+    """Request to change feature state (passes/in_progress)."""
+    passes: Optional[bool] = None
+    in_progress: Optional[bool] = None
+
+
+class UpdateFeaturePriorityRequest(BaseModel):
+    """Request to set a specific priority value."""
+    priority: int
+
+
+class MoveFeatureRequest(BaseModel):
+    """Request to move feature up or down within its lane."""
+    direction: str  # "up" or "down"
+
+
 @app.get("/")
 async def root():
     """Root endpoint."""
@@ -144,12 +177,18 @@ async def root():
         "message": "Feature Dashboard API",
         "version": "1.0.0",
         "endpoints": {
-            "features": "/api/features",
-            "stats": "/api/features/stats",
-            "feature_by_id": "/api/features/{id}",
-            "databases": "/api/databases",
-            "databases_active": "/api/databases/active",
-            "databases_select": "/api/databases/select"
+            "get_features": "GET /api/features",
+            "create_feature": "POST /api/features",
+            "get_feature": "GET /api/features/{id}",
+            "update_feature": "PUT /api/features/{id}",
+            "delete_feature": "DELETE /api/features/{id}",
+            "update_state": "PATCH /api/features/{id}/state",
+            "update_priority": "PATCH /api/features/{id}/priority",
+            "move_feature": "PATCH /api/features/{id}/move",
+            "stats": "GET /api/features/stats",
+            "databases": "GET /api/databases",
+            "databases_active": "GET /api/databases/active",
+            "databases_select": "POST /api/databases/select"
         }
     }
 
@@ -309,6 +348,236 @@ async def get_feature(feature_id: int):
             raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
 
         return FeatureResponse(**feature.to_dict())
+    finally:
+        session.close()
+
+
+@app.post("/api/features", response_model=FeatureResponse, status_code=201)
+async def create_feature(request: CreateFeatureRequest):
+    """
+    Create a new feature.
+
+    Automatically assigns priority as max(existing_priorities) + 1.
+    Sets passes=False and in_progress=False by default.
+    """
+    session = get_session()
+    try:
+        # Get the maximum priority and add 1
+        max_priority = session.query(Feature.priority).order_by(Feature.priority.desc()).first()
+        next_priority = (max_priority[0] + 1) if max_priority else 1
+
+        # Create new feature
+        new_feature = Feature(
+            priority=next_priority,
+            category=request.category,
+            name=request.name,
+            description=request.description,
+            steps=request.steps,
+            passes=False,
+            in_progress=False
+        )
+
+        session.add(new_feature)
+        session.commit()
+        session.refresh(new_feature)
+
+        return FeatureResponse(**new_feature.to_dict())
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to create feature: {str(e)}")
+    finally:
+        session.close()
+
+
+@app.put("/api/features/{feature_id}", response_model=FeatureResponse)
+async def update_feature(feature_id: int, request: UpdateFeatureRequest):
+    """
+    Update feature fields.
+
+    Only updates fields that are provided in the request.
+    Automatically updates modified_at timestamp.
+    """
+    session = get_session()
+    try:
+        feature = session.query(Feature).filter(Feature.id == feature_id).first()
+
+        if feature is None:
+            raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
+
+        # Update only provided fields
+        if request.category is not None:
+            feature.category = request.category
+        if request.name is not None:
+            feature.name = request.name
+        if request.description is not None:
+            feature.description = request.description
+        if request.steps is not None:
+            feature.steps = request.steps
+
+        session.commit()
+        session.refresh(feature)
+
+        return FeatureResponse(**feature.to_dict())
+    except HTTPException:
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update feature: {str(e)}")
+    finally:
+        session.close()
+
+
+@app.delete("/api/features/{feature_id}", status_code=204)
+async def delete_feature(feature_id: int):
+    """
+    Delete a feature permanently.
+
+    Returns 204 No Content on success.
+    """
+    session = get_session()
+    try:
+        feature = session.query(Feature).filter(Feature.id == feature_id).first()
+
+        if feature is None:
+            raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
+
+        session.delete(feature)
+        session.commit()
+
+        return None
+    except HTTPException:
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete feature: {str(e)}")
+    finally:
+        session.close()
+
+
+@app.patch("/api/features/{feature_id}/state", response_model=FeatureResponse)
+async def update_feature_state(feature_id: int, request: UpdateFeatureStateRequest):
+    """
+    Update feature state (passes/in_progress).
+
+    This is used to move features between lanes (TODO, In Progress, Done).
+    When setting passes=True, sets completed_at timestamp.
+    When setting passes=False, clears completed_at timestamp.
+    """
+    from datetime import datetime
+
+    session = get_session()
+    try:
+        feature = session.query(Feature).filter(Feature.id == feature_id).first()
+
+        if feature is None:
+            raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
+
+        # Update state fields
+        if request.passes is not None:
+            feature.passes = request.passes
+            # Set/clear completed_at based on passes status
+            if request.passes:
+                feature.completed_at = datetime.now()
+            else:
+                feature.completed_at = None
+
+        if request.in_progress is not None:
+            feature.in_progress = request.in_progress
+
+        session.commit()
+        session.refresh(feature)
+
+        return FeatureResponse(**feature.to_dict())
+    except HTTPException:
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update feature state: {str(e)}")
+    finally:
+        session.close()
+
+
+@app.patch("/api/features/{feature_id}/priority", response_model=FeatureResponse)
+async def update_feature_priority(feature_id: int, request: UpdateFeaturePriorityRequest):
+    """
+    Update feature priority to a specific value.
+
+    This is used for direct reordering by dragging features to specific positions.
+    """
+    session = get_session()
+    try:
+        feature = session.query(Feature).filter(Feature.id == feature_id).first()
+
+        if feature is None:
+            raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
+
+        if request.priority < 1:
+            raise HTTPException(status_code=400, detail="Priority must be >= 1")
+
+        feature.priority = request.priority
+
+        session.commit()
+        session.refresh(feature)
+
+        return FeatureResponse(**feature.to_dict())
+    except HTTPException:
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update feature priority: {str(e)}")
+    finally:
+        session.close()
+
+
+@app.patch("/api/features/{feature_id}/move", response_model=FeatureResponse)
+async def move_feature(feature_id: int, request: MoveFeatureRequest):
+    """
+    Move a feature up or down within its current lane.
+
+    Swaps priorities with the adjacent feature in the specified direction.
+    Direction must be "up" or "down".
+    """
+    if request.direction not in ["up", "down"]:
+        raise HTTPException(status_code=400, detail="Direction must be 'up' or 'down'")
+
+    session = get_session()
+    try:
+        feature = session.query(Feature).filter(Feature.id == feature_id).first()
+
+        if feature is None:
+            raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
+
+        # Find adjacent feature in the same lane (same passes/in_progress state)
+        if request.direction == "up":
+            # Find feature with next lower priority (smaller number = higher priority)
+            adjacent = session.query(Feature).filter(
+                Feature.passes == feature.passes,
+                Feature.in_progress == feature.in_progress,
+                Feature.priority < feature.priority
+            ).order_by(Feature.priority.desc()).first()
+        else:  # down
+            # Find feature with next higher priority (larger number = lower priority)
+            adjacent = session.query(Feature).filter(
+                Feature.passes == feature.passes,
+                Feature.in_progress == feature.in_progress,
+                Feature.priority > feature.priority
+            ).order_by(Feature.priority.asc()).first()
+
+        if adjacent is None:
+            raise HTTPException(status_code=400, detail=f"Cannot move feature {request.direction}: already at the edge")
+
+        # Swap priorities
+        feature.priority, adjacent.priority = adjacent.priority, feature.priority
+
+        session.commit()
+        session.refresh(feature)
+
+        return FeatureResponse(**feature.to_dict())
+    except HTTPException:
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to move feature: {str(e)}")
     finally:
         session.close()
 
