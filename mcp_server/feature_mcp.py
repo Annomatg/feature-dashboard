@@ -234,6 +234,7 @@ def feature_mark_passing(
         feature.passes = True
         feature.in_progress = False
         feature.completed_at = datetime.now()
+        feature.modified_at = datetime.now()
         session.commit()
         session.refresh(feature)
 
@@ -283,6 +284,7 @@ def feature_skip(
 
             feature.priority = new_priority
             feature.in_progress = False
+            feature.modified_at = datetime.now()
             session.commit()
 
         session.refresh(feature)
@@ -327,6 +329,7 @@ def feature_mark_in_progress(
             return json.dumps({"error": f"Feature with ID {feature_id} is already in-progress"})
 
         feature.in_progress = True
+        feature.modified_at = datetime.now()
         session.commit()
         session.refresh(feature)
 
@@ -358,6 +361,7 @@ def feature_clear_in_progress(
             return json.dumps({"error": f"Feature with ID {feature_id} not found"})
 
         feature.in_progress = False
+        feature.modified_at = datetime.now()
         session.commit()
         session.refresh(feature)
 
