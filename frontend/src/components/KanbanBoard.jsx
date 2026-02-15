@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import KanbanLane from './KanbanLane'
 
@@ -28,6 +29,8 @@ async function fetchFeatures() {
 }
 
 function KanbanBoard() {
+  const [selectedFeatureId, setSelectedFeatureId] = useState(null)
+
   const { data: features = [], isLoading, error } = useQuery({
     queryKey: ['features'],
     queryFn: fetchFeatures,
@@ -67,6 +70,12 @@ function KanbanBoard() {
     console.log(`Add feature to ${lane}`)
   }
 
+  const handleCardClick = (feature) => {
+    setSelectedFeatureId(feature.id)
+    // TODO: Open detail panel
+    console.log('Selected feature:', feature)
+  }
+
   return (
     <div className="min-h-screen bg-background p-6">
       <div className="max-w-[1800px] mx-auto">
@@ -93,6 +102,8 @@ function KanbanBoard() {
             features={todoFeatures}
             accentColor={LANE_CONFIG.todo.accentColor}
             onAddClick={() => handleAddFeature('todo')}
+            selectedFeatureId={selectedFeatureId}
+            onCardClick={handleCardClick}
           />
 
           <KanbanLane
@@ -101,6 +112,8 @@ function KanbanBoard() {
             features={inProgressFeatures}
             accentColor={LANE_CONFIG.inProgress.accentColor}
             onAddClick={() => handleAddFeature('inProgress')}
+            selectedFeatureId={selectedFeatureId}
+            onCardClick={handleCardClick}
           />
 
           <KanbanLane
@@ -109,6 +122,8 @@ function KanbanBoard() {
             features={doneFeatures}
             accentColor={LANE_CONFIG.done.accentColor}
             onAddClick={() => handleAddFeature('done')}
+            selectedFeatureId={selectedFeatureId}
+            onCardClick={handleCardClick}
           />
         </div>
       </div>

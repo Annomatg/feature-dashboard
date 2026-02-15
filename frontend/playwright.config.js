@@ -42,10 +42,20 @@ export default defineConfig({
     },
   ],
 
-  // Run dev server before starting the tests
-  webServer: {
-    command: 'npm run dev',
-    url: 'http://localhost:5174',
-    reuseExistingServer: !process.env.CI,
-  },
+  // Run dev server and backend before starting the tests
+  webServer: [
+    {
+      command: 'npm run dev',
+      url: 'http://localhost:5174',
+      reuseExistingServer: !process.env.CI,
+      timeout: 120000,
+    },
+    {
+      // Run backend with test database
+      command: 'node tests/start-test-backend.js',
+      url: 'http://localhost:8000/api/features',
+      reuseExistingServer: !process.env.CI,
+      timeout: 120000,
+    }
+  ],
 });

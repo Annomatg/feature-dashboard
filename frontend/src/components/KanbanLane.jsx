@@ -1,6 +1,7 @@
 import { Plus } from 'lucide-react'
+import KanbanCard from './KanbanCard'
 
-function KanbanLane({ title, count, features, accentColor, onAddClick }) {
+function KanbanLane({ title, count, features, accentColor, onAddClick, selectedFeatureId, onCardClick }) {
   return (
     <div className="flex flex-col h-full min-w-0 animate-slide-in">
       {/* Lane Header */}
@@ -61,64 +62,17 @@ function KanbanLane({ title, count, features, accentColor, onAddClick }) {
           </div>
         ) : (
           features.map((feature, index) => (
-            <FeatureCard
+            <KanbanCard
               key={feature.id}
               feature={feature}
               accentColor={accentColor}
               index={index}
+              isSelected={selectedFeatureId === feature.id}
+              onClick={onCardClick}
             />
           ))
         )}
       </div>
-    </div>
-  )
-}
-
-function FeatureCard({ feature, accentColor, index }) {
-  return (
-    <div
-      className="bg-surface border border-surface-light rounded-lg p-4 hover:border-opacity-60 transition-all duration-200 cursor-pointer group"
-      style={{
-        borderLeftWidth: '3px',
-        borderLeftColor: accentColor,
-        animationDelay: `${index * 50}ms`
-      }}
-    >
-      {/* Priority & Category */}
-      <div className="flex items-center justify-between mb-2">
-        <span className="font-mono text-xs text-text-secondary">
-          #{feature.priority.toString().padStart(3, '0')}
-        </span>
-        <span
-          className="px-2 py-0.5 rounded text-xs font-mono"
-          style={{
-            backgroundColor: `${accentColor}10`,
-            color: accentColor
-          }}
-        >
-          {feature.category}
-        </span>
-      </div>
-
-      {/* Feature Name */}
-      <h3 className="text-text-primary font-semibold mb-2 line-clamp-2 group-hover:text-white transition-colors">
-        {feature.name}
-      </h3>
-
-      {/* Description */}
-      <p className="text-text-secondary text-sm line-clamp-2 mb-3">
-        {feature.description}
-      </p>
-
-      {/* Steps count */}
-      {feature.steps && feature.steps.length > 0 && (
-        <div className="flex items-center gap-2">
-          <div className="flex-1 h-px bg-surface-light" />
-          <span className="text-xs font-mono text-text-secondary">
-            {feature.steps.length} {feature.steps.length === 1 ? 'step' : 'steps'}
-          </span>
-        </div>
-      )}
     </div>
   )
 }

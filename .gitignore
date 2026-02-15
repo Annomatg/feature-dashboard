@@ -39,6 +39,7 @@ Thumbs.db
 
 # DB
 *.db-journal
+features.test.db
 
 # E2E Tests
 playwright-report/
