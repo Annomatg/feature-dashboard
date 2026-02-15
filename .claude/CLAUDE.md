@@ -20,6 +20,7 @@
 - **Uvicorn** as ASGI server
 
 ### Development Tools
+- **DevServer** (C# .NET 8.0) - Auto-restart backend on file changes
 - **MCP Server** for feature management via Claude tools
 - **Playwright** for E2E testing
 - **ESLint** for code quality
@@ -43,7 +44,11 @@ feature-dashboard/
 │   └── migration.py      # JSON to SQLite migration
 ├── mcp_server/           # MCP feature management server
 │   └── feature_mcp.py
+├── DevServer/            # C# auto-reload server for backend
+│   ├── Program.cs        # DevServer implementation
+│   └── DevServer.csproj
 ├── .mcp.json             # MCP server configuration
+├── dashboards.json       # Multi-database configuration
 ├── features.db           # SQLite database (created on first run)
 └── .claude/              # Claude configuration
 ```
@@ -62,16 +67,22 @@ Features are stored in `features.db` and managed via MCP tools:
 ## Key Commands
 
 ### Development
+
+**CRITICAL: Always use DevServer for backend development**
+
 ```bash
+# Start DevServer (REQUIRED for backend development/testing)
+# Watches backend/, api/, mcp_server/ and auto-restarts on changes
+dotnet run --project DevServer
+
 # Frontend development server (port 5173)
 cd frontend && npm run dev
-
-# Backend API server (port 8000)
-venv\Scripts\uvicorn backend.main:app --reload
 
 # Run E2E tests
 cd frontend && npm test
 ```
+
+**DO NOT manually start uvicorn** - DevServer manages the backend process automatically.
 
 ### Database
 ```bash
@@ -81,6 +92,7 @@ venv\Scripts\python -m mcp_server.feature_mcp
 
 ## API Endpoints
 
+### Features
 - `GET /api/features` - List all features (with optional filters)
 - `GET /api/features/stats` - Get statistics
 - `GET /api/features/{id}` - Get single feature
@@ -89,6 +101,11 @@ Query parameters for `/api/features`:
 - `passes=true/false` - Filter by passing status
 - `in_progress=true/false` - Filter by in-progress status
 - `category=<name>` - Filter by category
+
+### Databases (Multi-Database Support)
+- `GET /api/databases` - List configured databases from dashboards.json
+- `GET /api/databases/active` - Get currently active database
+- `POST /api/databases/select` - Switch to a different database (body: `{"path": "features.db"}`)
 
 ## Design Guidelines
 
