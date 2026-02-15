@@ -1,7 +1,20 @@
 import { Plus } from 'lucide-react'
 import KanbanCard from './KanbanCard'
+import NewFeatureCard from './NewFeatureCard'
 
-function KanbanLane({ title, count, features, accentColor, onAddClick, selectedFeatureId, onCardClick }) {
+function KanbanLane({
+  title,
+  count,
+  features,
+  accentColor,
+  onAddClick,
+  selectedFeatureId,
+  onCardClick,
+  isAddingFeature,
+  onSaveFeature,
+  onCancelAdd,
+  lane
+}) {
   return (
     <div className="flex flex-col h-full min-w-0 animate-slide-in">
       {/* Lane Header */}
@@ -53,7 +66,18 @@ function KanbanLane({ title, count, features, accentColor, onAddClick, selectedF
 
       {/* Scrollable Feature List */}
       <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-2">
-        {features.length === 0 ? (
+        {/* New Feature Card */}
+        {isAddingFeature && (
+          <NewFeatureCard
+            lane={lane}
+            onSave={onSaveFeature}
+            onCancel={onCancelAdd}
+            accentColor={accentColor}
+          />
+        )}
+
+        {/* Existing Features */}
+        {features.length === 0 && !isAddingFeature ? (
           <div className="text-center py-12 px-4">
             <div className="text-4xl mb-3 opacity-20">○</div>
             <p className="text-text-secondary text-sm font-mono">

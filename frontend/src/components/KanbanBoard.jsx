@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import KanbanLane from './KanbanLane'
+import Toast from './Toast'
 
 const LANE_CONFIG = {
   todo: {
@@ -28,13 +29,68 @@ async function fetchFeatures() {
   return response.json()
 }
 
+async function createFeature(featureData) {
+  const response = await fetch('/api/features', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(featureData)
+  })
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.detail || 'Failed to create feature')
+  }
+  return response.json()
+}
+
+async function updateFeatureState(featureId, stateData) {
+  const response = await fetch(`/api/features/${featureId}/state`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(stateData)
+  })
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.detail || 'Failed to update feature state')
+  }
+  return response.json()
+}
+
+async function updateFeaturePriority(featureId, priority) {
+  const response = await fetch(`/api/features/${featureId}/priority`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ priority })
+  })
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.detail || 'Failed to update feature priority')
+  }
+  return response.json()
+}
+
 function KanbanBoard() {
   const [selectedFeatureId, setSelectedFeatureId] = useState(null)
+  const [addingToLane, setAddingToLane] = useState(null)
+  const [toast, setToast] = useState(null)
+
+  const queryClient = useQueryClient()
 
   const { data: features = [], isLoading, error } = useQuery({
     queryKey: ['features'],
     queryFn: fetchFeatures,
     refetchInterval: 5000, // Refetch every 5 seconds for real-time updates
+  })
+
+  const createFeatureMutation = useMutation({
+    mutationFn: createFeature,
+    onSuccess: () => {
+      queryClient.invalidateQueries(['features'])
+      setAddingToLane(null)
+      setToast({ type: 'success', message: 'Feature created successfully' })
+    },
+    onError: (error) => {
+      setToast({ type: 'error', message: error.message })
+    }
   })
 
   if (isLoading) {
@@ -66,8 +122,43 @@ function KanbanBoard() {
   const doneFeatures = features.filter(LANE_CONFIG.done.filter)
 
   const handleAddFeature = (lane) => {
-    // TODO: Implement add feature modal
-    console.log(`Add feature to ${lane}`)
+    setAddingToLane(lane)
+  }
+
+  const handleSaveFeature = async (featureData) => {
+    const { lane, addToTop, ...apiData } = featureData
+
+    try {
+      // Create the feature first (will get max priority + 1)
+      const newFeature = await createFeatureMutation.mutateAsync(apiData)
+
+      // If addToTop is true, move the feature to priority 1
+      if (addToTop) {
+        await updateFeaturePriority(newFeature.id, 1)
+      }
+
+      // Set the appropriate lane state
+      const stateUpdate = {}
+      if (lane === 'inProgress') {
+        stateUpdate.in_progress = true
+      } else if (lane === 'done') {
+        stateUpdate.passes = true
+      }
+
+      if (Object.keys(stateUpdate).length > 0) {
+        await updateFeatureState(newFeature.id, stateUpdate)
+      }
+
+      // Refresh the feature list
+      queryClient.invalidateQueries(['features'])
+    } catch (error) {
+      console.error('Error creating feature:', error)
+      throw error
+    }
+  }
+
+  const handleCancelAdd = () => {
+    setAddingToLane(null)
   }
 
   const handleCardClick = (feature) => {
@@ -104,6 +195,10 @@ function KanbanBoard() {
             onAddClick={() => handleAddFeature('todo')}
             selectedFeatureId={selectedFeatureId}
             onCardClick={handleCardClick}
+            isAddingFeature={addingToLane === 'todo'}
+            onSaveFeature={handleSaveFeature}
+            onCancelAdd={handleCancelAdd}
+            lane="todo"
           />
 
           <KanbanLane
@@ -114,6 +209,10 @@ function KanbanBoard() {
             onAddClick={() => handleAddFeature('inProgress')}
             selectedFeatureId={selectedFeatureId}
             onCardClick={handleCardClick}
+            isAddingFeature={addingToLane === 'inProgress'}
+            onSaveFeature={handleSaveFeature}
+            onCancelAdd={handleCancelAdd}
+            lane="inProgress"
           />
 
           <KanbanLane
@@ -124,8 +223,21 @@ function KanbanBoard() {
             onAddClick={() => handleAddFeature('done')}
             selectedFeatureId={selectedFeatureId}
             onCardClick={handleCardClick}
+            isAddingFeature={addingToLane === 'done'}
+            onSaveFeature={handleSaveFeature}
+            onCancelAdd={handleCancelAdd}
+            lane="done"
           />
         </div>
+
+        {/* Toast notifications */}
+        {toast && (
+          <Toast
+            type={toast.type}
+            message={toast.message}
+            onClose={() => setToast(null)}
+          />
+        )}
       </div>
     </div>
   )
