@@ -47,9 +47,7 @@ if TEST_DB_PATH:
     # Use test database for E2E tests
     test_db_path = Path(TEST_DB_PATH)
     _current_db_path = test_db_path
-    # Create a temporary project dir for the test database
-    test_project_dir = test_db_path.parent
-    _engine, _session_maker = create_database(test_project_dir)
+    _engine, _session_maker = create_database(test_db_path.parent, db_filename=test_db_path.name)
 else:
     # Use production database
     _current_db_path = PROJECT_DIR / "features.db"

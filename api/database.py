@@ -52,17 +52,17 @@ class Feature(Base):
         }
 
 
-def get_database_path(project_dir: Path) -> Path:
+def get_database_path(project_dir: Path, db_filename: str = "features.db") -> Path:
     """Return the path to the SQLite database for a project."""
-    return project_dir / "features.db"
+    return project_dir / db_filename
 
 
-def get_database_url(project_dir: Path) -> str:
+def get_database_url(project_dir: Path, db_filename: str = "features.db") -> str:
     """Return the SQLAlchemy database URL for a project.
 
     Uses POSIX-style paths (forward slashes) for cross-platform compatibility.
     """
-    db_path = get_database_path(project_dir)
+    db_path = get_database_path(project_dir, db_filename)
     return f"sqlite:///{db_path.as_posix()}"
 
 
@@ -125,17 +125,18 @@ def _migrate_add_timestamp_columns(engine) -> None:
             conn.commit()
 
 
-def create_database(project_dir: Path) -> tuple:
+def create_database(project_dir: Path, db_filename: str = "features.db") -> tuple:
     """
     Create database and return engine + session maker.
 
     Args:
         project_dir: Directory containing the project
+        db_filename: Database filename (default: "features.db")
 
     Returns:
         Tuple of (engine, SessionLocal)
     """
-    db_url = get_database_url(project_dir)
+    db_url = get_database_url(project_dir, db_filename)
     engine = create_engine(db_url, connect_args={"check_same_thread": False})
     Base.metadata.create_all(bind=engine)
 
