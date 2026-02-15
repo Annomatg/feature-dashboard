@@ -98,9 +98,9 @@ setupDb.on('close', (code) => {
     process.exit(code);
   }
 
-  // Start backend server with test database
-  console.log('Starting test backend server...');
-  const backend = spawn(pythonPath, ['-m', 'uvicorn', 'backend.main:app', '--host', '0.0.0.0', '--port', '8000'], {
+  // Start backend server with test database on port 8001 (to avoid conflict with DevServer on 8000)
+  console.log('Starting test backend server on port 8001...');
+  const backend = spawn(pythonPath, ['-m', 'uvicorn', 'backend.main:app', '--host', '0.0.0.0', '--port', '8001'], {
     cwd: projectRoot,
     env: { ...process.env, TEST_DB_PATH: testDbPath },
     stdio: 'inherit'

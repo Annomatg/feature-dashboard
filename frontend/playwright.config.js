@@ -45,15 +45,17 @@ export default defineConfig({
   // Run dev server and backend before starting the tests
   webServer: [
     {
-      command: 'npm run dev',
+      // Start frontend on port 5174 with test-specific config (proxies to port 8001)
+      command: 'npx vite --config vite.config.test.js',
       url: 'http://localhost:5174',
       reuseExistingServer: !process.env.CI,
       timeout: 120000,
     },
     {
-      // Run backend with test database
+      // Run backend with test database on port 8001 (separate from DevServer on port 8000)
+      // This allows tests to run even when DevServer is running for development
       command: 'node tests/start-test-backend.js',
-      url: 'http://localhost:8000/api/features',
+      url: 'http://localhost:8001/api/features',
       reuseExistingServer: !process.env.CI,
       timeout: 120000,
     }

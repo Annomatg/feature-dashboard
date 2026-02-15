@@ -80,8 +80,8 @@ test.describe('Kanban Board', () => {
 
   test('feature cards should NOT show description indicator icon when description is empty', async ({ page }) => {
     // Create a test feature without a description via API
-    // Using test database so it's safe to create/delete features
-    const response = await page.request.post('http://localhost:8000/api/features', {
+    // Using test database (port 8001) so it's safe to create/delete features
+    const response = await page.request.post('http://localhost:8001/api/features', {
       data: {
         priority: 999,
         category: 'Test',
@@ -110,7 +110,7 @@ test.describe('Kanban Board', () => {
     expect(icons.length).toBe(0);
 
     // Clean up: delete the test feature (safe because we're using test database)
-    await page.request.delete(`http://localhost:8000/api/features/${createdFeature.id}`);
+    await page.request.delete(`http://localhost:8001/api/features/${createdFeature.id}`);
   });
 
   test('feature cards should be clickable and log selection', async ({ page }) => {

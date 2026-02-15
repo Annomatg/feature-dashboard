@@ -2,8 +2,8 @@ import { test, expect } from '@playwright/test'
 
 test.describe('NewFeatureCard', () => {
   test.beforeEach(async ({ page }) => {
-    // Navigate to the app
-    await page.goto('http://localhost:5173')
+    // Navigate to the app using baseURL from config
+    await page.goto('/')
     // Wait for the kanban board to load
     await page.waitForSelector('text=FEATURE DASHBOARD')
   })
