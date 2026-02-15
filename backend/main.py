@@ -123,6 +123,14 @@ class StatsResponse(BaseModel):
     percentage: float
 
 
+class PaginatedFeaturesResponse(BaseModel):
+    """Paginated features response with metadata."""
+    features: list[FeatureResponse]
+    total: int
+    limit: int
+    offset: int
+
+
 # Database response models
 class DatabaseInfo(BaseModel):
     """Database information."""
@@ -269,19 +277,27 @@ async def select_database(request: SelectDatabaseRequest):
         raise HTTPException(status_code=500, detail=f"Failed to switch database: {str(e)}")
 
 
-@app.get("/api/features", response_model=list[FeatureResponse], response_model_exclude_none=False)
+@app.get("/api/features")
 async def get_features(
     passes: Optional[bool] = None,
     in_progress: Optional[bool] = None,
-    category: Optional[str] = None
+    category: Optional[str] = None,
+    limit: Optional[int] = None,
+    offset: Optional[int] = None
 ):
     """
-    Get all features with optional filters.
+    Get all features with optional filters and pagination.
 
     Query parameters:
     - passes: Filter by passing status (true/false)
     - in_progress: Filter by in-progress status (true/false)
     - category: Filter by category name
+    - limit: Maximum number of features to return (pagination)
+    - offset: Number of features to skip (pagination)
+
+    Returns:
+    - If limit is provided: PaginatedFeaturesResponse with metadata
+    - Otherwise: list[FeatureResponse] (backward compatible)
     """
     session = get_session()
     try:
@@ -296,7 +312,32 @@ async def get_features(
         if category is not None:
             query = query.filter(Feature.category == category)
 
-        features = query.order_by(Feature.priority.asc()).all()
+        # Order by completed_at DESC for done features (passes=true), otherwise by priority
+        if passes is True:
+            query = query.order_by(Feature.completed_at.desc().nulls_last())
+        else:
+            query = query.order_by(Feature.priority.asc())
+
+        # If pagination parameters provided, return paginated response
+        if limit is not None:
+            # Get total count before pagination
+            total = query.count()
+
+            # Apply pagination with default limit of 20 for done features
+            actual_limit = limit if limit > 0 else 20
+            actual_offset = offset if offset is not None else 0
+
+            features = query.limit(actual_limit).offset(actual_offset).all()
+
+            return PaginatedFeaturesResponse(
+                features=[FeatureResponse(**f.to_dict()) for f in features],
+                total=total,
+                limit=actual_limit,
+                offset=actual_offset
+            )
+
+        # Otherwise return simple list (backward compatible)
+        features = query.all()
         return [FeatureResponse(**f.to_dict()) for f in features]
     finally:
         session.close()

@@ -341,6 +341,133 @@ class TestMoveFeature:
         assert response.status_code == 404
 
 
+class TestPagination:
+    """Tests for pagination support in GET /api/features"""
+
+    def test_pagination_basic(self, client):
+        """Test basic pagination with limit and offset."""
+        # Get first 2 features
+        response = client.get("/api/features?limit=2&offset=0")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Should return paginated response format
+        assert "features" in data
+        assert "total" in data
+        assert "limit" in data
+        assert "offset" in data
+
+        assert len(data["features"]) == 2
+        assert data["total"] == 4  # Total seeded features
+        assert data["limit"] == 2
+        assert data["offset"] == 0
+
+    def test_pagination_offset(self, client):
+        """Test pagination with offset."""
+        # Get next 2 features
+        response = client.get("/api/features?limit=2&offset=2")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert len(data["features"]) == 2
+        assert data["total"] == 4
+        assert data["offset"] == 2
+
+    def test_pagination_with_filter(self, client):
+        """Test pagination combined with filtering."""
+        # There are 2 features with passes=False and in_progress=False (todo lane)
+        response = client.get("/api/features?passes=false&in_progress=false&limit=10&offset=0")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["total"] == 2
+        assert len(data["features"]) == 2
+        assert all(not f["passes"] and not f["in_progress"] for f in data["features"])
+
+    def test_pagination_done_features_ordered_by_completed_at(self, client):
+        """Test that done features are ordered by completed_at DESC."""
+        from datetime import datetime, timedelta
+
+        # Mark multiple features as done with different completion times
+        # Feature 1 - completed first
+        client.patch("/api/features/1/state", json={"passes": True})
+
+        # Wait a bit and complete feature 2
+        import time
+        time.sleep(0.1)
+        client.patch("/api/features/2/state", json={"passes": True})
+
+        # Fetch done features with pagination
+        response = client.get("/api/features?passes=true&limit=10&offset=0")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Feature 2 should come first (most recent completion)
+        # Feature 3 was already done in seed, Feature 1 was done first above
+        features = data["features"]
+
+        # The order should be: most recently completed first
+        # Feature 2 (just completed), then Feature 1 (completed earlier), then Feature 3 (seed data)
+        assert features[0]["id"] == 2
+        assert features[1]["id"] == 1
+
+    def test_pagination_large_dataset(self, client):
+        """Test pagination with a larger dataset."""
+        # Create 30 done features
+        for i in range(30):
+            create_response = client.post("/api/features", json={
+                "category": "Testing",
+                "name": f"Done Feature {i}",
+                "description": f"Test feature {i}",
+                "steps": ["Test"]
+            })
+            feature_id = create_response.json()["id"]
+
+            # Mark as done
+            client.patch(f"/api/features/{feature_id}/state", json={"passes": True})
+
+            # Small delay to ensure different timestamps
+            if i % 5 == 0:
+                import time
+                time.sleep(0.01)
+
+        # Fetch first page of done features (limit=20)
+        response = client.get("/api/features?passes=true&limit=20&offset=0")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert len(data["features"]) == 20
+        assert data["total"] >= 30  # At least 30 (plus Feature 3 from seed)
+        assert data["limit"] == 20
+        assert data["offset"] == 0
+
+        # Fetch second page
+        response2 = client.get("/api/features?passes=true&limit=20&offset=20")
+
+        assert response2.status_code == 200
+        data2 = response2.json()
+
+        # Should have remaining features
+        assert len(data2["features"]) >= 10
+        assert data2["offset"] == 20
+
+    def test_backward_compatibility_without_pagination(self, client):
+        """Test that endpoint still returns list when limit is not provided."""
+        response = client.get("/api/features")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Should return a list (backward compatible), not paginated response
+        assert isinstance(data, list)
+        assert len(data) == 4
+
+
 class TestIntegrationScenarios:
     """Integration tests for complex scenarios"""
 
