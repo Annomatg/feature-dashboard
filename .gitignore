@@ -1,0 +1,60 @@
+# Python virtual environment
+venv/
+env/
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Training artifacts
+logs/
+models/
+*.zip
+*.onnx
+*.pkl
+*.png
+*.json
+
+# Tensorboard
+events.out.tfevents.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# DB
+*.db-journal
+
+# E2E Tests
+playwright-report/
+test-results/
+
+# .NET build artifacts
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.ilk
+*.log
+*.pdb
+*.exe
+*.dll
+*.xml
+*.runtimeconfig.json
+*.deps.json
