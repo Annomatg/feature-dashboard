@@ -9,8 +9,6 @@ function getDateGroupLabel(dateStr) {
 
   const date = new Date(dateStr)
   const today = new Date()
-  const yesterday = new Date()
-  yesterday.setDate(today.getDate() - 1)
 
   const isSameDay = (a, b) =>
     a.getFullYear() === b.getFullYear() &&
@@ -18,9 +16,19 @@ function getDateGroupLabel(dateStr) {
     a.getDate() === b.getDate()
 
   if (isSameDay(date, today)) return 'Today'
-  if (isSameDay(date, yesterday)) return 'Yesterday'
 
-  // Format as "Feb 14"
+  // Check days ago within the current week (up to 6 days back)
+  for (let daysAgo = 1; daysAgo <= 6; daysAgo++) {
+    const past = new Date(today)
+    past.setDate(today.getDate() - daysAgo)
+    if (isSameDay(date, past)) {
+      return daysAgo === 1
+        ? 'Yesterday'
+        : date.toLocaleDateString('en-US', { weekday: 'long' }) // e.g. "Monday"
+    }
+  }
+
+  // Older than 6 days — format as "Feb 14"
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
