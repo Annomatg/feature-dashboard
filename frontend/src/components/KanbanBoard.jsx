@@ -152,9 +152,10 @@ function KanbanBoard() {
   }, [doneData, doneOffset])
 
   const invalidateDoneFeatures = () => {
-    // Reset done pagination and refetch from start
+    // Reset pagination offset and invalidate cache so query refetches fresh data.
+    // Do NOT clear doneFeatures eagerly — the useEffect will replace them once
+    // the fresh query result arrives, preventing a flash of empty content.
     setDoneOffset(0)
-    setDoneFeatures([])
     queryClient.invalidateQueries(['features', 'done'])
   }
 
