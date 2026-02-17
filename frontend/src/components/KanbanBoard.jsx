@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import KanbanLane from './KanbanLane'
 import Toast from './Toast'
+import DetailPanel from './DetailPanel'
 
 const LANE_CONFIG = {
   todo: {
@@ -21,10 +22,20 @@ const LANE_CONFIG = {
   }
 }
 
+const DONE_PAGE_SIZE = 20
+
 async function fetchFeatures() {
-  const response = await fetch('/api/features')
+  const response = await fetch('/api/features?passes=false')
   if (!response.ok) {
     throw new Error('Failed to fetch features')
+  }
+  return response.json()
+}
+
+async function fetchDoneFeatures(limit, offset) {
+  const response = await fetch(`/api/features?passes=true&limit=${limit}&offset=${offset}`)
+  if (!response.ok) {
+    throw new Error('Failed to fetch done features')
   }
   return response.json()
 }
@@ -68,25 +79,114 @@ async function updateFeaturePriority(featureId, priority) {
   return response.json()
 }
 
+async function moveFeature(featureId, direction) {
+  const response = await fetch(`/api/features/${featureId}/move`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ direction })
+  })
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.detail || 'Failed to move feature')
+  }
+  return response.json()
+}
+
+// Determine the next lane state when moving a feature
+function getLaneState(lane) {
+  if (lane === 'inProgress') return { in_progress: true, passes: false }
+  if (lane === 'done') return { passes: true, in_progress: false }
+  return { passes: false, in_progress: false } // todo
+}
+
+function getLaneLabel(lane) {
+  if (lane === 'inProgress') return 'In Progress'
+  if (lane === 'done') return 'Done'
+  return 'Todo'
+}
+
 function KanbanBoard() {
   const [selectedFeatureId, setSelectedFeatureId] = useState(null)
   const [addingToLane, setAddingToLane] = useState(null)
   const [toast, setToast] = useState(null)
+  const [panelFeature, setPanelFeature] = useState(null)
+  const [isDragging, setIsDragging] = useState(false)
+  const [doneOffset, setDoneOffset] = useState(0)
+  const [doneFeatures, setDoneFeatures] = useState([])
+  const [doneTotalCount, setDoneTotalCount] = useState(0)
 
   const queryClient = useQueryClient()
+  const dragState = useRef(null)
 
+  const isInteracting = addingToLane !== null || isDragging
+
+  // Fetch non-done features (todo + in-progress)
   const { data: features = [], isLoading, error } = useQuery({
     queryKey: ['features'],
     queryFn: fetchFeatures,
-    refetchInterval: 5000, // Refetch every 5 seconds for real-time updates
+    // Pause polling while user is creating a feature or dragging a card
+    refetchInterval: isInteracting ? false : 5000,
   })
+
+  // Fetch done features separately with pagination
+  const { data: doneData, isLoading: isDoneLoading } = useQuery({
+    queryKey: ['features', 'done', doneOffset],
+    queryFn: () => fetchDoneFeatures(DONE_PAGE_SIZE, doneOffset),
+    refetchInterval: isInteracting ? false : 5000,
+  })
+
+  // Sync done features data - append when loading more pages, replace on first page
+  useEffect(() => {
+    if (!doneData) return
+    setDoneTotalCount(doneData.total)
+    if (doneOffset === 0) {
+      setDoneFeatures(doneData.features)
+    } else {
+      setDoneFeatures(prev => {
+        // Avoid duplicates when refetch returns same data
+        const existingIds = new Set(prev.map(f => f.id))
+        const newFeatures = doneData.features.filter(f => !existingIds.has(f.id))
+        return [...prev, ...newFeatures]
+      })
+    }
+  }, [doneData, doneOffset])
+
+  const invalidateDoneFeatures = () => {
+    // Reset done pagination and refetch from start
+    setDoneOffset(0)
+    setDoneFeatures([])
+    queryClient.invalidateQueries(['features', 'done'])
+  }
 
   const createFeatureMutation = useMutation({
     mutationFn: createFeature,
     onSuccess: () => {
       queryClient.invalidateQueries(['features'])
+      invalidateDoneFeatures()
       setAddingToLane(null)
       setToast({ type: 'success', message: 'Feature created successfully' })
+    },
+    onError: (error) => {
+      setToast({ type: 'error', message: error.message })
+    }
+  })
+
+  const moveToLaneMutation = useMutation({
+    mutationFn: ({ featureId, stateData }) => updateFeatureState(featureId, stateData),
+    onSuccess: (_, { toLane }) => {
+      queryClient.invalidateQueries(['features'])
+      invalidateDoneFeatures()
+      setToast({ type: 'success', message: `Moved to ${getLaneLabel(toLane)}` })
+    },
+    onError: (error) => {
+      setToast({ type: 'error', message: error.message })
+    }
+  })
+
+  const reorderMutation = useMutation({
+    mutationFn: ({ featureId, direction }) => moveFeature(featureId, direction),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['features'])
     },
     onError: (error) => {
       setToast({ type: 'error', message: error.message })
@@ -116,10 +216,13 @@ function KanbanBoard() {
     )
   }
 
-  // Filter features by lane
+  // Filter features by lane (done features come from separate paginated query)
   const todoFeatures = features.filter(LANE_CONFIG.todo.filter)
   const inProgressFeatures = features.filter(LANE_CONFIG.inProgress.filter)
-  const doneFeatures = features.filter(LANE_CONFIG.done.filter)
+
+  const handleShowMoreDone = () => {
+    setDoneOffset(prev => prev + DONE_PAGE_SIZE)
+  }
 
   const handleAddFeature = (lane) => {
     setAddingToLane(lane)
@@ -161,10 +264,45 @@ function KanbanBoard() {
     setAddingToLane(null)
   }
 
+  const handleMoveToLane = (feature, toLane) => {
+    moveToLaneMutation.mutate({
+      featureId: feature.id,
+      stateData: getLaneState(toLane),
+      toLane
+    })
+  }
+
+  const handleReorder = (feature, direction) => {
+    reorderMutation.mutate({ featureId: feature.id, direction })
+  }
+
   const handleCardClick = (feature) => {
     setSelectedFeatureId(feature.id)
-    // TODO: Open detail panel
-    console.log('Selected feature:', feature)
+    setPanelFeature(feature)
+  }
+
+  const handlePanelClose = () => {
+    setPanelFeature(null)
+    setSelectedFeatureId(null)
+  }
+
+  const handlePanelUpdate = (updatedFeature) => {
+    queryClient.invalidateQueries(['features'])
+    invalidateDoneFeatures()
+    setPanelFeature(updatedFeature)
+  }
+
+  const handlePanelDelete = () => {
+    queryClient.invalidateQueries(['features'])
+    invalidateDoneFeatures()
+  }
+
+  const handleDragStart = () => {
+    setIsDragging(true)
+  }
+
+  const handleDragEnd = () => {
+    setIsDragging(false)
   }
 
   return (
@@ -179,7 +317,7 @@ function KanbanBoard() {
                 FEATURE DASHBOARD
               </h1>
               <p className="text-text-secondary font-mono text-sm mt-1">
-                {features.length} total features · {doneFeatures.length} completed
+                {features.length + doneTotalCount} total features · {doneTotalCount} completed
               </p>
             </div>
           </div>
@@ -199,6 +337,11 @@ function KanbanBoard() {
             onSaveFeature={handleSaveFeature}
             onCancelAdd={handleCancelAdd}
             lane="todo"
+            onMoveToLane={handleMoveToLane}
+            onReorder={handleReorder}
+            dragState={dragState}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
           />
 
           <KanbanLane
@@ -213,11 +356,16 @@ function KanbanBoard() {
             onSaveFeature={handleSaveFeature}
             onCancelAdd={handleCancelAdd}
             lane="inProgress"
+            onMoveToLane={handleMoveToLane}
+            onReorder={handleReorder}
+            dragState={dragState}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
           />
 
           <KanbanLane
             title={LANE_CONFIG.done.title}
-            count={doneFeatures.length}
+            count={doneTotalCount}
             features={doneFeatures}
             accentColor={LANE_CONFIG.done.accentColor}
             onAddClick={() => handleAddFeature('done')}
@@ -227,6 +375,15 @@ function KanbanBoard() {
             onSaveFeature={handleSaveFeature}
             onCancelAdd={handleCancelAdd}
             lane="done"
+            onMoveToLane={handleMoveToLane}
+            onReorder={handleReorder}
+            dragState={dragState}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+            isDoneLane={true}
+            hasMore={doneFeatures.length < doneTotalCount}
+            onShowMore={handleShowMoreDone}
+            isLoadingMore={isDoneLoading && doneOffset > 0}
           />
         </div>
 
@@ -239,6 +396,16 @@ function KanbanBoard() {
           />
         )}
       </div>
+
+      {/* Detail Panel */}
+      {panelFeature && (
+        <DetailPanel
+          feature={panelFeature}
+          onClose={handlePanelClose}
+          onUpdate={handlePanelUpdate}
+          onDelete={handlePanelDelete}
+        />
+      )}
     </div>
   )
 }

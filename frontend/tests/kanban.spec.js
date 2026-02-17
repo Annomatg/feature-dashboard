@@ -113,27 +113,15 @@ test.describe('Kanban Board', () => {
     await page.request.delete(`http://localhost:8001/api/features/${createdFeature.id}`);
   });
 
-  test('feature cards should be clickable and log selection', async ({ page }) => {
+  test('feature cards should be clickable and open detail panel', async ({ page }) => {
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
-
-    // Set up console listener
-    const consoleMessages = [];
-    page.on('console', msg => {
-      if (msg.type() === 'log') {
-        consoleMessages.push(msg.text());
-      }
-    });
 
     // Click on the first feature card
     const firstCard = page.locator('.bg-surface.border.rounded-lg.p-4').first();
     await firstCard.click();
 
-    // Wait a bit for the console log
-    await page.waitForTimeout(500);
-
-    // Check that a selection was logged
-    const hasSelectionLog = consoleMessages.some(msg => msg.includes('Selected feature:'));
-    expect(hasSelectionLog).toBe(true);
+    // Detail panel should open
+    await expect(page.getByTestId('detail-panel')).toBeVisible();
   });
 
   test('feature cards should show visual distinction when selected', async ({ page }) => {

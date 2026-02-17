@@ -5,14 +5,41 @@ function KanbanCard({
   accentColor,
   index = 0,
   isSelected = false,
-  onClick
+  onClick,
+  lane,
+  dragState,
+  onDragStart,
+  onDragEnd,
 }) {
   const hasDescription = feature.description && feature.description.trim().length > 0
 
+  const handleDragStart = (e) => {
+    e.stopPropagation()
+    dragState.current = { featureId: feature.id, feature, fromLane: lane }
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', String(feature.id))
+    onDragStart?.()
+    // Slight delay so browser captures card before opacity change
+    requestAnimationFrame(() => {
+      e.target.style.opacity = '0.4'
+    })
+  }
+
+  const handleDragEnd = (e) => {
+    e.target.style.opacity = ''
+    dragState.current = null
+    onDragEnd?.()
+  }
+
   return (
     <div
+      draggable
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
       onClick={() => onClick?.(feature)}
-      className="bg-surface border rounded-lg p-4 transition-all duration-200 cursor-pointer group relative"
+      data-testid="kanban-card"
+      data-feature-id={feature.id}
+      className="bg-surface border rounded-lg p-4 transition-all duration-200 cursor-grab active:cursor-grabbing group relative select-none"
       style={{
         borderLeftWidth: '3px',
         borderLeftColor: accentColor,
