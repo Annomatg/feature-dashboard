@@ -32,6 +32,10 @@ export default defineConfig({
 
     // Collect trace when retrying the failed test
     trace: 'on-first-retry',
+
+    // Disable CSS animations so drag-and-drop tests aren't affected by
+    // elements animating into position during test execution
+    reducedMotion: 'reduce',
   },
 
   // Configure projects for Chromium only

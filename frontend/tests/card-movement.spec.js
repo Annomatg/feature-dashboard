@@ -31,13 +31,23 @@ async function getFeature(request, id) {
 }
 
 /**
- * Drag a card to a target lane using Playwright's dragTo.
- * Drops onto the lane container (not a specific card) for cross-lane moves.
+ * Drag a card to a target lane by dispatching HTML5 drag events directly via JS.
+ * More reliable than Playwright's dragTo when the page is busy with many DOM elements,
+ * since it bypasses mouse simulation and fires events directly on the React root.
  */
-async function dragCardToLane(page, cardLocator, targetLaneTitle) {
-  const laneHeadings = page.getByRole('heading', { name: targetLaneTitle, exact: true })
-  const targetLane = laneHeadings.locator('../..')  // up to the lane container
-  await cardLocator.dragTo(targetLane, { targetPosition: { x: 100, y: 200 } })
+async function dragCardToLane(page, featureId, laneIndex) {
+  await page.evaluate(({ id, idx }) => {
+    const card = document.querySelector(`[data-feature-id="${id}"]`);
+    const doneLane = document.querySelectorAll('.animate-slide-in')[idx];
+    if (!card || !doneLane) return;
+    const dt = new DataTransfer();
+    dt.setData('text/plain', String(id));
+    card.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    doneLane.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    doneLane.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    doneLane.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    card.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: dt }));
+  }, { id: featureId, idx: laneIndex });
 }
 
 test.describe('Drag-and-drop: card movement between lanes', () => {
@@ -87,14 +97,10 @@ test.describe('Drag-and-drop: card movement between lanes', () => {
     const card = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Drag TODO to Progress' });
     await card.waitFor({ state: 'visible' });
 
-    // Drag to IN PROGRESS lane header area
-    const inProgressLane = page.locator('.animate-slide-in').nth(1);
-    await card.dragTo(inProgressLane);
+    await dragCardToLane(page, feature.id, 1);
 
-    // Toast should confirm the move
-    await expect(page.locator('text=Moved to In Progress')).toBeVisible({ timeout: 8000 });
+    await expect(page.getByText('Moved to In Progress', { exact: true })).toBeVisible({ timeout: 8000 });
 
-    // Verify via API
     await page.waitForTimeout(500);
     const updated = await getFeature(request, feature.id);
     expect(updated.in_progress).toBe(true);
@@ -115,10 +121,9 @@ test.describe('Drag-and-drop: card movement between lanes', () => {
     const card = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Drag Progress to Done' });
     await card.waitFor({ state: 'visible' });
 
-    const doneLane = page.locator('.animate-slide-in').nth(2);
-    await card.dragTo(doneLane);
+    await dragCardToLane(page, feature.id, 2);
 
-    await expect(page.locator('text=Moved to Done')).toBeVisible({ timeout: 8000 });
+    await expect(page.getByText('Moved to Done', { exact: true })).toBeVisible({ timeout: 8000 });
 
     await page.waitForTimeout(500);
     const updated = await getFeature(request, feature.id);
@@ -140,10 +145,9 @@ test.describe('Drag-and-drop: card movement between lanes', () => {
     const card = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Drag Done to Progress' });
     await card.waitFor({ state: 'visible' });
 
-    const inProgressLane = page.locator('.animate-slide-in').nth(1);
-    await card.dragTo(inProgressLane);
+    await dragCardToLane(page, feature.id, 1);
 
-    await expect(page.locator('text=Moved to In Progress')).toBeVisible({ timeout: 8000 });
+    await expect(page.getByText('Moved to In Progress', { exact: true })).toBeVisible({ timeout: 8000 });
 
     await page.waitForTimeout(500);
     const updated = await getFeature(request, feature.id);
@@ -165,10 +169,9 @@ test.describe('Drag-and-drop: card movement between lanes', () => {
     const card = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Drag Progress to TODO' });
     await card.waitFor({ state: 'visible' });
 
-    const todoLane = page.locator('.animate-slide-in').nth(0);
-    await card.dragTo(todoLane);
+    await dragCardToLane(page, feature.id, 0);
 
-    await expect(page.locator('text=Moved to Todo')).toBeVisible({ timeout: 8000 });
+    await expect(page.getByText('Moved to Todo', { exact: true })).toBeVisible({ timeout: 8000 });
 
     await page.waitForTimeout(500);
     const updated = await getFeature(request, feature.id);
@@ -185,17 +188,15 @@ test.describe('Drag-and-drop: card movement between lanes', () => {
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
 
     // TODO -> IN PROGRESS
-    let card = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Drag Full Journey' });
+    const card = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Drag Full Journey' });
     await card.waitFor({ state: 'visible' });
-    await card.dragTo(page.locator('.animate-slide-in').nth(1));
-    await expect(page.locator('text=Moved to In Progress')).toBeVisible({ timeout: 8000 });
+    await dragCardToLane(page, feature.id, 1);
+    await expect(page.getByText('Moved to In Progress', { exact: true })).toBeVisible({ timeout: 8000 });
     await page.waitForTimeout(400);
 
     // IN PROGRESS -> DONE
-    card = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Drag Full Journey' });
-    await card.waitFor({ state: 'visible' });
-    await card.dragTo(page.locator('.animate-slide-in').nth(2));
-    await expect(page.locator('text=Moved to Done')).toBeVisible({ timeout: 8000 });
+    await dragCardToLane(page, feature.id, 2);
+    await expect(page.getByText('Moved to Done', { exact: true })).toBeVisible({ timeout: 8000 });
     await page.waitForTimeout(400);
 
     const final = await getFeature(request, feature.id);

@@ -10,20 +10,19 @@ Run automated test suites and report results without attempting fixes.
 ## Workflow
 
 ### Phase 1: Prepare Environment
-- Verify working directory is `F:\Work\Godot\cars-proto\RLTraining`
-- Check if pytest is available in Python venv
-- Verify Playwright browsers are installed (install if needed)
+- Working directory: `F:\Work\Godot\feature-dashboard`
+- Python venv: `venv\Scripts\python.exe`
 - Document environment state
 
 ### Phase 2: Run Backend Tests
-- Execute: `pytest tests/ -v --tb=short --timeout=60` from RLTraining directory
+- Execute: `./venv/Scripts/python.exe -m pytest backend/test_crud_api.py -v --tb=short` from project root
 - Capture all output (stdout, stderr)
 - Note any timeouts, failures, or errors
 - If ANY failure or timeout occurs, proceed immediately to Phase 4 (do NOT run frontend tests)
 - If all backend tests pass, proceed to Phase 3
 
-### Phase 3: Run Frontend Tests
-- Execute: `npx playwright test tests/e2e/ --reporter=list` from RLTraining/frontend directory
+### Phase 3: Run Frontend E2E Tests
+- Execute: `npx playwright test --reporter=list` from `frontend/` directory
 - Capture all output (stdout, stderr)
 - Note any timeouts, failures, or errors
 - If ANY failure or timeout occurs, proceed immediately to Phase 4
@@ -46,11 +45,14 @@ Run automated test suites and report results without attempting fixes.
 
 2. **Stop on First Failure**: Halt test execution and generate report immediately when encountering failure or timeout in ANY test suite.
 
-3. **Environment Paths**: Use absolute paths only. Backend tests from `F:\Work\Godot\cars-proto\RLTraining`, frontend tests from `F:\Work\Godot\cars-proto\RLTraining\frontend`.
+3. **Environment Paths**:
+   - Project root: `F:\Work\Godot\feature-dashboard`
+   - Backend tests: `./venv/Scripts/python.exe -m pytest backend/test_crud_api.py -v --tb=short`
+   - Frontend tests: `cd frontend && npx playwright test --reporter=list`
 
-4. **Timeout Handling**: Set pytest timeout to 60 seconds. If timeout occurs, report it explicitly with test name and timeout value.
+4. **Timeout Handling**: If a test times out, report it explicitly with test name and timeout value.
 
-5. **No Build/Rebuild**: Do NOT run build, npm install, dotnet build, or any setup commands. Assume environment is ready.
+5. **No Build/Rebuild**: Do NOT run npm install, dotnet build, or any setup commands. Assume environment is ready.
 
 6. **Backend First**: Always run pytest before Playwright tests. Skip frontend tests if backend fails.
 
@@ -60,15 +62,15 @@ Run automated test suites and report results without attempting fixes.
 
 **Backend (pytest)**:
 ```
-pytest tests/ -v --tb=short --timeout=60
+./venv/Scripts/python.exe -m pytest backend/test_crud_api.py -v --tb=short
 ```
-From: `F:\Work\Godot\cars-proto\RLTraining`
+From: `F:\Work\Godot\feature-dashboard`
 
 **Frontend (Playwright)**:
 ```
-npx playwright test tests/e2e/ --reporter=list
+npx playwright test --reporter=list
 ```
-From: `F:\Work\Godot\cars-proto\RLTraining\frontend`
+From: `F:\Work\Godot\feature-dashboard\frontend`
 
 ## Output Format
 
@@ -86,9 +88,9 @@ Backend Tests: 12 passed, 3 failed
 Frontend Tests: Not run (backend failure)
 
 Failures:
-1. tests/api/test_experiments.py::test_get_experiments
-   Error: AssertionError: Expected 5 experiments, got 0
+1. backend/test_crud_api.py::test_get_features
+   Error: AssertionError: Expected 4 features, got 0
 
-2. tests/api/test_test_runner.py::test_run_test_timeout
-   Error: TimeoutError after 60 seconds
+2. frontend/tests/card-movement.spec.js::Move card from IN PROGRESS to DONE via drag
+   Error: expect(locator).toBeVisible() failed - Timeout 8000ms
 ```

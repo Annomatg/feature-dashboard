@@ -81,6 +81,12 @@ body {
   animation: slide-in 0.4s ease-out;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .animate-slide-in {
+    animation: none;
+  }
+}
+
 /* Custom scrollbar for Kanban lanes */
 .custom-scrollbar {
   scrollbar-width: thin;
