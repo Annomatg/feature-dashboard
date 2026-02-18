@@ -4,6 +4,7 @@ import KanbanLane from './KanbanLane'
 import Toast from './Toast'
 import DetailPanel from './DetailPanel'
 import Header from './Header'
+import InfoBar from './InfoBar'
 
 const LANE_CONFIG = {
   todo: {
@@ -80,6 +81,12 @@ async function updateFeaturePriority(featureId, priority) {
   return response.json()
 }
 
+async function fetchDatabases() {
+  const response = await fetch('/api/databases')
+  if (!response.ok) throw new Error('Failed to fetch databases')
+  return response.json()
+}
+
 async function moveFeature(featureId, direction) {
   const response = await fetch(`/api/features/${featureId}/move`, {
     method: 'PATCH',
@@ -115,6 +122,7 @@ function KanbanBoard() {
   const [doneOffset, setDoneOffset] = useState(0)
   const [doneFeatures, setDoneFeatures] = useState([])
   const [doneTotalCount, setDoneTotalCount] = useState(0)
+  const [infoDismissed, setInfoDismissed] = useState(false)
 
   const queryClient = useQueryClient()
   const dragState = useRef(null)
@@ -127,6 +135,13 @@ function KanbanBoard() {
     queryFn: fetchFeatures,
     // Pause polling while user is creating a feature or dragging a card
     refetchInterval: isInteracting ? false : 5000,
+  })
+
+  // Fetch databases to determine if a non-default DB is active
+  const { data: databases = [] } = useQuery({
+    queryKey: ['databases'],
+    queryFn: fetchDatabases,
+    staleTime: 30000,
   })
 
   // Fetch done features separately with pagination
@@ -194,6 +209,14 @@ function KanbanBoard() {
       setToast({ type: 'error', message: error.message })
     }
   })
+
+  // Derive activeDbPath here (before early returns) so the useEffect hook order is stable
+  const activeDbPath = databases.find(db => db.is_active)?.path
+
+  // Reset dismiss state whenever the active database changes
+  useEffect(() => {
+    setInfoDismissed(false)
+  }, [activeDbPath])
 
   if (isLoading) {
     return (
@@ -310,6 +333,12 @@ function KanbanBoard() {
   const totalFeatures = features.length + doneTotalCount
   const inProgressCount = inProgressFeatures.length
 
+  // Show info bar when a non-default database is active
+  const activeDb = databases.find(db => db.is_active)
+  const defaultDb = databases[0]
+  const showInfoBar = !infoDismissed && databases.length > 1 && activeDb && activeDbPath !== defaultDb?.path
+  const infoBarMessage = showInfoBar ? `Active database: ${activeDb.name}` : null
+
   return (
     <div className="h-screen bg-background flex flex-col">
       <Header
@@ -317,6 +346,14 @@ function KanbanBoard() {
         inProgressCount={inProgressCount}
         doneCount={doneTotalCount}
       />
+
+      {showInfoBar && (
+        <InfoBar
+          message={infoBarMessage}
+          type="info"
+          onDismiss={() => setInfoDismissed(true)}
+        />
+      )}
 
       <div className="flex-1 overflow-hidden px-6 pb-6 pt-6">
         {/* Kanban Board - 3 Column Layout */}
