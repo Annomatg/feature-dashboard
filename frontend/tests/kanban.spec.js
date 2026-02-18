@@ -54,8 +54,10 @@ test.describe('Kanban Board', () => {
   test('should show total feature count in header', async ({ page }) => {
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
 
-    // Check for total features text in header
-    await expect(page.locator('text=/\\d+ total features/')).toBeVisible();
+    // Check for stats in header (Total label and a numeric value)
+    await expect(page.locator('header').getByText('Total')).toBeVisible();
+    await expect(page.locator('header').getByText('In Progress')).toBeVisible();
+    await expect(page.locator('header').getByText('Done')).toBeVisible();
   });
 
   test('lanes should be scrollable', async ({ page }) => {

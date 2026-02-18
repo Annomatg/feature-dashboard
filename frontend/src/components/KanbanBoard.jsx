@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import KanbanLane from './KanbanLane'
 import Toast from './Toast'
 import DetailPanel from './DetailPanel'
-import DatabaseSelector from './DatabaseSelector'
+import Header from './Header'
 
 const LANE_CONFIG = {
   todo: {
@@ -197,7 +197,7 @@ function KanbanBoard() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="h-screen bg-background flex items-center justify-center">
         <div className="text-center">
           <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
           <p className="text-text-secondary font-mono text-sm">Loading features...</p>
@@ -208,7 +208,7 @@ function KanbanBoard() {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="h-screen bg-background flex items-center justify-center">
         <div className="text-center max-w-md">
           <div className="text-6xl mb-4">⚠️</div>
           <h2 className="text-2xl font-bold text-error mb-2">Error Loading Features</h2>
@@ -307,27 +307,20 @@ function KanbanBoard() {
     setIsDragging(false)
   }
 
-  return (
-    <div className="min-h-screen bg-background p-6">
-      <div className="max-w-[1800px] mx-auto">
-        {/* Header */}
-        <header className="mb-8">
-          <div className="flex items-center gap-4 mb-2">
-            <div className="w-1.5 h-12 bg-primary rounded-full" />
-            <div className="flex-1">
-              <h1 className="text-4xl font-bold font-mono text-text-primary tracking-tight">
-                FEATURE DASHBOARD
-              </h1>
-              <p className="text-text-secondary font-mono text-sm mt-1">
-                {features.length + doneTotalCount} total features · {doneTotalCount} completed
-              </p>
-            </div>
-            <DatabaseSelector />
-          </div>
-        </header>
+  const totalFeatures = features.length + doneTotalCount
+  const inProgressCount = inProgressFeatures.length
 
+  return (
+    <div className="h-screen bg-background flex flex-col">
+      <Header
+        totalFeatures={totalFeatures}
+        inProgressCount={inProgressCount}
+        doneCount={doneTotalCount}
+      />
+
+      <div className="flex-1 overflow-hidden px-6 pb-6 pt-6">
         {/* Kanban Board - 3 Column Layout */}
-        <div className="grid grid-cols-3 gap-6 h-[calc(100vh-180px)]">
+        <div className="max-w-[1800px] mx-auto grid grid-cols-3 gap-6 h-full">
           <KanbanLane
             title={LANE_CONFIG.todo.title}
             count={todoFeatures.length}
@@ -390,15 +383,18 @@ function KanbanBoard() {
           />
         </div>
 
-        {/* Toast notifications */}
-        {toast && (
+      </div>
+
+      {/* Toast notifications */}
+      {toast && (
+        <div className="fixed bottom-4 right-4 z-50">
           <Toast
             type={toast.type}
             message={toast.message}
             onClose={() => setToast(null)}
           />
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Detail Panel */}
       {panelFeature && (
