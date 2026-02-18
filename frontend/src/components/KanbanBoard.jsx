@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import KanbanLane from './KanbanLane'
 import Toast from './Toast'
 import DetailPanel from './DetailPanel'
+import DatabaseSelector from './DatabaseSelector'
 
 const LANE_CONFIG = {
   todo: {
@@ -313,7 +314,7 @@ function KanbanBoard() {
         <header className="mb-8">
           <div className="flex items-center gap-4 mb-2">
             <div className="w-1.5 h-12 bg-primary rounded-full" />
-            <div>
+            <div className="flex-1">
               <h1 className="text-4xl font-bold font-mono text-text-primary tracking-tight">
                 FEATURE DASHBOARD
               </h1>
@@ -321,6 +322,7 @@ function KanbanBoard() {
                 {features.length + doneTotalCount} total features · {doneTotalCount} completed
               </p>
             </div>
+            <DatabaseSelector />
           </div>
         </header>
 
