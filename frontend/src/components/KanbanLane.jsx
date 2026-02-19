@@ -122,19 +122,10 @@ function KanbanLane({
       return
     }
 
-    // Same-lane drop: reorder based on drop position relative to target card
+    // Same-lane drop: place feature at the exact drop position
     if (currentDropTargetId && currentDropTargetId !== feature.id) {
-      const draggedIdx = features.findIndex(f => f.id === feature.id)
-      const targetIdx = features.findIndex(f => f.id === currentDropTargetId)
-      if (draggedIdx === -1 || targetIdx === -1) return
-
-      if (draggedIdx < targetIdx) {
-        // Dragged item is above the target → moving down
-        onReorder(feature, 'down')
-      } else {
-        // Dragged item is below the target → moving up
-        onReorder(feature, 'up')
-      }
+      const insertBefore = currentDropPosition === 'before'
+      onReorder(feature, currentDropTargetId, insertBefore)
     }
   }
 

@@ -87,15 +87,15 @@ async function fetchDatabases() {
   return response.json()
 }
 
-async function moveFeature(featureId, direction) {
-  const response = await fetch(`/api/features/${featureId}/move`, {
+async function reorderFeature(featureId, targetId, insertBefore) {
+  const response = await fetch(`/api/features/${featureId}/reorder`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ direction })
+    body: JSON.stringify({ target_id: targetId, insert_before: insertBefore })
   })
   if (!response.ok) {
     const error = await response.json()
-    throw new Error(error.detail || 'Failed to move feature')
+    throw new Error(error.detail || 'Failed to reorder feature')
   }
   return response.json()
 }
@@ -201,7 +201,7 @@ function KanbanBoard() {
   })
 
   const reorderMutation = useMutation({
-    mutationFn: ({ featureId, direction }) => moveFeature(featureId, direction),
+    mutationFn: ({ featureId, targetId, insertBefore }) => reorderFeature(featureId, targetId, insertBefore),
     onSuccess: () => {
       queryClient.invalidateQueries(['features'])
     },
@@ -297,8 +297,8 @@ function KanbanBoard() {
     })
   }
 
-  const handleReorder = (feature, direction) => {
-    reorderMutation.mutate({ featureId: feature.id, direction })
+  const handleReorder = (feature, targetId, insertBefore) => {
+    reorderMutation.mutate({ featureId: feature.id, targetId, insertBefore })
   }
 
   const handleCardClick = (feature) => {

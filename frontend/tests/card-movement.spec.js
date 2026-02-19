@@ -273,6 +273,54 @@ test.describe('Drag-and-drop: reorder within lane', () => {
     await deleteFeature(request, f2.id);
   });
 
+  test('drag card to non-adjacent position (top to bottom past middle)', async ({ page, request }) => {
+    // Create 3 features: f1 < f2 < f3 in priority order
+    const f1 = await createFeature(request, { name: 'Reorder Jump Card A' });
+    const f2 = await createFeature(request, { name: 'Reorder Jump Card B' });
+    const f3 = await createFeature(request, { name: 'Reorder Jump Card C' });
+
+    expect(f1.priority).toBeLessThan(f2.priority);
+    expect(f2.priority).toBeLessThan(f3.priority);
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    // Drag f1 (top) to after f3 (bottom), skipping f2
+    await page.evaluate(({ aId, cId }) => {
+      const cardA = document.querySelector(`[data-feature-id="${aId}"]`);
+      const cardCWrapper = document.querySelector(`[data-feature-id="${cId}"]`).parentElement;
+      const cardC = document.querySelector(`[data-feature-id="${cId}"]`);
+      if (!cardA || !cardC) return;
+
+      const dt = new DataTransfer();
+      dt.setData('text/plain', String(aId));
+
+      cardA.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }));
+
+      const cRect = cardC.getBoundingClientRect();
+      const clientY = cRect.top + cRect.height * 0.75; // bottom half → 'after'
+      cardCWrapper.dispatchEvent(new DragEvent('dragenter', { bubbles: true, clientY, dataTransfer: dt }));
+      cardCWrapper.dispatchEvent(new DragEvent('dragover', { bubbles: true, clientY, dataTransfer: dt }));
+
+      const lane = cardA.closest('.animate-slide-in');
+      lane.dispatchEvent(new DragEvent('drop', { bubbles: true, dataTransfer: dt }));
+      cardA.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt }));
+    }, { aId: f1.id, cId: f3.id });
+
+    await page.waitForTimeout(800);
+
+    // f1 should now be last: f2 < f3 < f1 in priority
+    const updA = await getFeature(request, f1.id);
+    const updB = await getFeature(request, f2.id);
+    const updC = await getFeature(request, f3.id);
+    expect(updB.priority).toBeLessThan(updC.priority);
+    expect(updC.priority).toBeLessThan(updA.priority);
+
+    await deleteFeature(request, f1.id);
+    await deleteFeature(request, f2.id);
+    await deleteFeature(request, f3.id);
+  });
+
   test('drop indicator appears on card hover during same-lane drag', async ({ page, request }) => {
     const f1 = await createFeature(request, { name: 'Drop Indicator Card A' });
     const f2 = await createFeature(request, { name: 'Drop Indicator Card B' });

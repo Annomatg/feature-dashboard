@@ -187,6 +187,12 @@ class MoveFeatureRequest(BaseModel):
     direction: str  # "up" or "down"
 
 
+class ReorderFeatureRequest(BaseModel):
+    """Request to reorder a feature by placing it before or after a target feature."""
+    target_id: int
+    insert_before: bool
+
+
 @app.get("/")
 async def root():
     """Root endpoint."""
@@ -628,6 +634,63 @@ async def move_feature(feature_id: int, request: MoveFeatureRequest):
     except Exception as e:
         session.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to move feature: {str(e)}")
+    finally:
+        session.close()
+
+
+@app.patch("/api/features/{feature_id}/reorder", response_model=FeatureResponse)
+async def reorder_feature(feature_id: int, request: ReorderFeatureRequest):
+    """
+    Reorder a feature by placing it immediately before or after a target feature.
+
+    Both features must be in the same lane. Redistributes priority values so
+    the dragged card ends up at the exact drop position regardless of distance.
+    """
+    session = get_session()
+    try:
+        feature = session.query(Feature).filter(Feature.id == feature_id).first()
+        if feature is None:
+            raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
+
+        target = session.query(Feature).filter(Feature.id == request.target_id).first()
+        if target is None:
+            raise HTTPException(status_code=404, detail=f"Target feature {request.target_id} not found")
+
+        if feature.passes != target.passes or feature.in_progress != target.in_progress:
+            raise HTTPException(status_code=400, detail="Features must be in the same lane")
+
+        # Get all features in the lane sorted by current priority
+        lane_features = session.query(Feature).filter(
+            Feature.passes == feature.passes,
+            Feature.in_progress == feature.in_progress,
+        ).order_by(Feature.priority.asc()).all()
+
+        # Collect current priority values to reuse (preserves cross-lane priority values)
+        priorities = [f.priority for f in lane_features]
+
+        # Build new order: remove dragged feature, insert at target position
+        ordered = [f for f in lane_features if f.id != feature_id]
+        target_idx = next((i for i, f in enumerate(ordered) if f.id == request.target_id), None)
+
+        if target_idx is None:
+            raise HTTPException(status_code=400, detail="Target feature not found in the same lane")
+
+        insert_idx = target_idx if request.insert_before else target_idx + 1
+        ordered.insert(insert_idx, feature)
+
+        # Reassign priorities in new order
+        for f, p in zip(ordered, priorities):
+            f.priority = p
+
+        session.commit()
+        session.refresh(feature)
+
+        return FeatureResponse(**feature.to_dict())
+    except HTTPException:
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to reorder feature: {str(e)}")
     finally:
         session.close()
 
