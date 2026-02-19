@@ -2,5 +2,13 @@
   {
     "name": "Feature Dashboard",
     "path": "features.db"
+  },
+  {
+    "name": "RL Training",
+    "path": "F:/Work/Godot/rl-training/features.db"
+  },
+  {
+    "name": "RL Dashboard",
+    "path": "F:/Work/Godot/rl-dashboard/features.db"
   }
 ]

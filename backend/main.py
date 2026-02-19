@@ -54,6 +54,13 @@ else:
     _engine, _session_maker = create_database(PROJECT_DIR)
 
 
+@app.on_event("startup")
+async def startup_migrate_all():
+    """Run schema migrations on all configured databases at startup."""
+    from api.migration import migrate_all_dashboards
+    migrate_all_dashboards()
+
+
 def get_session():
     """Get a database session."""
     return _session_maker()

@@ -66,63 +66,93 @@ def get_database_url(project_dir: Path, db_filename: str = "features.db") -> str
     return f"sqlite:///{db_path.as_posix()}"
 
 
-def _migrate_add_in_progress_column(engine) -> None:
-    """Add in_progress column to existing databases that don't have it."""
+# ---------------------------------------------------------------------------
+# Numbered migrations
+# ---------------------------------------------------------------------------
+
+LATEST_SCHEMA_VERSION = 3
+
+
+def _migration_v1(engine) -> None:
+    """v1: Add in_progress column to features table."""
     from sqlalchemy import text
 
     with engine.connect() as conn:
-        # Check if column exists
         result = conn.execute(text("PRAGMA table_info(features)"))
         columns = [row[1] for row in result.fetchall()]
-
         if "in_progress" not in columns:
-            # Add the column with default value
             conn.execute(text("ALTER TABLE features ADD COLUMN in_progress BOOLEAN DEFAULT 0"))
             conn.commit()
 
 
-def _migrate_fix_null_boolean_fields(engine) -> None:
-    """Fix NULL values in passes and in_progress columns."""
+def _migration_v2(engine) -> None:
+    """v2: Fix NULL values in passes and in_progress columns."""
     from sqlalchemy import text
 
     with engine.connect() as conn:
-        # Fix NULL passes values
         conn.execute(text("UPDATE features SET passes = 0 WHERE passes IS NULL"))
-        # Fix NULL in_progress values
         conn.execute(text("UPDATE features SET in_progress = 0 WHERE in_progress IS NULL"))
         conn.commit()
 
 
-def _migrate_add_timestamp_columns(engine) -> None:
-    """Add timestamp columns to existing databases that don't have them."""
+def _migration_v3(engine) -> None:
+    """v3: Add created_at, modified_at, completed_at timestamp columns."""
     from datetime import datetime
     from sqlalchemy import text
 
     with engine.connect() as conn:
-        # Check if columns exist
         result = conn.execute(text("PRAGMA table_info(features)"))
         columns = [row[1] for row in result.fetchall()]
+        current_time = datetime.now().isoformat()
 
         if "created_at" not in columns:
-            # Add created_at (nullable first, then update existing rows)
             conn.execute(text("ALTER TABLE features ADD COLUMN created_at DATETIME"))
-            # Set current timestamp for existing rows
-            current_time = datetime.now().isoformat()
             conn.execute(text(f"UPDATE features SET created_at = '{current_time}' WHERE created_at IS NULL"))
             conn.commit()
 
         if "modified_at" not in columns:
-            # Add modified_at (nullable first, then update existing rows)
             conn.execute(text("ALTER TABLE features ADD COLUMN modified_at DATETIME"))
-            # Set current timestamp for existing rows
-            current_time = datetime.now().isoformat()
             conn.execute(text(f"UPDATE features SET modified_at = '{current_time}' WHERE modified_at IS NULL"))
             conn.commit()
 
         if "completed_at" not in columns:
-            # Add completed_at (nullable)
             conn.execute(text("ALTER TABLE features ADD COLUMN completed_at DATETIME"))
             conn.commit()
+
+
+_MIGRATIONS = [
+    (1, _migration_v1),
+    (2, _migration_v2),
+    (3, _migration_v3),
+]
+
+
+def run_migrations(engine) -> None:
+    """Run any missing schema migrations sequentially and update db_meta."""
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        # Ensure db_meta table exists (raw SQL — no SQLAlchemy model needed)
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS db_meta (schema_version INTEGER NOT NULL)"
+        ))
+
+        # Get current version; 0 means pre-versioning or brand-new DB
+        result = conn.execute(text("SELECT schema_version FROM db_meta"))
+        row = result.fetchone()
+        current_version = row[0] if row else 0
+
+        if row is None:
+            conn.execute(text("INSERT INTO db_meta (schema_version) VALUES (0)"))
+            conn.commit()
+
+    for version, migration_fn in _MIGRATIONS:
+        if version > current_version:
+            migration_fn(engine)
+            with engine.connect() as conn:
+                conn.execute(text(f"UPDATE db_meta SET schema_version = {version}"))
+                conn.commit()
+            current_version = version
 
 
 def create_database(project_dir: Path, db_filename: str = "features.db") -> tuple:
@@ -139,11 +169,7 @@ def create_database(project_dir: Path, db_filename: str = "features.db") -> tupl
     db_url = get_database_url(project_dir, db_filename)
     engine = create_engine(db_url, connect_args={"check_same_thread": False})
     Base.metadata.create_all(bind=engine)
-
-    # Migrate existing databases
-    _migrate_add_in_progress_column(engine)
-    _migrate_fix_null_boolean_fields(engine)
-    _migrate_add_timestamp_columns(engine)
+    run_migrations(engine)
 
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     return engine, SessionLocal
@@ -173,4 +199,3 @@ def get_db() -> Session:
         yield db
     finally:
         db.close()
- 

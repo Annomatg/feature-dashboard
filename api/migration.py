@@ -13,7 +13,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from api.database import Feature
+from api.database import Feature, create_database
 
 
 def migrate_json_to_sqlite(
@@ -112,6 +112,50 @@ def migrate_json_to_sqlite(
         # Continue anyway - the data is in the database
 
     return True
+
+
+def migrate_all_dashboards(config_path: Optional[Path] = None) -> None:
+    """
+    Run schema migrations on all databases listed in dashboards.json.
+
+    Reads the dashboards config and calls create_database() on each path
+    so that every DB is brought up to the latest schema version.
+
+    Args:
+        config_path: Path to dashboards.json (defaults to the feature-dashboard root)
+    """
+    _feature_dashboard_dir = Path(__file__).parent.parent
+
+    if config_path is None:
+        config_path = _feature_dashboard_dir / "dashboards.json"
+
+    if not config_path.exists():
+        print(f"No dashboards config found at {config_path}")
+        return
+
+    with open(config_path, "r", encoding="utf-8") as f:
+        dashboards = json.load(f)
+
+    for db_config in dashboards:
+        db_path_str = db_config.get("path", "")
+        db_path = Path(db_path_str)
+
+        # Resolve relative paths against feature-dashboard directory
+        if not db_path.is_absolute():
+            db_path = _feature_dashboard_dir / db_path
+
+        name = db_config.get("name", db_path_str)
+
+        if not db_path.exists():
+            print(f"Skipping '{name}': DB not found at {db_path}")
+            continue
+
+        print(f"Migrating '{name}'...")
+        try:
+            create_database(db_path.parent, db_filename=db_path.name)
+            print(f"  OK: {db_path}")
+        except Exception as e:
+            print(f"  ERROR: {e}")
 
 
 def export_to_json(
