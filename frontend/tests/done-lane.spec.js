@@ -146,6 +146,10 @@ test.describe('Done lane: features persist after move', () => {
 });
 
 test.describe('Done lane: pagination', () => {
+  // Must run serially — tests share the same DB and the "show more" tests create 22 done
+  // features that would interfere with the "no show more" test if run in parallel.
+  test.describe.configure({ mode: 'serial' });
+
   const createdIds = [];
 
   test.afterEach(async ({ request }) => {
@@ -200,17 +204,11 @@ test.describe('Done lane: pagination', () => {
   });
 
   test('should not show "Show more" button when 20 or fewer done features exist', async ({ page, request }) => {
-    // Only create 3 done features (the test DB seeded features have some done too, but let's just check)
+    // Only create 2 done features. Serial execution ensures sibling pagination tests
+    // have already cleaned up their 22 done features before this test runs.
     const feature1 = await createDoneFeature(request, { name: 'Small Done Feature 1' });
     const feature2 = await createDoneFeature(request, { name: 'Small Done Feature 2' });
     createdIds.push(feature1.id, feature2.id);
-
-    // Check total done count is <= 20 first
-    const stats = await (await request.get(`${API}/api/features/stats`)).json();
-    if (stats.passing > 20) {
-      test.skip(); // Skip if pre-existing features push us over 20
-      return;
-    }
 
     await page.goto('/');
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
