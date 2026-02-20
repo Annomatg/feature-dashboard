@@ -14,6 +14,7 @@ Uses dependency injection to override get_session() with isolated test databases
 DOES NOT modify production database.
 """
 
+import subprocess
 import sys
 from pathlib import Path
 import tempfile
@@ -541,6 +542,97 @@ class TestIntegrationScenarios:
         features = response.json()
         assert len(features) == 4
         assert all(f["name"].startswith("Feature ") for f in features)
+
+
+class TestLaunchClaude:
+    """Tests for POST /api/features/{id}/launch-claude"""
+
+    def test_launch_todo_feature(self, client, monkeypatch):
+        """Test launching Claude for a TODO feature succeeds."""
+        popen_calls = []
+
+        def mock_popen(*args, **kwargs):
+            popen_calls.append({"args": args, "kwargs": kwargs})
+
+            class MockProcess:
+                pid = 12345
+
+            return MockProcess()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        response = client.post("/api/features/1/launch-claude")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["launched"] is True
+        assert data["feature_id"] == 1
+        assert "Feature #1" in data["prompt"]
+        assert "Feature 1" in data["prompt"]
+        assert "Backend" in data["prompt"]
+        assert "working_directory" in data
+        assert len(popen_calls) == 1
+
+    def test_launch_in_progress_feature(self, client, monkeypatch):
+        """Test launching Claude for an IN PROGRESS feature succeeds."""
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+
+        # Feature 4 is in_progress=True, passes=False
+        response = client.post("/api/features/4/launch-claude")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["launched"] is True
+        assert data["feature_id"] == 4
+        assert "Feature #4" in data["prompt"]
+
+    def test_launch_done_feature_fails(self, client, monkeypatch):
+        """Test that launching Claude for a completed feature returns 400."""
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+
+        # Feature 3 is passes=True (done)
+        response = client.post("/api/features/3/launch-claude")
+
+        assert response.status_code == 400
+        assert "completed" in response.json()["detail"].lower()
+
+    def test_launch_not_found(self, client, monkeypatch):
+        """Test launching Claude for a non-existent feature returns 404."""
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+
+        response = client.post("/api/features/999/launch-claude")
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    def test_launch_claude_not_in_path(self, client, monkeypatch):
+        """Test that missing claude CLI returns 500 with helpful message."""
+
+        def mock_popen_not_found(*args, **kwargs):
+            raise FileNotFoundError("claude not found")
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen_not_found)
+
+        response = client.post("/api/features/1/launch-claude")
+
+        assert response.status_code == 500
+        assert "Claude CLI not found" in response.json()["detail"]
+        assert "PATH" in response.json()["detail"]
+
+    def test_prompt_contains_feature_details(self, client, monkeypatch):
+        """Test that the generated prompt includes all key feature details."""
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+
+        response = client.post("/api/features/1/launch-claude")
+
+        assert response.status_code == 200
+        prompt = response.json()["prompt"]
+        # Prompt should contain id, category, name, description, and steps
+        assert "Feature #1" in prompt
+        assert "Backend" in prompt
+        assert "Feature 1" in prompt
+        assert "Test feature 1" in prompt
+        assert "Step 1" in prompt
 
 
 if __name__ == "__main__":

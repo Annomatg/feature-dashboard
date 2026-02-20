@@ -7,7 +7,9 @@ FastAPI server exposing feature data from SQLite database.
 
 import json
 import sqlite3
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -200,6 +202,14 @@ class ReorderFeatureRequest(BaseModel):
     insert_before: bool
 
 
+class LaunchClaudeResponse(BaseModel):
+    """Response for launching a Claude Code session."""
+    launched: bool
+    feature_id: int
+    prompt: str
+    working_directory: str
+
+
 @app.get("/")
 async def root():
     """Root endpoint."""
@@ -218,7 +228,8 @@ async def root():
             "stats": "GET /api/features/stats",
             "databases": "GET /api/databases",
             "databases_active": "GET /api/databases/active",
-            "databases_select": "POST /api/databases/select"
+            "databases_select": "POST /api/databases/select",
+            "launch_claude": "POST /api/features/{id}/launch-claude"
         }
     }
 
@@ -698,6 +709,75 @@ async def reorder_feature(feature_id: int, request: ReorderFeatureRequest):
     except Exception as e:
         session.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to reorder feature: {str(e)}")
+    finally:
+        session.close()
+
+
+@app.post("/api/features/{feature_id}/launch-claude", response_model=LaunchClaudeResponse)
+async def launch_claude_for_feature(feature_id: int):
+    """
+    Launch a Claude Code session to work on a specific feature.
+
+    Opens Claude in a new terminal window with the feature context as the initial prompt.
+    The working directory is the folder containing the active features.db, so Claude
+    operates in the correct project context.
+
+    Only works for TODO and IN PROGRESS features (not completed features).
+    """
+    session = get_session()
+    try:
+        feature = session.query(Feature).filter(Feature.id == feature_id).first()
+
+        if feature is None:
+            raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
+
+        if feature.passes:
+            raise HTTPException(status_code=400, detail="Cannot launch Claude for a completed feature")
+
+        # Build the prompt with full feature context
+        steps_text = "\n".join(f"{i + 1}. {step}" for i, step in enumerate(feature.steps))
+        prompt = (
+            f"Please work on the following feature:\n\n"
+            f"Feature #{feature.id} [{feature.category}]: {feature.name}\n\n"
+            f"Description:\n{feature.description}\n\n"
+            f"Steps:\n{steps_text}"
+        )
+
+        # Launch Claude in the directory containing the active features.db
+        working_dir = str(_current_db_path.parent)
+
+        try:
+            if sys.platform == "win32":
+                # Write prompt to a temp file to avoid shell quoting issues
+                with tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".txt", delete=False, encoding="utf-8"
+                ) as f:
+                    f.write(prompt)
+                    prompt_file = f.name
+
+                # PowerShell reads the file and passes its content as the first message
+                ps_cmd = f'claude (Get-Content -LiteralPath "{prompt_file}" -Raw)'
+                subprocess.Popen(
+                    ["powershell", "-NoExit", "-Command", ps_cmd],
+                    creationflags=subprocess.CREATE_NEW_CONSOLE,
+                    cwd=working_dir,
+                )
+            else:
+                subprocess.Popen(["claude", prompt], cwd=working_dir)
+        except FileNotFoundError:
+            raise HTTPException(
+                status_code=500,
+                detail="Claude CLI not found. Make sure 'claude' is in your PATH.",
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to launch Claude: {str(e)}")
+
+        return LaunchClaudeResponse(
+            launched=True,
+            feature_id=feature_id,
+            prompt=prompt,
+            working_directory=working_dir,
+        )
     finally:
         session.close()
 
