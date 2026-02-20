@@ -170,6 +170,179 @@ test.describe('Detail Panel', () => {
     await expect(page.getByTestId('confirm-delete-btn')).not.toBeVisible();
   });
 
+  test('should show Launch Claude button for TODO feature', async ({ page }) => {
+    // Create a TODO feature (not passes, not in_progress)
+    const createResponse = await page.request.post('http://localhost:8001/api/features', {
+      data: {
+        category: 'Test',
+        name: 'Launch Claude TODO Test',
+        description: 'Test feature for launch claude button',
+        steps: ['Step 1']
+      }
+    });
+    expect(createResponse.ok()).toBeTruthy();
+    const created = await createResponse.json();
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const testCard = page.locator('.bg-surface.border.rounded-lg.p-4').filter({ hasText: 'Launch Claude TODO Test' });
+    await testCard.waitFor({ state: 'visible' });
+    await testCard.click();
+
+    await expect(page.getByTestId('detail-panel')).toBeVisible();
+    await expect(page.getByTestId('launch-claude-btn')).toBeVisible();
+
+    // Clean up
+    await page.request.delete(`http://localhost:8001/api/features/${created.id}`);
+  });
+
+  test('should show Launch Claude button for IN PROGRESS feature', async ({ page }) => {
+    // Create an IN PROGRESS feature
+    const createResponse = await page.request.post('http://localhost:8001/api/features', {
+      data: {
+        category: 'Test',
+        name: 'Launch Claude InProgress Test',
+        description: 'Test feature in progress for launch claude button',
+        steps: ['Step 1'],
+        in_progress: true
+      }
+    });
+    expect(createResponse.ok()).toBeTruthy();
+    const created = await createResponse.json();
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const testCard = page.locator('.bg-surface.border.rounded-lg.p-4').filter({ hasText: 'Launch Claude InProgress Test' });
+    await testCard.waitFor({ state: 'visible' });
+    await testCard.click();
+
+    await expect(page.getByTestId('detail-panel')).toBeVisible();
+    await expect(page.getByTestId('launch-claude-btn')).toBeVisible();
+
+    // Clean up
+    await page.request.delete(`http://localhost:8001/api/features/${created.id}`);
+  });
+
+  test('should NOT show Launch Claude button for DONE feature', async ({ page }) => {
+    // Create a feature then mark it as passing
+    const createResponse = await page.request.post('http://localhost:8001/api/features', {
+      data: {
+        category: 'Test',
+        name: 'Launch Claude Done Test',
+        description: 'Test feature done for launch claude button',
+        steps: ['Step 1']
+      }
+    });
+    expect(createResponse.ok()).toBeTruthy();
+    const created = await createResponse.json();
+
+    // Mark as passing via state endpoint
+    const updateResponse = await page.request.patch(`http://localhost:8001/api/features/${created.id}/state`, {
+      data: { passes: true }
+    });
+    expect(updateResponse.ok()).toBeTruthy();
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const testCard = page.locator('.bg-surface.border.rounded-lg.p-4').filter({ hasText: 'Launch Claude Done Test' });
+    await testCard.waitFor({ state: 'visible' });
+    await testCard.click();
+
+    await expect(page.getByTestId('detail-panel')).toBeVisible();
+    await expect(page.getByTestId('launch-claude-btn')).not.toBeVisible();
+
+    // Clean up
+    await page.request.delete(`http://localhost:8001/api/features/${created.id}`);
+  });
+
+  test('should call launch-claude API and show success message', async ({ page }) => {
+    // Create a TODO feature
+    const createResponse = await page.request.post('http://localhost:8001/api/features', {
+      data: {
+        category: 'Test',
+        name: 'Launch Claude API Call Test',
+        description: 'Test feature for launch claude API call',
+        steps: ['Step 1']
+      }
+    });
+    expect(createResponse.ok()).toBeTruthy();
+    const created = await createResponse.json();
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    // Intercept the launch-claude API call to avoid actually launching Claude
+    await page.route(`**/api/features/${created.id}/launch-claude`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          launched: true,
+          feature_id: created.id,
+          prompt: 'Test prompt',
+          working_directory: '/test'
+        })
+      });
+    });
+
+    const testCard = page.locator('.bg-surface.border.rounded-lg.p-4').filter({ hasText: 'Launch Claude API Call Test' });
+    await testCard.waitFor({ state: 'visible' });
+    await testCard.click();
+
+    await expect(page.getByTestId('detail-panel')).toBeVisible();
+    await page.getByTestId('launch-claude-btn').click();
+
+    // Should show success message
+    await expect(page.getByTestId('launch-claude-message')).toBeVisible();
+    await expect(page.getByTestId('launch-claude-message')).toHaveText('Claude launched!');
+
+    // Clean up
+    await page.request.delete(`http://localhost:8001/api/features/${created.id}`);
+  });
+
+  test('should show error message when launch-claude API fails', async ({ page }) => {
+    // Create a TODO feature
+    const createResponse = await page.request.post('http://localhost:8001/api/features', {
+      data: {
+        category: 'Test',
+        name: 'Launch Claude Error Test',
+        description: 'Test feature for launch claude error',
+        steps: ['Step 1']
+      }
+    });
+    expect(createResponse.ok()).toBeTruthy();
+    const created = await createResponse.json();
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    // Intercept to simulate failure
+    await page.route(`**/api/features/${created.id}/launch-claude`, async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'Claude CLI not found' })
+      });
+    });
+
+    const testCard = page.locator('.bg-surface.border.rounded-lg.p-4').filter({ hasText: 'Launch Claude Error Test' });
+    await testCard.waitFor({ state: 'visible' });
+    await testCard.click();
+
+    await expect(page.getByTestId('detail-panel')).toBeVisible();
+    await page.getByTestId('launch-claude-btn').click();
+
+    // Should show error message
+    await expect(page.getByTestId('launch-claude-message')).toBeVisible();
+    await expect(page.getByTestId('launch-claude-message')).toHaveText('Claude CLI not found');
+
+    // Clean up
+    await page.request.delete(`http://localhost:8001/api/features/${created.id}`);
+  });
+
   test('should delete feature and close panel', async ({ page }) => {
     // Create a disposable test feature
     const createResponse = await page.request.post('http://localhost:8001/api/features', {

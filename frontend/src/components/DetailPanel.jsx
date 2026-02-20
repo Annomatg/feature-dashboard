@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { X, Trash2, Check, RotateCcw, Plus, ChevronUp, ChevronDown } from 'lucide-react'
+import { X, Trash2, Check, RotateCcw, Plus, ChevronUp, ChevronDown, Terminal } from 'lucide-react'
 
 async function updateFeature(featureId, data) {
   const response = await fetch(`/api/features/${featureId}`, {
@@ -22,6 +22,17 @@ async function deleteFeatureApi(featureId) {
     const error = await response.json()
     throw new Error(error.detail || 'Failed to delete feature')
   }
+}
+
+async function launchClaudeApi(featureId) {
+  const response = await fetch(`/api/features/${featureId}/launch-claude`, {
+    method: 'POST'
+  })
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.detail || 'Failed to launch Claude')
+  }
+  return response.json()
 }
 
 // Editable field that shows value inline, turns into input on click
@@ -281,6 +292,8 @@ function EditableSteps({ steps, onSave }) {
 function DetailPanel({ feature, onClose, onUpdate, onDelete }) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  const [isLaunching, setIsLaunching] = useState(false)
+  const [launchMessage, setLaunchMessage] = useState(null)
   const panelRef = useRef(null)
 
   // Close on Escape key
@@ -323,6 +336,20 @@ function DetailPanel({ feature, onClose, onUpdate, onDelete }) {
       onClose()
     } catch (err) {
       console.error('Failed to delete feature:', err)
+    }
+  }
+
+  const handleLaunchClaude = async () => {
+    setIsLaunching(true)
+    setLaunchMessage(null)
+    try {
+      await launchClaudeApi(feature.id)
+      setLaunchMessage({ type: 'success', text: 'Claude launched!' })
+    } catch (err) {
+      setLaunchMessage({ type: 'error', text: err.message || 'Failed to launch' })
+    } finally {
+      setIsLaunching(false)
+      setTimeout(() => setLaunchMessage(null), 3000)
     }
   }
 
@@ -466,8 +493,32 @@ function DetailPanel({ feature, onClose, onUpdate, onDelete }) {
           </div>
         </div>
 
-        {/* Footer - Delete */}
-        <div className="px-5 py-4 border-t border-border flex-shrink-0">
+        {/* Footer */}
+        <div className="px-5 py-4 border-t border-border flex-shrink-0 space-y-2">
+          {/* Launch Claude button - only for TODO and IN PROGRESS */}
+          {!feature.passes && (
+            <div>
+              <button
+                onClick={handleLaunchClaude}
+                disabled={isLaunching}
+                data-testid="launch-claude-btn"
+                className="w-full py-2 rounded font-mono text-sm font-semibold border border-primary text-primary hover:bg-primary hover:text-black transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Terminal size={14} />
+                {isLaunching ? 'Launching...' : 'Launch Claude'}
+              </button>
+              {launchMessage && (
+                <p
+                  data-testid="launch-claude-message"
+                  className={`mt-1.5 text-xs font-mono text-center ${launchMessage.type === 'success' ? 'text-green-400' : 'text-error'}`}
+                >
+                  {launchMessage.text}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Delete */}
           {showDeleteConfirm ? (
             <div className="flex gap-2">
               <button
