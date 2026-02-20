@@ -357,7 +357,7 @@ function KanbanBoard() {
 
       <div className="flex-1 overflow-hidden px-6 pb-6 pt-6">
         {/* Kanban Board - 3 Column Layout */}
-        <div className="max-w-[1800px] mx-auto grid grid-cols-3 gap-6 h-full">
+        <div className="max-w-[1800px] mx-auto grid grid-cols-3 grid-rows-1 gap-6 h-full">
           <KanbanLane
             title={LANE_CONFIG.todo.title}
             count={todoFeatures.length}
