@@ -41,6 +41,14 @@ app.add_middleware(
 # Database setup
 PROJECT_DIR = Path(__file__).parent.parent
 CONFIG_FILE = PROJECT_DIR / "dashboards.json"
+SETTINGS_FILE = PROJECT_DIR / "settings.json"
+
+DEFAULT_PROMPT_TEMPLATE = (
+    "Please work on the following feature:\n\n"
+    "Feature #{feature_id} [{category}]: {name}\n\n"
+    "Description:\n{description}\n\n"
+    "Steps:\n{steps}"
+)
 
 # Support test database via environment variable
 import os
@@ -66,6 +74,26 @@ async def startup_migrate_all():
 def get_session():
     """Get a database session."""
     return _session_maker()
+
+
+def load_settings() -> dict:
+    """Load settings from settings.json, returning defaults if not found."""
+    if not SETTINGS_FILE.exists():
+        return {"claude_prompt_template": DEFAULT_PROMPT_TEMPLATE}
+    try:
+        with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if "claude_prompt_template" not in data:
+            data["claude_prompt_template"] = DEFAULT_PROMPT_TEMPLATE
+        return data
+    except Exception:
+        return {"claude_prompt_template": DEFAULT_PROMPT_TEMPLATE}
+
+
+def save_settings(settings: dict) -> None:
+    """Save settings to settings.json."""
+    with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(settings, f, indent=2, ensure_ascii=False)
 
 
 def load_dashboards_config() -> list[dict]:
@@ -210,6 +238,16 @@ class LaunchClaudeResponse(BaseModel):
     working_directory: str
 
 
+class SettingsResponse(BaseModel):
+    """Application settings response."""
+    claude_prompt_template: str
+
+
+class UpdateSettingsRequest(BaseModel):
+    """Request to update application settings."""
+    claude_prompt_template: str
+
+
 @app.get("/")
 async def root():
     """Root endpoint."""
@@ -229,7 +267,9 @@ async def root():
             "databases": "GET /api/databases",
             "databases_active": "GET /api/databases/active",
             "databases_select": "POST /api/databases/select",
-            "launch_claude": "POST /api/features/{id}/launch-claude"
+            "launch_claude": "POST /api/features/{id}/launch-claude",
+            "get_settings": "GET /api/settings",
+            "update_settings": "PUT /api/settings"
         }
     }
 
@@ -713,6 +753,24 @@ async def reorder_feature(feature_id: int, request: ReorderFeatureRequest):
         session.close()
 
 
+@app.get("/api/settings", response_model=SettingsResponse)
+async def get_settings():
+    """Get application settings."""
+    settings = load_settings()
+    return SettingsResponse(**settings)
+
+
+@app.put("/api/settings", response_model=SettingsResponse)
+async def update_settings(request: UpdateSettingsRequest):
+    """Update application settings."""
+    try:
+        settings = {"claude_prompt_template": request.claude_prompt_template}
+        save_settings(settings)
+        return SettingsResponse(**settings)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save settings: {str(e)}")
+
+
 @app.post("/api/features/{feature_id}/launch-claude", response_model=LaunchClaudeResponse)
 async def launch_claude_for_feature(feature_id: int):
     """
@@ -734,13 +792,20 @@ async def launch_claude_for_feature(feature_id: int):
         if feature.passes:
             raise HTTPException(status_code=400, detail="Cannot launch Claude for a completed feature")
 
-        # Build the prompt with full feature context
+        # Load prompt template from settings
+        settings = load_settings()
+        template = settings.get("claude_prompt_template", DEFAULT_PROMPT_TEMPLATE)
+
+        # Build steps text
         steps_text = "\n".join(f"{i + 1}. {step}" for i, step in enumerate(feature.steps))
-        prompt = (
-            f"Please work on the following feature:\n\n"
-            f"Feature #{feature.id} [{feature.category}]: {feature.name}\n\n"
-            f"Description:\n{feature.description}\n\n"
-            f"Steps:\n{steps_text}"
+
+        # Build prompt using template
+        prompt = template.format(
+            feature_id=feature.id,
+            category=feature.category,
+            name=feature.name,
+            description=feature.description,
+            steps=steps_text
         )
 
         # Launch Claude in the directory containing the active features.db
@@ -757,11 +822,26 @@ async def launch_claude_for_feature(feature_id: int):
 
                 # PowerShell reads the file and passes its content as the first message
                 ps_cmd = f'claude (Get-Content -LiteralPath "{prompt_file}" -Raw)'
-                subprocess.Popen(
-                    ["powershell", "-NoExit", "-Command", ps_cmd],
-                    creationflags=subprocess.CREATE_NEW_CONSOLE,
-                    cwd=working_dir,
-                )
+                # Try pwsh (PowerShell 7) first, fall back to powershell (Windows PS 5)
+                ps_executables = ["pwsh", "powershell"]
+                launched = False
+                for ps_exe in ps_executables:
+                    try:
+                        subprocess.Popen(
+                            [ps_exe, "-NoExit", "-Command", ps_cmd],
+                            creationflags=subprocess.CREATE_NEW_CONSOLE,
+                            cwd=working_dir,
+                        )
+                        launched = True
+                        break
+                    except FileNotFoundError:
+                        continue
+
+                if not launched:
+                    raise HTTPException(
+                        status_code=500,
+                        detail="No PowerShell found. Install PowerShell 7 (pwsh) or ensure powershell.exe is available.",
+                    )
             else:
                 subprocess.Popen(["claude", prompt], cwd=working_dir)
         except FileNotFoundError:

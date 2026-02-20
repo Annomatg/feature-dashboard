@@ -616,8 +616,7 @@ class TestLaunchClaude:
         response = client.post("/api/features/1/launch-claude")
 
         assert response.status_code == 500
-        assert "Claude CLI not found" in response.json()["detail"]
-        assert "PATH" in response.json()["detail"]
+        assert "No PowerShell found" in response.json()["detail"]
 
     def test_prompt_contains_feature_details(self, client, monkeypatch):
         """Test that the generated prompt includes all key feature details."""
@@ -633,6 +632,59 @@ class TestLaunchClaude:
         assert "Feature 1" in prompt
         assert "Test feature 1" in prompt
         assert "Step 1" in prompt
+
+
+# ==============================================================================
+# Settings endpoints
+# ==============================================================================
+
+def test_get_settings_returns_defaults(client, tmp_path, monkeypatch):
+    """GET /api/settings returns default template when no settings.json exists."""
+    import backend.main as main_module
+    # Point SETTINGS_FILE to a non-existent file in tmp_path
+    monkeypatch.setattr(main_module, 'SETTINGS_FILE', tmp_path / "settings_nonexistent.json")
+
+    response = client.get("/api/settings")
+    assert response.status_code == 200
+    data = response.json()
+    assert "claude_prompt_template" in data
+    assert len(data["claude_prompt_template"]) > 0
+
+
+def test_put_settings_saves_and_returns(client, tmp_path, monkeypatch):
+    """PUT /api/settings saves settings and returns them."""
+    import backend.main as main_module
+    settings_file = tmp_path / "test_settings.json"
+    monkeypatch.setattr(main_module, 'SETTINGS_FILE', settings_file)
+
+    new_template = "Custom prompt: {name} - {description}"
+    response = client.put("/api/settings", json={"claude_prompt_template": new_template})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["claude_prompt_template"] == new_template
+
+    # Verify it was saved to disk
+    assert settings_file.exists()
+    import json
+    saved = json.loads(settings_file.read_text())
+    assert saved["claude_prompt_template"] == new_template
+
+
+def test_get_settings_after_save(client, tmp_path, monkeypatch):
+    """GET /api/settings returns previously saved settings."""
+    import backend.main as main_module
+    settings_file = tmp_path / "test_settings.json"
+    monkeypatch.setattr(main_module, 'SETTINGS_FILE', settings_file)
+
+    # Save a custom template
+    custom_template = "My custom template {feature_id}"
+    client.put("/api/settings", json={"claude_prompt_template": custom_template})
+
+    # Now get and verify
+    response = client.get("/api/settings")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["claude_prompt_template"] == custom_template
 
 
 if __name__ == "__main__":

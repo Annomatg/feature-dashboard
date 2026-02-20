@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import KanbanLane from './KanbanLane'
 import Toast from './Toast'
 import DetailPanel from './DetailPanel'
+import SettingsPanel from './SettingsPanel'
 import Header from './Header'
 import InfoBar from './InfoBar'
 
@@ -123,6 +124,7 @@ function KanbanBoard() {
   const [doneFeatures, setDoneFeatures] = useState([])
   const [doneTotalCount, setDoneTotalCount] = useState(0)
   const [infoDismissed, setInfoDismissed] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   const queryClient = useQueryClient()
   const dragState = useRef(null)
@@ -345,6 +347,7 @@ function KanbanBoard() {
         totalFeatures={totalFeatures}
         inProgressCount={inProgressCount}
         doneCount={doneTotalCount}
+        onSettingsClick={() => setSettingsOpen(true)}
       />
 
       {showInfoBar && (
@@ -440,6 +443,13 @@ function KanbanBoard() {
           onClose={handlePanelClose}
           onUpdate={handlePanelUpdate}
           onDelete={handlePanelDelete}
+        />
+      )}
+
+      {/* Settings Panel */}
+      {settingsOpen && (
+        <SettingsPanel
+          onClose={() => setSettingsOpen(false)}
         />
       )}
     </div>

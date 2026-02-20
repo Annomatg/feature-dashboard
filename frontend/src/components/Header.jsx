@@ -1,3 +1,4 @@
+import { Settings } from 'lucide-react'
 import DatabaseSelector from './DatabaseSelector'
 
 function StatPill({ label, value, color }) {
@@ -13,7 +14,7 @@ function StatPill({ label, value, color }) {
   )
 }
 
-function Header({ totalFeatures, inProgressCount, doneCount }) {
+function Header({ totalFeatures, inProgressCount, doneCount, onSettingsClick }) {
   const donePercentage = totalFeatures > 0
     ? Math.round((doneCount / totalFeatures) * 100)
     : 0
@@ -53,6 +54,17 @@ function Header({ totalFeatures, inProgressCount, doneCount }) {
 
         {/* Database selector */}
         <DatabaseSelector />
+
+        {/* Settings button */}
+        <button
+          onClick={onSettingsClick}
+          data-testid="settings-btn"
+          className="p-2 rounded hover:bg-surface-light transition-colors"
+          aria-label="Open settings"
+          title="Settings"
+        >
+          <Settings size={18} className="text-text-secondary hover:text-text-primary transition-colors" />
+        </button>
       </div>
     </header>
   )
