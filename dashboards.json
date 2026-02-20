@@ -10,5 +10,9 @@
   {
     "name": "RL Dashboard",
     "path": "F:/Work/Godot/rl-dashboard/features.db"
+  },
+  {
+    "name": "Code Similarity MCP Dashboard",
+    "path": "F:/Work/Godot/code-similarity-mcp/features.db"
   }
 ]
