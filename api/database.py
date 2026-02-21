@@ -8,19 +8,40 @@ SQLite database schema for feature storage using SQLAlchemy.
 from pathlib import Path
 from typing import Optional
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, create_engine
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, create_engine
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, relationship, sessionmaker
 from sqlalchemy.sql import func
 from sqlalchemy.types import JSON
 
 Base = declarative_base()
 
 
+class Comment(Base):
+    """Comment model for storing notes/results attached to a feature."""
+
+    __tablename__ = "comments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    feature_id = Column(Integer, ForeignKey("features.id", ondelete="CASCADE"), nullable=False, index=True)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=func.now())
+
+    def to_dict(self) -> dict:
+        """Convert comment to dictionary for JSON serialization."""
+        return {
+            "id": self.id,
+            "feature_id": self.feature_id,
+            "content": self.content,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
 class Feature(Base):
     """Feature model representing a test case/feature to implement."""
 
     __tablename__ = "features"
+
 
     id = Column(Integer, primary_key=True, index=True)
     priority = Column(Integer, nullable=False, default=999, index=True)
@@ -72,7 +93,7 @@ def get_database_url(project_dir: Path, db_filename: str = "features.db") -> str
 # Numbered migrations
 # ---------------------------------------------------------------------------
 
-LATEST_SCHEMA_VERSION = 4
+LATEST_SCHEMA_VERSION = 5
 
 
 def _migration_v1(engine) -> None:
@@ -135,11 +156,32 @@ def _migration_v4(engine) -> None:
             conn.commit()
 
 
+def _migration_v5(engine) -> None:
+    """v5: Create comments table for storing notes/results attached to features."""
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='comments'"))
+        if result.fetchone() is None:
+            conn.execute(text("""
+                CREATE TABLE comments (
+                    id INTEGER PRIMARY KEY,
+                    feature_id INTEGER NOT NULL REFERENCES features(id) ON DELETE CASCADE,
+                    content TEXT NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            conn.execute(text("CREATE INDEX ix_comments_id ON comments (id)"))
+            conn.execute(text("CREATE INDEX ix_comments_feature_id ON comments (feature_id)"))
+            conn.commit()
+
+
 _MIGRATIONS = [
     (1, _migration_v1),
     (2, _migration_v2),
     (3, _migration_v3),
     (4, _migration_v4),
+    (5, _migration_v5),
 ]
 
 
