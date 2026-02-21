@@ -619,7 +619,7 @@ class TestLaunchClaude:
         assert "No PowerShell found" in response.json()["detail"]
 
     def test_launch_uses_full_access_mode(self, client, monkeypatch):
-        """Test that Claude is launched with --dangerouslySkipPermissions for full access mode."""
+        """Test that Claude is launched with --dangerously-skip-permissions for full access mode."""
         popen_calls = []
 
         def mock_popen(*args, **kwargs):
@@ -637,12 +637,12 @@ class TestLaunchClaude:
         assert response.status_code == 200
         assert len(popen_calls) == 1
 
-        # Verify --dangerouslySkipPermissions is included in the command.
-        # On Windows, the command is a list like ['pwsh', '-NoExit', '-Command', 'claude --model ... --dangerouslySkipPermissions ...']
+        # Verify --dangerously-skip-permissions is included in the command.
+        # On Windows, the command is a list like ['pwsh', '-NoExit', '-Command', 'claude --model ... --dangerously-skip-permissions ...']
         # so we check that the flag appears somewhere in the full command string.
         call_args = popen_calls[0]["args"][0]  # First positional arg is the command list/string
         full_command = " ".join(call_args) if isinstance(call_args, list) else str(call_args)
-        assert "--dangerouslySkipPermissions" in full_command
+        assert "--dangerously-skip-permissions" in full_command
 
     def test_prompt_contains_feature_details(self, client, monkeypatch, tmp_path):
         """Test that the generated prompt includes all key feature details."""
