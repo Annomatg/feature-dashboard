@@ -618,8 +618,12 @@ class TestLaunchClaude:
         assert response.status_code == 500
         assert "No PowerShell found" in response.json()["detail"]
 
-    def test_prompt_contains_feature_details(self, client, monkeypatch):
+    def test_prompt_contains_feature_details(self, client, monkeypatch, tmp_path):
         """Test that the generated prompt includes all key feature details."""
+        import backend.main as main_module
+
+        # Use a fresh settings file with the default template so description is included
+        monkeypatch.setattr(main_module, 'SETTINGS_FILE', tmp_path / "settings.json")
         monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
 
         response = client.post("/api/features/1/launch-claude")
@@ -685,6 +689,158 @@ def test_get_settings_after_save(client, tmp_path, monkeypatch):
     assert response.status_code == 200
     data = response.json()
     assert data["claude_prompt_template"] == custom_template
+
+
+# ==============================================================================
+# Model field tests
+# ==============================================================================
+
+class TestModelField:
+    """Tests for the optional model field on features."""
+
+    def test_feature_default_model_is_sonnet(self, client):
+        """New features default to 'sonnet' model."""
+        response = client.get("/api/features/1")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["model"] == "sonnet"
+
+    def test_update_model_to_opus(self, client):
+        """Test updating model to opus."""
+        response = client.put("/api/features/1", json={"model": "opus"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["model"] == "opus"
+
+    def test_update_model_to_haiku(self, client):
+        """Test updating model to haiku."""
+        response = client.put("/api/features/1", json={"model": "haiku"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["model"] == "haiku"
+
+    def test_update_model_to_sonnet(self, client):
+        """Test updating model back to sonnet."""
+        # First set to opus
+        client.put("/api/features/1", json={"model": "opus"})
+        # Then back to sonnet
+        response = client.put("/api/features/1", json={"model": "sonnet"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["model"] == "sonnet"
+
+    def test_update_invalid_model_returns_400(self, client):
+        """Test that invalid model value returns 400."""
+        response = client.put("/api/features/1", json={"model": "gpt-4"})
+        assert response.status_code == 400
+        assert "invalid model" in response.json()["detail"].lower()
+
+    def test_update_model_does_not_change_other_fields(self, client):
+        """Test that updating model leaves other fields unchanged."""
+        response = client.put("/api/features/1", json={"model": "haiku"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["name"] == "Feature 1"
+        assert data["category"] == "Backend"
+        assert data["model"] == "haiku"
+
+    def test_create_feature_has_default_model(self, client):
+        """Test that newly created features get 'sonnet' model."""
+        response = client.post("/api/features", json={
+            "category": "Testing",
+            "name": "Model Test Feature",
+            "description": "Test model default",
+            "steps": ["Step 1"]
+        })
+        assert response.status_code == 201
+        data = response.json()
+        assert data["model"] == "sonnet"
+
+    def test_model_persists_across_requests(self, client):
+        """Test that model value persists after being saved."""
+        # Set model to opus
+        client.put("/api/features/2", json={"model": "opus"})
+        # Fetch and verify
+        response = client.get("/api/features/2")
+        assert response.status_code == 200
+        assert response.json()["model"] == "opus"
+
+    def test_model_included_in_features_list(self, client):
+        """Test that model field is included in the features list."""
+        response = client.get("/api/features")
+        assert response.status_code == 200
+        features = response.json()
+        for feature in features:
+            assert "model" in feature
+            assert feature["model"] in ("sonnet", "opus", "haiku")
+
+
+class TestLaunchClaudeWithModel:
+    """Tests for launch-claude respecting the feature model."""
+
+    def test_launch_uses_feature_model_sonnet(self, client, monkeypatch):
+        """Test that launch uses the feature's model (sonnet default)."""
+        popen_calls = []
+
+        def mock_popen(*args, **kwargs):
+            popen_calls.append({"args": args, "kwargs": kwargs})
+            return type("P", (), {"pid": 1})()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        response = client.post("/api/features/1/launch-claude")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["model"] == "sonnet"
+        assert len(popen_calls) == 1
+
+    def test_launch_uses_feature_model_opus(self, client, monkeypatch):
+        """Test that launch uses opus when feature model is set to opus."""
+        # Set feature model to opus
+        client.put("/api/features/1", json={"model": "opus"})
+
+        popen_calls = []
+
+        def mock_popen(*args, **kwargs):
+            popen_calls.append({"args": args, "kwargs": kwargs})
+            return type("P", (), {"pid": 1})()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        response = client.post("/api/features/1/launch-claude")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["model"] == "opus"
+        assert len(popen_calls) == 1
+        # Verify --model flag is in the command
+        call_args = str(popen_calls[0])
+        assert "opus" in call_args
+
+    def test_launch_uses_feature_model_haiku(self, client, monkeypatch):
+        """Test that launch uses haiku when feature model is set to haiku."""
+        client.put("/api/features/1", json={"model": "haiku"})
+
+        popen_calls = []
+
+        def mock_popen(*args, **kwargs):
+            popen_calls.append({"args": args, "kwargs": kwargs})
+            return type("P", (), {"pid": 1})()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        response = client.post("/api/features/1/launch-claude")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["model"] == "haiku"
+
+    def test_launch_response_includes_model(self, client, monkeypatch):
+        """Test that launch response always includes the model field."""
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+
+        response = client.post("/api/features/1/launch-claude")
+        assert response.status_code == 200
+        data = response.json()
+        assert "model" in data
 
 
 if __name__ == "__main__":

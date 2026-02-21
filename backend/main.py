@@ -144,6 +144,9 @@ def switch_database(db_path: Path) -> None:
 
 
 # Response models
+VALID_MODELS = {"opus", "sonnet", "haiku"}
+
+
 class FeatureResponse(BaseModel):
     """Feature data response."""
     model_config = {"from_attributes": True}
@@ -156,6 +159,7 @@ class FeatureResponse(BaseModel):
     steps: list[str]
     passes: bool
     in_progress: bool
+    model: Optional[str] = "sonnet"
     created_at: Optional[str] = None
     modified_at: Optional[str] = None
     completed_at: Optional[str] = None
@@ -206,6 +210,7 @@ class UpdateFeatureRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     steps: Optional[list[str]] = None
+    model: Optional[str] = None
 
 
 class UpdateFeatureStateRequest(BaseModel):
@@ -236,6 +241,7 @@ class LaunchClaudeResponse(BaseModel):
     feature_id: int
     prompt: str
     working_directory: str
+    model: str
 
 
 class SettingsResponse(BaseModel):
@@ -527,6 +533,13 @@ async def update_feature(feature_id: int, request: UpdateFeatureRequest):
             feature.description = request.description
         if request.steps is not None:
             feature.steps = request.steps
+        if request.model is not None:
+            if request.model not in VALID_MODELS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid model '{request.model}'. Must be one of: {', '.join(sorted(VALID_MODELS))}"
+                )
+            feature.model = request.model
 
         session.commit()
         session.refresh(feature)
@@ -808,6 +821,9 @@ async def launch_claude_for_feature(feature_id: int):
             steps=steps_text
         )
 
+        # Determine which model to use
+        feature_model = feature.model or "sonnet"
+
         # Launch Claude in the directory containing the active features.db
         working_dir = str(_current_db_path.parent)
 
@@ -821,7 +837,7 @@ async def launch_claude_for_feature(feature_id: int):
                     prompt_file = f.name
 
                 # PowerShell reads the file and passes its content as the first message
-                ps_cmd = f'claude (Get-Content -LiteralPath "{prompt_file}" -Raw)'
+                ps_cmd = f'claude --model {feature_model} (Get-Content -LiteralPath "{prompt_file}" -Raw)'
                 # Try pwsh (PowerShell 7) first, fall back to powershell (Windows PS 5)
                 ps_executables = ["pwsh", "powershell"]
                 launched = False
@@ -843,7 +859,7 @@ async def launch_claude_for_feature(feature_id: int):
                         detail="No PowerShell found. Install PowerShell 7 (pwsh) or ensure powershell.exe is available.",
                     )
             else:
-                subprocess.Popen(["claude", prompt], cwd=working_dir)
+                subprocess.Popen(["claude", "--model", feature_model, prompt], cwd=working_dir)
         except FileNotFoundError:
             raise HTTPException(
                 status_code=500,
@@ -857,6 +873,7 @@ async def launch_claude_for_feature(feature_id: int):
             feature_id=feature_id,
             prompt=prompt,
             working_directory=working_dir,
+            model=feature_model,
         )
     finally:
         session.close()

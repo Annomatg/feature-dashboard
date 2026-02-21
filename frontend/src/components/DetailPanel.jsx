@@ -35,6 +35,12 @@ async function launchClaudeApi(featureId) {
   return response.json()
 }
 
+const MODEL_OPTIONS = [
+  { value: 'haiku', label: 'Haiku', title: 'Fastest, most efficient' },
+  { value: 'sonnet', label: 'Sonnet', title: 'Balanced (default)' },
+  { value: 'opus', label: 'Opus', title: 'Most capable' },
+]
+
 // Editable field that shows value inline, turns into input on click
 function EditableField({ value, onSave, multiline = false, className = '', placeholder = '' }) {
   const [editing, setEditing] = useState(false)
@@ -353,6 +359,15 @@ function DetailPanel({ feature, onClose, onUpdate, onDelete }) {
     }
   }
 
+  const handleModelChange = useCallback(async (model) => {
+    try {
+      const updated = await updateFeature(feature.id, { model })
+      onUpdate(updated)
+    } catch (err) {
+      console.error('Failed to update model:', err)
+    }
+  }, [feature.id, onUpdate])
+
   const statusLabel = feature.passes
     ? 'DONE'
     : feature.in_progress
@@ -498,6 +513,27 @@ function DetailPanel({ feature, onClose, onUpdate, onDelete }) {
           {/* Launch Claude button - only for TODO and IN PROGRESS */}
           {!feature.passes && (
             <div>
+              {/* Model selector */}
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-xs font-mono text-text-secondary flex-shrink-0">Model</span>
+                <div className="flex gap-1 flex-1" data-testid="model-selector">
+                  {MODEL_OPTIONS.map(({ value, label, title }) => (
+                    <button
+                      key={value}
+                      onClick={() => handleModelChange(value)}
+                      data-testid={`model-option-${value}`}
+                      title={title}
+                      className={`flex-1 py-1 rounded text-xs font-mono font-semibold border transition-all ${
+                        (feature.model || 'sonnet') === value
+                          ? 'border-primary bg-primary text-black'
+                          : 'border-border text-text-secondary hover:border-primary hover:text-primary'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <button
                 onClick={handleLaunchClaude}
                 disabled={isLaunching}
