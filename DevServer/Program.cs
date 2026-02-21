@@ -12,9 +12,13 @@ class Program
 
     private static Process? _serverProcess;
     private static readonly object _lock = new();
-    private static DateTime _lastRestart = DateTime.MinValue;
-    private static readonly TimeSpan DebounceTime = TimeSpan.FromSeconds(1);
+    private static CancellationTokenSource? _restartCts;
     private static Mutex? _instanceMutex;
+
+    internal const int ServerPort = 8000;
+    internal const int DebounceMs = 1000;
+    internal const int PortWaitTimeoutMs = 10000;
+    internal const int ProcessExitWaitMs = 3000;
 
     static async Task Main(string[] args)
     {
@@ -101,97 +105,139 @@ class Program
     {
         lock (_lock)
         {
-            // Debounce rapid changes
-            if (DateTime.Now - _lastRestart < DebounceTime)
-                return;
+            // Cancel any pending restart (debounce)
+            _restartCts?.Cancel();
+            _restartCts?.Dispose();
+            _restartCts = new CancellationTokenSource();
+            var token = _restartCts.Token;
 
-            _lastRestart = DateTime.Now;
+            // Schedule restart after debounce period
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(DebounceMs, token);
+                }
+                catch (TaskCanceledException)
+                {
+                    return; // Another change came in, this restart was superseded
+                }
+
+                Console.WriteLine($"\n[{DateTime.Now:HH:mm:ss}] Change detected: {e.Name}");
+                RestartServer();
+            });
         }
-
-        Console.WriteLine($"\n[{DateTime.Now:HH:mm:ss}] Change detected: {e.Name}");
-        RestartServer();
     }
 
     private static void StartServer()
     {
-        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Starting server...");
-
-        var startInfo = new ProcessStartInfo
+        lock (_lock)
         {
-            FileName = PythonExe,
-            Arguments = "-m uvicorn backend.main:app --host 0.0.0.0 --port 8000",
-            WorkingDirectory = ProjectDir,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        };
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Starting server...");
 
-        _serverProcess = new Process { StartInfo = startInfo };
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = PythonExe,
+                Arguments = "-m uvicorn backend.main:app --host 0.0.0.0 --port 8000",
+                WorkingDirectory = ProjectDir,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
 
-        _serverProcess.OutputDataReceived += (_, args) =>
-        {
-            if (!string.IsNullOrEmpty(args.Data))
-                Console.WriteLine(args.Data);
-        };
+            _serverProcess = new Process { StartInfo = startInfo };
 
-        _serverProcess.ErrorDataReceived += (_, args) =>
-        {
-            if (!string.IsNullOrEmpty(args.Data))
-                Console.WriteLine(args.Data);
-        };
+            _serverProcess.OutputDataReceived += (_, args) =>
+            {
+                if (!string.IsNullOrEmpty(args.Data))
+                    Console.WriteLine(args.Data);
+            };
 
-        _serverProcess.Start();
-        _serverProcess.BeginOutputReadLine();
-        _serverProcess.BeginErrorReadLine();
+            _serverProcess.ErrorDataReceived += (_, args) =>
+            {
+                if (!string.IsNullOrEmpty(args.Data))
+                    Console.WriteLine(args.Data);
+            };
 
-        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Server started (PID: {_serverProcess.Id})");
+            _serverProcess.Start();
+            _serverProcess.BeginOutputReadLine();
+            _serverProcess.BeginErrorReadLine();
+
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Server started (PID: {_serverProcess.Id})");
+        }
     }
 
     private static void StopServer()
     {
-        if (_serverProcess == null || _serverProcess.HasExited)
-            return;
-
-        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Stopping server (PID: {_serverProcess.Id})...");
-
-        try
+        lock (_lock)
         {
-            // Kill the process tree (uvicorn spawns child processes)
-            KillProcessTree(_serverProcess.Id);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Warning: {ex.Message}");
-        }
+            if (_serverProcess == null || _serverProcess.HasExited)
+            {
+                _serverProcess = null;
+                return;
+            }
 
-        _serverProcess = null;
+            var pid = _serverProcess.Id;
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Stopping server (PID: {pid})...");
+
+            try
+            {
+                // Kill the process tree (uvicorn spawns child processes)
+                PortUtils.KillProcessTree(pid);
+
+                // Wait for process to actually exit
+                if (!_serverProcess.HasExited)
+                {
+                    var exited = _serverProcess.WaitForExit(ProcessExitWaitMs);
+                    if (!exited)
+                    {
+                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] WARNING: Process {pid} did not exit within {ProcessExitWaitMs}ms, attempting direct kill...");
+                        try
+                        {
+                            _serverProcess.Kill(entireProcessTree: true);
+                            _serverProcess.WaitForExit(ProcessExitWaitMs);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] WARNING: Direct kill failed: {ex.Message}");
+                        }
+                    }
+                }
+
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Server stopped (PID: {pid})");
+            }
+            catch (InvalidOperationException)
+            {
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Server already stopped (PID: {pid})");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Warning stopping server: {ex.Message}");
+            }
+
+            _serverProcess = null;
+        }
     }
 
     private static void RestartServer()
     {
         StopServer();
-        Thread.Sleep(2000); // Pause to ensure port is released (Python can be slow)
-        StartServer();
-    }
 
-    private static void KillProcessTree(int pid)
-    {
-        // Use taskkill to kill the entire process tree on Windows
-        var killProcess = new Process
+        // Wait for port to be available instead of a fixed sleep
+        if (!PortUtils.WaitForPortAvailable(ServerPort, PortWaitTimeoutMs))
         {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = "taskkill",
-                Arguments = $"/F /T /PID {pid}",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            }
-        };
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] WARNING: Port {ServerPort} still in use after {PortWaitTimeoutMs}ms timeout");
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Attempting to kill any process using port {ServerPort}...");
+            PortUtils.KillProcessOnPort(ServerPort);
 
-        killProcess.Start();
-        killProcess.WaitForExit(5000);
+            if (!PortUtils.WaitForPortAvailable(ServerPort, PortWaitTimeoutMs))
+            {
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] ERROR: Port {ServerPort} is still in use. Cannot restart server.");
+                return;
+            }
+        }
+
+        StartServer();
     }
 }
