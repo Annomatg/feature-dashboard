@@ -70,12 +70,16 @@ class Program
             {
                 var watcher = new FileSystemWatcher(dir);
                 watcher.Filter = "*.py";
-                watcher.NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName;
+                watcher.IncludeSubdirectories = true;
+                watcher.InternalBufferSize = 65536;
+                watcher.NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size;
                 watcher.Changed += OnFileChanged;
                 watcher.Created += OnFileChanged;
+                watcher.Renamed += OnFileChanged;
+                watcher.Error += (_, err) => Console.WriteLine($"[WATCHER ERROR] {err.GetException().Message}");
                 watcher.EnableRaisingEvents = true;
                 watchers.Add(watcher);
-                Console.WriteLine($"Watching: {Path.GetFileName(dir)}/*.py");
+                Console.WriteLine($"Watching: {Path.GetFileName(dir)}/**/*.py");
             }
         }
 
@@ -123,7 +127,12 @@ class Program
                     return; // Another change came in, this restart was superseded
                 }
 
-                Console.WriteLine($"\n[{DateTime.Now:HH:mm:ss}] Change detected: {e.Name}");
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine();
+                Console.WriteLine("════════════════════════════════════════════");
+                Console.WriteLine($"  [{DateTime.Now:HH:mm:ss}] RESTARTING — {e.Name} changed");
+                Console.WriteLine("════════════════════════════════════════════");
+                Console.ResetColor();
                 RestartServer();
             });
         }
@@ -133,7 +142,9 @@ class Program
     {
         lock (_lock)
         {
-            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Starting server...");
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine($"  [{DateTime.Now:HH:mm:ss}] Starting server...");
+            Console.ResetColor();
 
             var startInfo = new ProcessStartInfo
             {
@@ -179,7 +190,9 @@ class Program
             }
 
             var pid = _serverProcess.Id;
-            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Stopping server (PID: {pid})...");
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"  [{DateTime.Now:HH:mm:ss}] Stopping server (PID: {pid})...");
+            Console.ResetColor();
 
             try
             {
@@ -205,7 +218,9 @@ class Program
                     }
                 }
 
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Server stopped (PID: {pid})");
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"  [{DateTime.Now:HH:mm:ss}] Server stopped (PID: {pid})");
+                Console.ResetColor();
             }
             catch (InvalidOperationException)
             {
