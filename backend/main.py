@@ -814,6 +814,9 @@ async def launch_claude_for_feature(feature_id: int):
     Launch a Claude Code session to work on a specific feature.
 
     Opens Claude in a new terminal window with the feature context as the initial prompt.
+    Claude runs in non-interactive mode (--print) so the session and window close
+    automatically when the task is complete.
+
     The working directory is the folder containing the active features.db, so Claude
     operates in the correct project context.
 
@@ -862,14 +865,15 @@ async def launch_claude_for_feature(feature_id: int):
 
                 # PowerShell reads the file and passes its content as the first message
                 # --dangerously-skip-permissions enables full access mode (no permission prompts)
-                ps_cmd = f'claude --model {feature_model} --dangerously-skip-permissions (Get-Content -LiteralPath "{prompt_file}" -Raw)'
+                # --print runs Claude non-interactively so the session closes automatically when done
+                ps_cmd = f'claude --model {feature_model} --dangerously-skip-permissions --print (Get-Content -LiteralPath "{prompt_file}" -Raw)'
                 # Try pwsh (PowerShell 7) first, fall back to powershell (Windows PS 5)
                 ps_executables = ["pwsh", "powershell"]
                 launched = False
                 for ps_exe in ps_executables:
                     try:
                         subprocess.Popen(
-                            [ps_exe, "-NoExit", "-Command", ps_cmd],
+                            [ps_exe, "-Command", ps_cmd],
                             creationflags=subprocess.CREATE_NEW_CONSOLE,
                             cwd=working_dir,
                         )
@@ -884,7 +888,8 @@ async def launch_claude_for_feature(feature_id: int):
                         detail="No PowerShell found. Install PowerShell 7 (pwsh) or ensure powershell.exe is available.",
                     )
             else:
-                subprocess.Popen(["claude", "--model", feature_model, "--dangerously-skip-permissions", prompt], cwd=working_dir)
+                # --print runs Claude non-interactively so the session closes automatically when done
+                subprocess.Popen(["claude", "--model", feature_model, "--dangerously-skip-permissions", "--print", prompt], cwd=working_dir)
         except FileNotFoundError:
             raise HTTPException(
                 status_code=500,

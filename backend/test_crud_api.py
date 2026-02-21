@@ -638,7 +638,7 @@ class TestLaunchClaude:
         assert len(popen_calls) == 1
 
         # Verify --dangerously-skip-permissions is included in the command.
-        # On Windows, the command is a list like ['pwsh', '-NoExit', '-Command', 'claude --model ... --dangerously-skip-permissions ...']
+        # On Windows, the command is a list like ['pwsh', '-Command', 'claude --model ... --dangerously-skip-permissions ...']
         # so we check that the flag appears somewhere in the full command string.
         call_args = popen_calls[0]["args"][0]  # First positional arg is the command list/string
         full_command = " ".join(call_args) if isinstance(call_args, list) else str(call_args)
@@ -662,6 +662,54 @@ class TestLaunchClaude:
         assert "Feature 1" in prompt
         assert "Test feature 1" in prompt
         assert "Step 1" in prompt
+
+    def test_launch_uses_print_flag_for_auto_close(self, client, monkeypatch):
+        """Test that Claude is launched with --print so the session closes automatically when done."""
+        popen_calls = []
+
+        def mock_popen(*args, **kwargs):
+            popen_calls.append({"args": args, "kwargs": kwargs})
+
+            class MockProcess:
+                pid = 12345
+
+            return MockProcess()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        response = client.post("/api/features/1/launch-claude")
+
+        assert response.status_code == 200
+        assert len(popen_calls) == 1
+
+        # Verify --print is included so Claude runs non-interactively and exits when done.
+        call_args = popen_calls[0]["args"][0]
+        full_command = " ".join(call_args) if isinstance(call_args, list) else str(call_args)
+        assert "--print" in full_command
+
+    def test_launch_does_not_use_no_exit(self, client, monkeypatch):
+        """Test that the PowerShell command does NOT use -NoExit so the window closes when done."""
+        popen_calls = []
+
+        def mock_popen(*args, **kwargs):
+            popen_calls.append({"args": args, "kwargs": kwargs})
+
+            class MockProcess:
+                pid = 12345
+
+            return MockProcess()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        response = client.post("/api/features/1/launch-claude")
+
+        assert response.status_code == 200
+        assert len(popen_calls) == 1
+
+        # Verify -NoExit is NOT in the command — the window should close automatically.
+        call_args = popen_calls[0]["args"][0]
+        full_command = " ".join(call_args) if isinstance(call_args, list) else str(call_args)
+        assert "-NoExit" not in full_command
 
 
 # ==============================================================================
