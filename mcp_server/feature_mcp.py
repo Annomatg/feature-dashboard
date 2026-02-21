@@ -9,6 +9,7 @@ replacing the previous FastAPI-based REST API.
 Tools:
 - feature_get_stats: Get progress statistics
 - feature_get_next: Get next feature to implement
+- feature_get_by_id: Get any feature by its ID
 - feature_get_for_regression: Get random passing features for testing
 - feature_mark_passing: Mark a feature as passing
 - feature_skip: Skip a feature (move to end of queue)
@@ -34,7 +35,7 @@ from sqlalchemy.sql.expression import func
 # Add parent directory to path so we can import from api module
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from api.database import Feature, create_database
+from api.database import Comment, Feature, create_database
 from api.migration import migrate_json_to_sqlite
 
 # Configuration from environment
@@ -301,13 +302,42 @@ def feature_skip(
 
 
 @mcp.tool()
+def feature_get_by_id(
+    feature_id: Annotated[int, Field(description="The ID of the feature to retrieve", ge=1)]
+) -> str:
+    """Get a specific feature by its ID.
+
+    Use this when you know the exact feature ID you need to work on.
+    Unlike feature_get_next(), this retrieves any feature regardless of priority or status.
+
+    Args:
+        feature_id: The ID of the feature to retrieve
+
+    Returns:
+        JSON with feature details (id, priority, category, name, description, steps, passes, in_progress)
+        or error message if not found.
+    """
+    session = get_session()
+    try:
+        feature = session.query(Feature).filter(Feature.id == feature_id).first()
+
+        if feature is None:
+            return json.dumps({"error": f"Feature with ID {feature_id} not found"})
+
+        return json.dumps(feature.to_dict(), indent=2)
+    finally:
+        session.close()
+
+
+@mcp.tool()
 def feature_mark_in_progress(
     feature_id: Annotated[int, Field(description="The ID of the feature to mark as in-progress", ge=1)]
 ) -> str:
-    """Mark a feature as in-progress. Call immediately after feature_get_next().
+    """Mark a feature as in-progress.
 
     This prevents other agent sessions from working on the same feature.
-    Use this as soon as you retrieve a feature to work on.
+    Use this as soon as you know which feature you are working on — whether
+    you retrieved it via feature_get_next() or feature_get_by_id().
 
     Args:
         feature_id: The ID of the feature to mark as in-progress
@@ -481,6 +511,80 @@ def feature_create(
     except Exception as e:
         session.rollback()
         return json.dumps({"error": str(e)})
+    finally:
+        session.close()
+
+
+@mcp.tool()
+def feature_add_comment(
+    feature_id: Annotated[int, Field(description="The ID of the feature to comment on", ge=1)],
+    content: Annotated[str, Field(description="The comment text to add")]
+) -> str:
+    """Add a comment to a feature to record results, progress, or notes.
+
+    Use this to document what was done, git commit IDs, intermediate states,
+    or any other information relevant to the feature's implementation.
+
+    Args:
+        feature_id: The ID of the feature to comment on
+        content: The comment text
+
+    Returns:
+        JSON with the created comment details, or error if feature not found.
+    """
+    if not content.strip():
+        return json.dumps({"error": "Comment content cannot be empty"})
+
+    session = get_session()
+    try:
+        feature = session.query(Feature).filter(Feature.id == feature_id).first()
+        if feature is None:
+            return json.dumps({"error": f"Feature with ID {feature_id} not found"})
+
+        comment = Comment(feature_id=feature_id, content=content.strip())
+        session.add(comment)
+        session.commit()
+        session.refresh(comment)
+
+        return json.dumps(comment.to_dict(), indent=2)
+    except Exception as e:
+        session.rollback()
+        return json.dumps({"error": str(e)})
+    finally:
+        session.close()
+
+
+@mcp.tool()
+def feature_get_comments(
+    feature_id: Annotated[int, Field(description="The ID of the feature to get comments for", ge=1)]
+) -> str:
+    """Get all comments for a feature.
+
+    Returns comments in chronological order (oldest first).
+
+    Args:
+        feature_id: The ID of the feature
+
+    Returns:
+        JSON with: comments (list of comment objects), count (int)
+    """
+    session = get_session()
+    try:
+        feature = session.query(Feature).filter(Feature.id == feature_id).first()
+        if feature is None:
+            return json.dumps({"error": f"Feature with ID {feature_id} not found"})
+
+        comments = (
+            session.query(Comment)
+            .filter(Comment.feature_id == feature_id)
+            .order_by(Comment.created_at.asc())
+            .all()
+        )
+
+        return json.dumps({
+            "comments": [c.to_dict() for c in comments],
+            "count": len(comments)
+        }, indent=2)
     finally:
         session.close()
 
