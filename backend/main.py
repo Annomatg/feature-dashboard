@@ -848,7 +848,8 @@ async def launch_claude_for_feature(feature_id: int):
                     prompt_file = f.name
 
                 # PowerShell reads the file and passes its content as the first message
-                ps_cmd = f'claude --model {feature_model} (Get-Content -LiteralPath "{prompt_file}" -Raw)'
+                # --dangerouslySkipPermissions enables full access mode (no permission prompts)
+                ps_cmd = f'claude --model {feature_model} --dangerouslySkipPermissions (Get-Content -LiteralPath "{prompt_file}" -Raw)'
                 # Try pwsh (PowerShell 7) first, fall back to powershell (Windows PS 5)
                 ps_executables = ["pwsh", "powershell"]
                 launched = False
@@ -870,7 +871,7 @@ async def launch_claude_for_feature(feature_id: int):
                         detail="No PowerShell found. Install PowerShell 7 (pwsh) or ensure powershell.exe is available.",
                     )
             else:
-                subprocess.Popen(["claude", "--model", feature_model, prompt], cwd=working_dir)
+                subprocess.Popen(["claude", "--model", feature_model, "--dangerouslySkipPermissions", prompt], cwd=working_dir)
         except FileNotFoundError:
             raise HTTPException(
                 status_code=500,
