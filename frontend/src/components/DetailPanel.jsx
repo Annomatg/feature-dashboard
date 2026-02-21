@@ -1,5 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { X, Trash2, Check, RotateCcw, Plus, ChevronUp, ChevronDown, Terminal } from 'lucide-react'
+import { X, Trash2, Check, RotateCcw, Plus, ChevronUp, ChevronDown, Terminal, MessageSquare } from 'lucide-react'
+
+async function fetchComments(featureId) {
+  const response = await fetch(`/api/features/${featureId}/comments`)
+  if (!response.ok) throw new Error('Failed to fetch comments')
+  return response.json()
+}
 
 async function updateFeature(featureId, data) {
   const response = await fetch(`/api/features/${featureId}`, {
@@ -300,7 +306,14 @@ function DetailPanel({ feature, onClose, onUpdate, onDelete }) {
   const [isSaving, setIsSaving] = useState(false)
   const [isLaunching, setIsLaunching] = useState(false)
   const [launchMessage, setLaunchMessage] = useState(null)
+  const [comments, setComments] = useState([])
   const panelRef = useRef(null)
+
+  useEffect(() => {
+    fetchComments(feature.id)
+      .then(setComments)
+      .catch(() => setComments([]))
+  }, [feature.id])
 
   // Close on Escape key
   useEffect(() => {
@@ -476,6 +489,34 @@ function DetailPanel({ feature, onClose, onUpdate, onDelete }) {
               onSave={handleStepsSave}
             />
           </div>
+
+          {/* Comments */}
+          {comments.length > 0 && (
+            <div data-testid="comments-section">
+              <label className="block text-xs font-mono text-text-secondary mb-2 uppercase tracking-wide flex items-center gap-1.5">
+                <MessageSquare size={12} />
+                Comments ({comments.length})
+              </label>
+              <div className="space-y-2">
+                {comments.map((comment) => (
+                  <div
+                    key={comment.id}
+                    data-testid="comment-item"
+                    className="bg-background rounded p-3 border border-border"
+                  >
+                    <p className="text-sm text-text-primary whitespace-pre-wrap break-words leading-relaxed">
+                      {comment.content}
+                    </p>
+                    {comment.created_at && (
+                      <p className="text-xs font-mono text-text-secondary mt-1.5">
+                        {new Date(comment.created_at).toLocaleString()}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Metadata */}
           <div className="border-t border-border pt-4">

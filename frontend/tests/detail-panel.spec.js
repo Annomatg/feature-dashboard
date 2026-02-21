@@ -381,4 +381,166 @@ test.describe('Detail Panel', () => {
     const getResponse = await page.request.get(`http://localhost:8001/api/features/${created.id}`);
     expect(getResponse.status()).toBe(404);
   });
+
+  test('should not show comments section when feature has no comments', async ({ page }) => {
+    // Create a feature with no comments
+    const createResponse = await page.request.post('http://localhost:8001/api/features', {
+      data: {
+        category: 'Test',
+        name: 'No Comments Feature',
+        description: 'Feature with no comments',
+        steps: []
+      }
+    });
+    expect(createResponse.ok()).toBeTruthy();
+    const created = await createResponse.json();
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const testCard = page.locator('.bg-surface.border.rounded-lg.p-4').filter({ hasText: 'No Comments Feature' });
+    await testCard.waitFor({ state: 'visible' });
+    await testCard.click();
+
+    await expect(page.getByTestId('detail-panel')).toBeVisible();
+    // Comments section should not be visible when there are no comments
+    await expect(page.getByTestId('comments-section')).not.toBeVisible();
+
+    // Clean up
+    await page.request.delete(`http://localhost:8001/api/features/${created.id}`);
+  });
+
+  test('should show comments section when feature has comments', async ({ page }) => {
+    // Create a feature
+    const createResponse = await page.request.post('http://localhost:8001/api/features', {
+      data: {
+        category: 'Test',
+        name: 'Feature With Comments',
+        description: 'Feature that has comments',
+        steps: []
+      }
+    });
+    expect(createResponse.ok()).toBeTruthy();
+    const created = await createResponse.json();
+
+    // Add a comment via API
+    const commentResponse = await page.request.post(`http://localhost:8001/api/features/${created.id}/comments`, {
+      data: { content: 'This is a test comment' }
+    });
+    expect(commentResponse.ok()).toBeTruthy();
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const testCard = page.locator('.bg-surface.border.rounded-lg.p-4').filter({ hasText: 'Feature With Comments' });
+    await testCard.waitFor({ state: 'visible' });
+    await testCard.click();
+
+    await expect(page.getByTestId('detail-panel')).toBeVisible();
+
+    // Comments section should be visible
+    const commentsSection = page.getByTestId('comments-section');
+    await expect(commentsSection).toBeVisible();
+
+    // Comment content should be shown
+    await expect(commentsSection.getByTestId('comment-item')).toHaveCount(1);
+    await expect(commentsSection).toContainText('This is a test comment');
+
+    // Clean up
+    await page.request.delete(`http://localhost:8001/api/features/${created.id}`);
+  });
+
+  test('should show multiple comments in order', async ({ page }) => {
+    // Create a feature
+    const createResponse = await page.request.post('http://localhost:8001/api/features', {
+      data: {
+        category: 'Test',
+        name: 'Feature With Multiple Comments',
+        description: 'Feature that has multiple comments',
+        steps: []
+      }
+    });
+    expect(createResponse.ok()).toBeTruthy();
+    const created = await createResponse.json();
+
+    // Add multiple comments
+    await page.request.post(`http://localhost:8001/api/features/${created.id}/comments`, {
+      data: { content: 'First comment' }
+    });
+    await page.request.post(`http://localhost:8001/api/features/${created.id}/comments`, {
+      data: { content: 'Second comment' }
+    });
+    await page.request.post(`http://localhost:8001/api/features/${created.id}/comments`, {
+      data: { content: 'Third comment' }
+    });
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const testCard = page.locator('.bg-surface.border.rounded-lg.p-4').filter({ hasText: 'Feature With Multiple Comments' });
+    await testCard.waitFor({ state: 'visible' });
+    await testCard.click();
+
+    await expect(page.getByTestId('detail-panel')).toBeVisible();
+
+    const commentsSection = page.getByTestId('comments-section');
+    await expect(commentsSection).toBeVisible();
+
+    // All 3 comments should be shown
+    const commentItems = commentsSection.getByTestId('comment-item');
+    await expect(commentItems).toHaveCount(3);
+
+    // Comments section header should show count
+    await expect(commentsSection).toContainText('Comments (3)');
+
+    // Verify order
+    await expect(commentItems.nth(0)).toContainText('First comment');
+    await expect(commentItems.nth(1)).toContainText('Second comment');
+    await expect(commentItems.nth(2)).toContainText('Third comment');
+
+    // Clean up
+    await page.request.delete(`http://localhost:8001/api/features/${created.id}`);
+  });
+
+  test('should show comment timestamp', async ({ page }) => {
+    // Create a feature and add a comment
+    const createResponse = await page.request.post('http://localhost:8001/api/features', {
+      data: {
+        category: 'Test',
+        name: 'Feature Comment Timestamp',
+        description: 'Test comment timestamp display',
+        steps: []
+      }
+    });
+    expect(createResponse.ok()).toBeTruthy();
+    const created = await createResponse.json();
+
+    await page.request.post(`http://localhost:8001/api/features/${created.id}/comments`, {
+      data: { content: 'Comment with timestamp' }
+    });
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const testCard = page.locator('.bg-surface.border.rounded-lg.p-4').filter({ hasText: 'Feature Comment Timestamp' });
+    await testCard.waitFor({ state: 'visible' });
+    await testCard.click();
+
+    await expect(page.getByTestId('detail-panel')).toBeVisible();
+
+    const commentsSection = page.getByTestId('comments-section');
+    await expect(commentsSection).toBeVisible();
+
+    // Comment should have a timestamp (non-empty text after the content)
+    const commentItem = commentsSection.getByTestId('comment-item').first();
+    await expect(commentItem).toContainText('Comment with timestamp');
+    // The timestamp paragraph should be visible (has text content)
+    const timestamp = commentItem.locator('p.font-mono');
+    await expect(timestamp).toBeVisible();
+    const timestampText = await timestamp.innerText();
+    expect(timestampText.length).toBeGreaterThan(0);
+
+    // Clean up
+    await page.request.delete(`http://localhost:8001/api/features/${created.id}`);
+  });
 });
