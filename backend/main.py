@@ -202,6 +202,7 @@ class CreateFeatureRequest(BaseModel):
     name: str
     description: str
     steps: list[str]
+    model: Optional[str] = "sonnet"
 
 
 class UpdateFeatureRequest(BaseModel):
@@ -486,6 +487,13 @@ async def create_feature(request: CreateFeatureRequest):
         max_priority = session.query(Feature.priority).order_by(Feature.priority.desc()).first()
         next_priority = (max_priority[0] + 1) if max_priority else 1
 
+        # Validate model if provided
+        if request.model is not None and request.model not in VALID_MODELS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid model '{request.model}'. Must be one of: {', '.join(sorted(VALID_MODELS))}"
+            )
+
         # Create new feature
         new_feature = Feature(
             priority=next_priority,
@@ -494,7 +502,8 @@ async def create_feature(request: CreateFeatureRequest):
             description=request.description,
             steps=request.steps,
             passes=False,
-            in_progress=False
+            in_progress=False,
+            model=request.model or "sonnet",
         )
 
         session.add(new_feature)
@@ -502,6 +511,8 @@ async def create_feature(request: CreateFeatureRequest):
         session.refresh(new_feature)
 
         return FeatureResponse(**new_feature.to_dict())
+    except HTTPException:
+        raise
     except Exception as e:
         session.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to create feature: {str(e)}")

@@ -745,7 +745,7 @@ class TestModelField:
         assert data["model"] == "haiku"
 
     def test_create_feature_has_default_model(self, client):
-        """Test that newly created features get 'sonnet' model."""
+        """Test that newly created features get 'sonnet' model when not specified."""
         response = client.post("/api/features", json={
             "category": "Testing",
             "name": "Model Test Feature",
@@ -755,6 +755,44 @@ class TestModelField:
         assert response.status_code == 201
         data = response.json()
         assert data["model"] == "sonnet"
+
+    def test_create_feature_with_opus_model(self, client):
+        """Test creating a feature with opus model specified."""
+        response = client.post("/api/features", json={
+            "category": "Testing",
+            "name": "Opus Feature",
+            "description": "Test opus model on create",
+            "steps": ["Step 1"],
+            "model": "opus"
+        })
+        assert response.status_code == 201
+        data = response.json()
+        assert data["model"] == "opus"
+
+    def test_create_feature_with_haiku_model(self, client):
+        """Test creating a feature with haiku model specified."""
+        response = client.post("/api/features", json={
+            "category": "Testing",
+            "name": "Haiku Feature",
+            "description": "Test haiku model on create",
+            "steps": ["Step 1"],
+            "model": "haiku"
+        })
+        assert response.status_code == 201
+        data = response.json()
+        assert data["model"] == "haiku"
+
+    def test_create_feature_invalid_model_returns_400(self, client):
+        """Test that creating a feature with an invalid model returns 400."""
+        response = client.post("/api/features", json={
+            "category": "Testing",
+            "name": "Bad Model Feature",
+            "description": "Test invalid model on create",
+            "steps": ["Step 1"],
+            "model": "gpt-4"
+        })
+        assert response.status_code == 400
+        assert "invalid model" in response.json()["detail"].lower()
 
     def test_model_persists_across_requests(self, client):
         """Test that model value persists after being saved."""

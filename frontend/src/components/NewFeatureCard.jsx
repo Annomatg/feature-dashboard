@@ -1,12 +1,19 @@
 import { useState, useEffect, useRef } from 'react'
 import { X, Plus, Trash2 } from 'lucide-react'
 
+const MODEL_OPTIONS = [
+  { value: 'haiku', label: 'Haiku', title: 'Fastest, most efficient' },
+  { value: 'sonnet', label: 'Sonnet', title: 'Balanced (default)' },
+  { value: 'opus', label: 'Opus', title: 'Most capable' },
+]
+
 function NewFeatureCard({ lane, onSave, onCancel, accentColor }) {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [category, setCategory] = useState('')
   const [steps, setSteps] = useState([])
   const [currentStep, setCurrentStep] = useState('')
+  const [model, setModel] = useState('sonnet')
   const [addToTop, setAddToTop] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
 
@@ -45,6 +52,7 @@ function NewFeatureCard({ lane, onSave, onCancel, accentColor }) {
         description: description.trim() || '',
         category: category.trim() || 'General',
         steps: steps.length > 0 ? steps : [],
+        model,
         addToTop,
         lane
       })
@@ -176,6 +184,31 @@ function NewFeatureCard({ lane, onSave, onCancel, accentColor }) {
           >
             <Plus size={16} className="text-text-secondary" />
           </button>
+        </div>
+      </div>
+
+      {/* Model selector */}
+      <div className="mb-3">
+        <label className="block text-xs font-mono text-text-secondary mb-1">
+          Model
+        </label>
+        <div className="flex gap-1" data-testid="model-selector">
+          {MODEL_OPTIONS.map(({ value, label, title }) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setModel(value)}
+              data-testid={`model-option-${value}`}
+              title={title}
+              className={`flex-1 py-1.5 rounded text-xs font-mono font-semibold border transition-all ${
+                model === value
+                  ? 'border-primary bg-primary text-black'
+                  : 'border-border text-text-secondary hover:border-primary hover:text-primary'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 
