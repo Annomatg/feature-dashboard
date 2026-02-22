@@ -2398,6 +2398,54 @@ class TestHandleAutopilotSuccess:
         log_messages = [e.message for e in state.log]
         assert any("no more tasks" in m.lower() or "complete" in m.lower() for m in log_messages)
 
+    def test_aborts_when_same_feature_returned_three_times(self, test_db_with_path, monkeypatch):
+        """Auto-pilot aborts with a dead-loop error when the sequencer returns the same feature 3 times."""
+        import asyncio
+        from backend.main import handle_autopilot_success, _AutoPilotState
+
+        session_maker, db_path = test_db_with_path
+        # Seed data: Feature 4 (in_progress=True) is returned first by the sequencer
+        # Pre-load state as if Feature 4 has been returned twice already
+        state = _AutoPilotState()
+        state.enabled = True
+        state.last_skipped_feature_id = 4
+        state.consecutive_skip_count = 2
+
+        monkeypatch.setattr("asyncio.create_task", lambda coro: coro.close() or None)
+
+        asyncio.run(handle_autopilot_success(99, state, db_path))
+
+        assert state.enabled is False
+        assert state.current_feature_id is None
+        assert state.last_error is not None
+        assert "Dead loop" in state.last_error
+        assert "4" in state.last_error
+        error_log = [e for e in state.log if e.level == 'error']
+        assert len(error_log) == 1
+        assert error_log[0].message == state.last_error
+
+    def test_counter_resets_when_different_feature_returned(self, test_db_with_path, monkeypatch):
+        """consecutive_skip_count resets to 0 and last_skipped_feature_id updates when a different feature is returned."""
+        import asyncio
+        from backend.main import handle_autopilot_success, _AutoPilotState
+
+        session_maker, db_path = test_db_with_path
+        # Pre-load state: skip count is 2 but last_skipped points to a feature NOT in the DB queue
+        state = _AutoPilotState()
+        state.last_skipped_feature_id = 999  # different from Feature 4 returned by sequencer
+        state.consecutive_skip_count = 2
+
+        monkeypatch.setattr("backend.main.spawn_claude_for_autopilot",
+                            lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda s: 0})())
+        monkeypatch.setattr("asyncio.create_task", lambda coro: coro.close() or None)
+
+        asyncio.run(handle_autopilot_success(99, state, db_path))
+
+        # Different feature returned → counter must reset and last_skipped must update
+        assert state.consecutive_skip_count == 0
+        assert state.last_skipped_feature_id == 4  # Feature 4 is next per seed data
+        assert state.enabled is not False or state.current_feature_id is not None  # not aborted
+
 
 class TestHandleAutopilotFailure:
     """Unit tests for handle_autopilot_failure."""

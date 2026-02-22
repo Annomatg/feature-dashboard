@@ -130,7 +130,8 @@ class _AutoPilotState:
         self.log: deque = deque(maxlen=100)  # LogEntry items, circular buffer
         self.active_process = None  # subprocess.Popen handle, if any
         self.monitor_task = None  # asyncio.Task handle, if monitoring
-        self.consecutive_skip_count: int = 0  # reset to 0 on each success
+        self.consecutive_skip_count: int = 0  # incremented when same feature is returned consecutively
+        self.last_skipped_feature_id: Optional[int] = None  # last feature id given to the sequencer
 
 
 _autopilot_states: dict[str, _AutoPilotState] = {}
@@ -247,7 +248,6 @@ async def handle_autopilot_success(
     """
     feature_name = state.current_feature_name or "unknown"
     _append_log(state, 'success', f"Feature #{feature_id} completed: {feature_name}")
-    state.consecutive_skip_count = 0
 
     # Fetch the next feature with a fresh session
     from sqlalchemy import create_engine as _create_engine
@@ -272,6 +272,23 @@ async def handle_autopilot_success(
         state.monitor_task = None
         _append_log(state, 'info', "All tasks complete")
         return
+
+    # Skip loop guard: abort if the same feature is returned consecutively 3+ times
+    if next_feature.id == state.last_skipped_feature_id:
+        state.consecutive_skip_count += 1
+        if state.consecutive_skip_count >= 3:
+            msg = f"Dead loop detected: Feature #{next_feature.id} skipped 3 times consecutively"
+            state.last_error = msg
+            _append_log(state, 'error', msg)
+            state.enabled = False
+            state.current_feature_id = None
+            state.current_feature_name = None
+            state.active_process = None
+            state.monitor_task = None
+            return
+    else:
+        state.consecutive_skip_count = 0
+        state.last_skipped_feature_id = next_feature.id
 
     state.current_feature_id = next_feature.id
     state.current_feature_name = next_feature.name
@@ -1390,6 +1407,8 @@ async def enable_autopilot():
         state.current_feature_id = feature.id
         state.current_feature_name = feature.name
         state.last_error = None
+        state.last_skipped_feature_id = feature.id
+        state.consecutive_skip_count = 0
         state.log.clear()
         _append_log(state, 'info', f"Auto-pilot enabled for database: {_current_db_path.name}")
         _append_log(state, 'info', f"Starting feature #{feature.id}: {feature.name}")
