@@ -52,6 +52,49 @@ DEFAULT_PROMPT_TEMPLATE = (
     "Steps:\n{steps}"
 )
 
+PLAN_TASKS_PROMPT_TEMPLATE = """\
+You are a Project Expansion Assistant for the Feature Dashboard project.
+
+## Project Context
+
+Feature Dashboard is a web application for visualizing and managing project features stored \
+in a SQLite database. It uses React 18 + Vite on the frontend and FastAPI + SQLite on the backend. \
+Features are tracked in a kanban board with TODO, In Progress, and Done lanes.
+
+**Available MCP tools:** feature_create_bulk, feature_create, feature_get_stats, \
+feature_get_next, feature_mark_passing, feature_skip
+
+## User Request
+
+The user wants to expand the project with the following:
+
+{description}
+
+## Your Role
+
+Follow the expand-project process:
+
+**Phase 1: Clarify Requirements**
+Ask focused questions to fully understand what the user wants:
+- What the user sees (UI/UX flows)
+- What actions they can take
+- What happens as a result
+- Error states and edge cases
+
+**Phase 2: Present Feature Breakdown**
+Count testable behaviors and present a breakdown by category for approval before creating anything:
+- `functional` - Core functionality, CRUD operations, workflows
+- `style` - Visual design, layout, responsive behavior
+- `navigation` - Routing, links, breadcrumbs
+- `error-handling` - Error states, validation, edge cases
+- `data` - Data integrity, persistence
+
+**Phase 3: Create Features**
+Once the user approves the breakdown, call `feature_create_bulk` with ALL features at once.
+
+Start by greeting the user, summarizing what they want to add, and asking clarifying questions.
+"""
+
 # Support test database via environment variable
 import os
 TEST_DB_PATH = os.environ.get("TEST_DB_PATH")
@@ -274,6 +317,18 @@ class LaunchClaudeResponse(BaseModel):
     hidden_execution: bool
 
 
+class PlanTasksRequest(BaseModel):
+    """Request body for launching a plan-tasks Claude session."""
+    description: str
+
+
+class PlanTasksResponse(BaseModel):
+    """Response for launching a plan-tasks Claude session."""
+    launched: bool
+    prompt: str
+    working_directory: str
+
+
 class SettingsResponse(BaseModel):
     """Application settings response."""
     claude_prompt_template: str
@@ -317,6 +372,7 @@ async def root():
             "databases_active": "GET /api/databases/active",
             "databases_select": "POST /api/databases/select",
             "launch_claude": "POST /api/features/{id}/launch-claude",
+            "plan_tasks": "POST /api/plan-tasks",
             "get_settings": "GET /api/settings",
             "update_settings": "PUT /api/settings"
         }
@@ -966,6 +1022,77 @@ async def launch_claude_for_feature(feature_id: int, request: LaunchClaudeReques
         )
     finally:
         session.close()
+
+
+@app.post("/api/plan-tasks", response_model=PlanTasksResponse)
+async def plan_tasks(request: PlanTasksRequest):
+    """
+    Launch an interactive Claude Code session for planning new features.
+
+    Builds a planning prompt from the expand-project template adapted for this dashboard,
+    then launches Claude CLI in interactive mode (no --print flag) so the user can have
+    a conversation with Claude. The Claude session uses MCP tools to create features
+    directly in the database.
+
+    The working directory is the project root so Claude has access to .mcp.json and
+    the active features.db.
+    """
+    if not request.description.strip():
+        raise HTTPException(status_code=400, detail="Description cannot be empty")
+
+    prompt = PLAN_TASKS_PROMPT_TEMPLATE.format(description=request.description.strip())
+    working_dir = str(PROJECT_DIR)
+
+    try:
+        if sys.platform == "win32":
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".txt", delete=False, encoding="utf-8"
+            ) as f:
+                f.write(prompt)
+                prompt_file = f.name
+
+            # Interactive mode: no --print flag so the terminal stays open
+            ps_cmd = f'claude --dangerously-skip-permissions (Get-Content -LiteralPath "{prompt_file}" -Raw)'
+            ps_executables = ["pwsh", "powershell"]
+            launched = False
+            for ps_exe in ps_executables:
+                try:
+                    subprocess.Popen(
+                        [ps_exe, "-Command", ps_cmd],
+                        creationflags=subprocess.CREATE_NEW_CONSOLE,
+                        cwd=working_dir,
+                    )
+                    launched = True
+                    break
+                except FileNotFoundError:
+                    continue
+
+            if not launched:
+                raise HTTPException(
+                    status_code=500,
+                    detail="No PowerShell found. Install PowerShell 7 (pwsh) or ensure powershell.exe is available.",
+                )
+        else:
+            # Interactive mode: no --print flag
+            subprocess.Popen(
+                ["claude", "--dangerously-skip-permissions", prompt],
+                cwd=working_dir,
+            )
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=500,
+            detail="Claude CLI not found. Make sure 'claude' is in your PATH.",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to launch Claude: {str(e)}")
+
+    return PlanTasksResponse(
+        launched=True,
+        prompt=prompt,
+        working_directory=working_dir,
+    )
 
 
 @app.get("/api/features/{feature_id}/comments", response_model=list[CommentResponse])
