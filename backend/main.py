@@ -116,6 +116,7 @@ class _AutoPilotState:
         self.enabled: bool = False
         self.current_feature_id: Optional[int] = None
         self.log: list[str] = []
+        self.active_process = None  # subprocess.Popen handle, if any
 
 
 _autopilot_states: dict[str, _AutoPilotState] = {}
@@ -419,6 +420,7 @@ async def root():
             "launch_claude": "POST /api/features/{id}/launch-claude",
             "plan_tasks": "POST /api/plan-tasks",
             "autopilot_enable": "POST /api/autopilot/enable",
+            "autopilot_disable": "POST /api/autopilot/disable",
             "get_settings": "GET /api/settings",
             "update_settings": "PUT /api/settings"
         }
@@ -1207,11 +1209,12 @@ async def enable_autopilot():
                 launched = False
                 for ps_exe in ps_executables:
                     try:
-                        subprocess.Popen(
+                        proc = subprocess.Popen(
                             [ps_exe, "-Command", ps_cmd],
                             creationflags=subprocess.CREATE_NEW_CONSOLE,
                             cwd=working_dir,
                         )
+                        state.active_process = proc
                         launched = True
                         break
                     except FileNotFoundError:
@@ -1225,10 +1228,11 @@ async def enable_autopilot():
                         detail="No PowerShell found. Install PowerShell 7 (pwsh) or ensure powershell.exe is available.",
                     )
             else:
-                subprocess.Popen(
+                proc = subprocess.Popen(
                     ["claude", "--model", feature_model, "--dangerously-skip-permissions", "--print", prompt],
                     cwd=working_dir,
                 )
+                state.active_process = proc
         except FileNotFoundError:
             state.enabled = False
             state.current_feature_id = None
@@ -1252,6 +1256,36 @@ async def enable_autopilot():
         )
     finally:
         session.close()
+
+
+@app.post("/api/autopilot/disable", response_model=AutoPilotStatusResponse)
+async def disable_autopilot():
+    """
+    Disable auto-pilot mode for the currently active database.
+
+    Terminates any active Claude process, clears the current feature, and sets
+    enabled=false. Appends a 'Auto-pilot manually disabled' log entry.
+
+    Always returns 200 — idempotent even if auto-pilot was already disabled.
+    """
+    state = get_autopilot_state()
+
+    if state.active_process is not None:
+        try:
+            state.active_process.terminate()
+        except Exception:
+            pass  # Process may have already exited
+        state.active_process = None
+
+    state.enabled = False
+    state.current_feature_id = None
+    state.log.append("Auto-pilot manually disabled")
+
+    return AutoPilotStatusResponse(
+        enabled=False,
+        current_feature_id=None,
+        log=list(state.log),
+    )
 
 
 @app.get("/api/features/{feature_id}/comments", response_model=list[CommentResponse])

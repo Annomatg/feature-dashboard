@@ -1451,5 +1451,151 @@ class TestAutoPilotEnable:
         assert str(data["current_feature_id"]) in log_text
 
 
+class TestAutoPilotDisable:
+    """Tests for POST /api/autopilot/disable"""
+
+    def _reset_autopilot_state(self, monkeypatch):
+        """Reset autopilot state dict to isolate tests from each other."""
+        import backend.main as main_module
+        monkeypatch.setattr(main_module, '_autopilot_states', {})
+
+    def test_disable_when_not_enabled_returns_200(self, client, monkeypatch):
+        """Test that disabling when already disabled is idempotent and returns 200."""
+        self._reset_autopilot_state(monkeypatch)
+
+        response = client.post("/api/autopilot/disable")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["enabled"] is False
+
+    def test_disable_after_enable_returns_200(self, client, monkeypatch):
+        """Test that disabling after enabling returns 200 with enabled=False."""
+        self._reset_autopilot_state(monkeypatch)
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "terminate": lambda self: None})())
+
+        client.post("/api/autopilot/enable")
+
+        response = client.post("/api/autopilot/disable")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["enabled"] is False
+
+    def test_disable_sets_current_feature_id_to_none(self, client, monkeypatch):
+        """Test that disabling clears current_feature_id."""
+        self._reset_autopilot_state(monkeypatch)
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "terminate": lambda self: None})())
+
+        enable_resp = client.post("/api/autopilot/enable")
+        assert enable_resp.json()["current_feature_id"] is not None
+
+        disable_resp = client.post("/api/autopilot/disable")
+        assert disable_resp.json()["current_feature_id"] is None
+
+    def test_disable_appends_manually_disabled_log_entry(self, client, monkeypatch):
+        """Test that disable appends the 'manually disabled' log entry."""
+        self._reset_autopilot_state(monkeypatch)
+
+        response = client.post("/api/autopilot/disable")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert any("manually disabled" in entry.lower() for entry in data["log"])
+
+    def test_disable_terminates_active_process(self, client, monkeypatch):
+        """Test that disable calls terminate() on the active process."""
+        self._reset_autopilot_state(monkeypatch)
+        terminate_calls = []
+
+        class MockProcess:
+            pid = 12345
+
+            def terminate(self):
+                terminate_calls.append(True)
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: MockProcess())
+
+        client.post("/api/autopilot/enable")
+        assert len(terminate_calls) == 0
+
+        client.post("/api/autopilot/disable")
+        assert len(terminate_calls) == 1
+
+    def test_disable_handles_already_exited_process_gracefully(self, client, monkeypatch):
+        """Test that disable does not raise if process.terminate() fails (already exited)."""
+        self._reset_autopilot_state(monkeypatch)
+
+        class MockProcessAlreadyDead:
+            pid = 99999
+
+            def terminate(self):
+                raise OSError("No such process")
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: MockProcessAlreadyDead())
+
+        client.post("/api/autopilot/enable")
+
+        # Should not raise — disable handles the exception gracefully
+        response = client.post("/api/autopilot/disable")
+        assert response.status_code == 200
+        assert response.json()["enabled"] is False
+
+    def test_disable_when_no_process_does_not_terminate(self, client, monkeypatch):
+        """Test that disabling when no process is running does not call terminate."""
+        self._reset_autopilot_state(monkeypatch)
+        terminate_calls = []
+
+        class MockProcess:
+            pid = 1
+
+            def terminate(self):
+                terminate_calls.append(True)
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: MockProcess())
+
+        # Disable without ever enabling — no process was spawned
+        response = client.post("/api/autopilot/disable")
+        assert response.status_code == 200
+        assert len(terminate_calls) == 0
+
+    def test_disable_is_idempotent_multiple_calls(self, client, monkeypatch):
+        """Test that calling disable multiple times always returns 200 with enabled=False."""
+        self._reset_autopilot_state(monkeypatch)
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "terminate": lambda self: None})())
+
+        client.post("/api/autopilot/enable")
+
+        for _ in range(3):
+            response = client.post("/api/autopilot/disable")
+            assert response.status_code == 200
+            assert response.json()["enabled"] is False
+
+    def test_disable_response_fields_present(self, client, monkeypatch):
+        """Test that response always includes enabled, current_feature_id, and log."""
+        self._reset_autopilot_state(monkeypatch)
+
+        response = client.post("/api/autopilot/disable")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "enabled" in data
+        assert "current_feature_id" in data
+        assert "log" in data
+
+    def test_re_enable_after_disable_works(self, client, monkeypatch):
+        """Test that autopilot can be re-enabled after being disabled."""
+        self._reset_autopilot_state(monkeypatch)
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "terminate": lambda self: None})())
+
+        client.post("/api/autopilot/enable")
+        client.post("/api/autopilot/disable")
+
+        # Should be able to enable again
+        response = client.post("/api/autopilot/enable")
+        assert response.status_code == 200
+        assert response.json()["enabled"] is True
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
