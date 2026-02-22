@@ -42,13 +42,13 @@ def test_db():
     session = session_maker()
     try:
         features = [
-            Feature(id=1, priority=1, category="Backend", name="Feature 1",
+            Feature(id=1, priority=100, category="Backend", name="Feature 1",
                    description="Test feature 1", steps=["Step 1"], passes=False, in_progress=False),
-            Feature(id=2, priority=2, category="Backend", name="Feature 2",
+            Feature(id=2, priority=200, category="Backend", name="Feature 2",
                    description="Test feature 2", steps=["Step 1"], passes=False, in_progress=False),
-            Feature(id=3, priority=3, category="Frontend", name="Feature 3",
+            Feature(id=3, priority=300, category="Frontend", name="Feature 3",
                    description="Test feature 3", steps=["Step 1"], passes=True, in_progress=False),
-            Feature(id=4, priority=4, category="Frontend", name="Feature 4",
+            Feature(id=4, priority=400, category="Frontend", name="Feature 4",
                    description="Test feature 4", steps=["Step 1"], passes=False, in_progress=True),
         ]
         for feature in features:
@@ -96,7 +96,7 @@ class TestCreateFeature:
         assert response.status_code == 201
         data = response.json()
         assert data["id"] == 5  # Next available ID
-        assert data["priority"] == 5  # Next available priority
+        assert data["priority"] == 500  # max(400) + 100
         assert data["category"] == "Testing"
         assert data["name"] == "New Test Feature"
         assert data["passes"] is False
@@ -262,7 +262,7 @@ class TestMoveFeature:
 
     def test_move_up_success(self, client):
         """Test moving feature up within its lane."""
-        # Feature 2 (priority 2) should swap with Feature 1 (priority 1)
+        # Feature 2 (priority 200) should swap with Feature 1 (priority 100)
         response = client.patch("/api/features/2/move", json={
             "direction": "up"
         })
@@ -270,15 +270,15 @@ class TestMoveFeature:
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == 2
-        assert data["priority"] == 1
+        assert data["priority"] == 100
 
         # Verify the other feature was also updated
         feature_1 = client.get("/api/features/1").json()
-        assert feature_1["priority"] == 2
+        assert feature_1["priority"] == 200
 
     def test_move_down_success(self, client):
         """Test moving feature down within its lane."""
-        # Feature 1 (priority 1) should swap with Feature 2 (priority 2)
+        # Feature 1 (priority 100) should swap with Feature 2 (priority 200)
         response = client.patch("/api/features/1/move", json={
             "direction": "down"
         })
@@ -286,11 +286,11 @@ class TestMoveFeature:
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == 1
-        assert data["priority"] == 2
+        assert data["priority"] == 200
 
         # Verify the other feature was also updated
         feature_2 = client.get("/api/features/2").json()
-        assert feature_2["priority"] == 1
+        assert feature_2["priority"] == 100
 
     def test_move_up_at_top(self, client):
         """Test that moving up from top position fails gracefully."""
@@ -322,7 +322,7 @@ class TestMoveFeature:
 
         assert response.status_code == 200
         # Should swap with feature 2 (the other todo feature)
-        assert response.json()["priority"] == 2
+        assert response.json()["priority"] == 200
 
     def test_move_invalid_direction(self, client):
         """Test moving with invalid direction."""
@@ -624,7 +624,7 @@ class TestIntegrationScenarios:
         })
 
         assert response.status_code == 201
-        assert response.json()["priority"] == max_priority + 1
+        assert response.json()["priority"] == max_priority + 100
 
     def test_isolation_from_production(self, client):
         """Verify test database is isolated from production."""

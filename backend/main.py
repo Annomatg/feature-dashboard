@@ -502,9 +502,9 @@ async def create_feature(request: CreateFeatureRequest):
     """
     session = get_session()
     try:
-        # Get the maximum priority and add 1
+        # Append after the current highest priority using the standard step size
         max_priority = session.query(Feature.priority).order_by(Feature.priority.desc()).first()
-        next_priority = (max_priority[0] + 1) if max_priority else 1
+        next_priority = (max_priority[0] + _PRIORITY_STEP) if max_priority else _PRIORITY_STEP
 
         # Validate model if provided
         if request.model is not None and request.model not in VALID_MODELS:
@@ -686,25 +686,18 @@ async def update_feature_priority(feature_id: int, request: UpdateFeaturePriorit
         session.close()
 
 
-def _deduplicate_priorities(sorted_priorities: list) -> list:
-    """
-    Given a sorted list of priorities that may contain duplicates, return a list
-    where duplicates are resolved by incrementing from the previous value.
+_PRIORITY_STEP = 100  # Gap between adjacent feature priorities
 
-    Examples:
-        [1, 1, 27] -> [1, 2, 27]
-        [1, 1, 2]  -> [1, 2, 3]
-        [1, 2, 3]  -> [1, 2, 3]  (unchanged when already unique)
+
+def _normalize_lane_priorities(features_in_order: list) -> None:
     """
-    result = []
-    for p in sorted_priorities:
-        if not result:
-            result.append(p)
-        elif p > result[-1]:
-            result.append(p)
-        else:
-            result.append(result[-1] + 1)
-    return result
+    Assign clean sequential priorities (100, 200, 300, ...) to features in order.
+
+    Normalizing the whole lane on every move/reorder keeps priorities distinct and
+    well-spaced so that subsequent swaps never produce conflicts.
+    """
+    for i, f in enumerate(features_in_order, start=1):
+        f.priority = i * _PRIORITY_STEP
 
 
 @app.patch("/api/features/{feature_id}/move", response_model=FeatureResponse)
@@ -734,10 +727,6 @@ async def move_feature(feature_id: int, request: MoveFeatureRequest):
             Feature.in_progress == feature.in_progress,
         ).order_by(Feature.priority.asc(), Feature.id.asc()).all()
 
-        # Collect and deduplicate the sorted priority pool before any swap.
-        raw_priorities = [f.priority for f in lane_features]
-        deduped_priorities = _deduplicate_priorities(raw_priorities)
-
         # Find this feature's position in the sorted lane.
         feature_idx = next((i for i, f in enumerate(lane_features) if f.id == feature_id), None)
 
@@ -750,12 +739,11 @@ async def move_feature(feature_id: int, request: MoveFeatureRequest):
                 raise HTTPException(status_code=400, detail=f"Cannot move feature {request.direction}: already at the edge")
             adj_idx = feature_idx + 1
 
-        # Swap the two features in the ordered list.
+        # Swap positions in the ordered list, then normalize the whole lane to clean
+        # 100-step priorities. This resolves any pre-existing duplicates and ensures
+        # future swaps never produce conflicts.
         lane_features[feature_idx], lane_features[adj_idx] = lane_features[adj_idx], lane_features[feature_idx]
-
-        # Assign deduplicated priorities in the new order.
-        for f, p in zip(lane_features, deduped_priorities):
-            f.priority = p
+        _normalize_lane_priorities(lane_features)
 
         session.commit()
         session.refresh(feature)
@@ -797,10 +785,6 @@ async def reorder_feature(feature_id: int, request: ReorderFeatureRequest):
             Feature.in_progress == feature.in_progress,
         ).order_by(Feature.priority.asc(), Feature.id.asc()).all()
 
-        # Deduplicate priority values so duplicate priorities in the lane
-        # don't cause incorrect priority assignment after reordering.
-        priorities = _deduplicate_priorities([f.priority for f in lane_features])
-
         # Build new order: remove dragged feature, insert at target position
         ordered = [f for f in lane_features if f.id != feature_id]
         target_idx = next((i for i, f in enumerate(ordered) if f.id == request.target_id), None)
@@ -811,9 +795,10 @@ async def reorder_feature(feature_id: int, request: ReorderFeatureRequest):
         insert_idx = target_idx if request.insert_before else target_idx + 1
         ordered.insert(insert_idx, feature)
 
-        # Reassign priorities in new order
-        for f, p in zip(ordered, priorities):
-            f.priority = p
+        # Normalize the whole lane to clean 100-step priorities. This eliminates
+        # any pre-existing duplicates and gives room between slots so future moves
+        # never produce conflicts.
+        _normalize_lane_priorities(ordered)
 
         session.commit()
         session.refresh(feature)
