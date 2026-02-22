@@ -2282,7 +2282,7 @@ class TestHandleAutopilotSuccess:
     """Unit tests for handle_autopilot_success."""
 
     def test_logs_success_message(self, test_db_with_path, monkeypatch):
-        """Success handler appends a success log entry."""
+        """Success handler appends a success log entry with feature id and name."""
         import asyncio
         from backend.main import handle_autopilot_success, _AutoPilotState
 
@@ -2291,12 +2291,17 @@ class TestHandleAutopilotSuccess:
         # All features except feature 3 are non-passing; mock spawn to avoid real process
         monkeypatch.setattr("backend.main.spawn_claude_for_autopilot",
                             lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda s: 0})())
+        monkeypatch.setattr("asyncio.create_task", lambda coro: coro.close() or None)
 
         state = _AutoPilotState()
+        state.current_feature_name = "My Completed Feature"
         asyncio.run(handle_autopilot_success(99, state, db_path))
 
-        log_messages = [e.message for e in state.log]
-        assert any("99" in m and "completed successfully" in m for m in log_messages)
+        success_entries = [e for e in state.log if e.level == 'success']
+        assert len(success_entries) == 1
+        assert "99" in success_entries[0].message
+        assert "My Completed Feature" in success_entries[0].message
+        assert "completed:" in success_entries[0].message
 
     def test_starts_next_feature_when_available(self, test_db_with_path, monkeypatch):
         """Success handler spawns Claude for the next pending feature."""
@@ -2319,7 +2324,51 @@ class TestHandleAutopilotSuccess:
 
         # Should have spawned Claude for the next feature (feature 4: in_progress=True)
         assert len(spawn_calls) == 1
-        assert state.current_feature_id is not None
+        # current_feature_id must update to the specific next feature's id (Feature 4)
+        assert state.current_feature_id == 4
+
+    def test_resets_consecutive_skip_count(self, test_db_with_path, monkeypatch):
+        """Success handler resets consecutive_skip_count to 0."""
+        import asyncio
+        from backend.main import handle_autopilot_success, _AutoPilotState
+
+        session_maker, db_path = test_db_with_path
+
+        monkeypatch.setattr("backend.main.spawn_claude_for_autopilot",
+                            lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda s: 0})())
+        monkeypatch.setattr("asyncio.create_task", lambda coro: coro.close() or None)
+
+        state = _AutoPilotState()
+        state.consecutive_skip_count = 5  # simulate accumulated skips
+        asyncio.run(handle_autopilot_success(99, state, db_path))
+
+        assert state.consecutive_skip_count == 0
+
+    def test_logs_all_tasks_complete_when_no_tasks_remain(self, test_db_with_path):
+        """Success handler logs 'All tasks complete' when no pending features remain."""
+        import asyncio
+        from backend.main import handle_autopilot_success, _AutoPilotState
+        from api.database import Feature as FeatureModel
+
+        session_maker, db_path = test_db_with_path
+
+        # Mark all non-passing features as passing so none remain
+        session = session_maker()
+        try:
+            for fid in [1, 2, 4]:
+                f = session.query(FeatureModel).filter(FeatureModel.id == fid).first()
+                f.passes = True
+                f.in_progress = False
+            session.commit()
+        finally:
+            session.close()
+
+        state = _AutoPilotState()
+        state.enabled = True
+        asyncio.run(handle_autopilot_success(99, state, db_path))
+
+        log_messages = [e.message for e in state.log]
+        assert any("All tasks complete" in m for m in log_messages)
 
     def test_disables_autopilot_when_no_tasks_remain(self, test_db_with_path, monkeypatch):
         """Success handler disables auto-pilot when all features are done."""

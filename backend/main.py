@@ -130,6 +130,7 @@ class _AutoPilotState:
         self.log: deque = deque(maxlen=100)  # LogEntry items, circular buffer
         self.active_process = None  # subprocess.Popen handle, if any
         self.monitor_task = None  # asyncio.Task handle, if monitoring
+        self.consecutive_skip_count: int = 0  # reset to 0 on each success
 
 
 _autopilot_states: dict[str, _AutoPilotState] = {}
@@ -244,7 +245,9 @@ async def handle_autopilot_success(
     Logs the success, then picks the next pending feature and spawns Claude for it.
     If no further work remains, disables auto-pilot and logs completion.
     """
-    _append_log(state, 'success', f"Feature #{feature_id} completed successfully")
+    feature_name = state.current_feature_name or "unknown"
+    _append_log(state, 'success', f"Feature #{feature_id} completed: {feature_name}")
+    state.consecutive_skip_count = 0
 
     # Fetch the next feature with a fresh session
     from sqlalchemy import create_engine as _create_engine
@@ -267,7 +270,7 @@ async def handle_autopilot_success(
         state.current_feature_name = None
         state.active_process = None
         state.monitor_task = None
-        _append_log(state, 'info', "No more tasks — auto-pilot complete")
+        _append_log(state, 'info', "All tasks complete")
         return
 
     state.current_feature_id = next_feature.id
