@@ -1130,5 +1130,118 @@ class TestLaunchClaudeWithModel:
         assert "model" in data
 
 
+class TestPlanTasks:
+    """Tests for POST /api/plan-tasks"""
+
+    def test_valid_description_returns_200_and_launched(self, client, monkeypatch):
+        """Test that a valid description returns 200 with launched=True."""
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+
+        response = client.post("/api/plan-tasks", json={
+            "description": "Add dark mode support to the dashboard"
+        })
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["launched"] is True
+
+    def test_empty_description_returns_400(self, client, monkeypatch):
+        """Test that an empty description returns 400."""
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+
+        response = client.post("/api/plan-tasks", json={"description": ""})
+
+        assert response.status_code == 400
+        assert "empty" in response.json()["detail"].lower()
+
+    def test_whitespace_description_returns_400(self, client, monkeypatch):
+        """Test that a whitespace-only description is also rejected."""
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+
+        response = client.post("/api/plan-tasks", json={"description": "   "})
+
+        assert response.status_code == 400
+
+    def test_prompt_contains_user_description(self, client, monkeypatch):
+        """Test that the generated prompt embeds the user's description."""
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+
+        description = "Add user authentication with OAuth"
+        response = client.post("/api/plan-tasks", json={"description": description})
+
+        assert response.status_code == 200
+        assert description in response.json()["prompt"]
+
+    def test_does_not_use_print_flag(self, client, monkeypatch):
+        """Test that plan-tasks launches Claude without --print (interactive mode)."""
+        popen_calls = []
+
+        def mock_popen(*args, **kwargs):
+            popen_calls.append({"args": args, "kwargs": kwargs})
+            return type("P", (), {"pid": 1})()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        response = client.post("/api/plan-tasks", json={"description": "Add reporting features"})
+
+        assert response.status_code == 200
+        assert len(popen_calls) == 1
+
+        call_args = popen_calls[0]["args"][0]
+        full_command = " ".join(call_args) if isinstance(call_args, list) else str(call_args)
+        assert "--print" not in full_command
+
+    def test_uses_dangerously_skip_permissions(self, client, monkeypatch):
+        """Test that plan-tasks includes --dangerously-skip-permissions."""
+        popen_calls = []
+
+        def mock_popen(*args, **kwargs):
+            popen_calls.append({"args": args, "kwargs": kwargs})
+            return type("P", (), {"pid": 1})()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        response = client.post("/api/plan-tasks", json={"description": "Add reporting features"})
+
+        assert response.status_code == 200
+        assert len(popen_calls) == 1
+
+        call_args = popen_calls[0]["args"][0]
+        full_command = " ".join(call_args) if isinstance(call_args, list) else str(call_args)
+        assert "--dangerously-skip-permissions" in full_command
+
+    def test_claude_not_found_returns_500(self, client, monkeypatch):
+        """Test that a missing Claude CLI (or PowerShell) returns 500."""
+        def mock_popen_not_found(*args, **kwargs):
+            raise FileNotFoundError("not found")
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen_not_found)
+
+        response = client.post("/api/plan-tasks", json={"description": "Add reporting features"})
+
+        assert response.status_code == 500
+
+    def test_response_includes_prompt_and_working_directory(self, client, monkeypatch):
+        """Test that the response always includes prompt and working_directory."""
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+
+        response = client.post("/api/plan-tasks", json={"description": "Add dark mode"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "prompt" in data
+        assert len(data["prompt"]) > 0
+        assert "working_directory" in data
+        assert len(data["working_directory"]) > 0
+
+    def test_missing_description_field_returns_422(self, client, monkeypatch):
+        """Test that omitting description entirely returns 422 validation error."""
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+
+        response = client.post("/api/plan-tasks", json={})
+
+        assert response.status_code == 422
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
