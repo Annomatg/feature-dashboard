@@ -1389,7 +1389,7 @@ class TestAutoPilotEnable:
         data = response.json()
         assert data["enabled"] is False
         assert data["current_feature_id"] is None
-        assert any("no tasks" in entry.lower() for entry in data["log"])
+        assert any("no tasks" in entry["message"].lower() for entry in data["log"])
 
     def test_enable_with_no_tasks_does_not_spawn_process(self, client, monkeypatch):
         """Test that no Claude process is spawned when no tasks are available."""
@@ -1446,7 +1446,7 @@ class TestAutoPilotEnable:
 
         assert response.status_code == 200
         data = response.json()
-        log_text = " ".join(data["log"])
+        log_text = " ".join(entry["message"] for entry in data["log"])
         # Should mention the feature ID
         assert str(data["current_feature_id"]) in log_text
 
@@ -1501,7 +1501,7 @@ class TestAutoPilotDisable:
 
         assert response.status_code == 200
         data = response.json()
-        assert any("manually disabled" in entry.lower() for entry in data["log"])
+        assert any("manually disabled" in entry["message"].lower() for entry in data["log"])
 
     def test_disable_terminates_active_process(self, client, monkeypatch):
         """Test that disable calls terminate() on the active process."""
@@ -1595,6 +1595,114 @@ class TestAutoPilotDisable:
         response = client.post("/api/autopilot/enable")
         assert response.status_code == 200
         assert response.json()["enabled"] is True
+
+
+class TestAutoPilotStatus:
+    """Tests for GET /api/autopilot/status"""
+
+    def _reset_autopilot_state(self, monkeypatch):
+        """Reset autopilot state dict to isolate tests from each other."""
+        import backend.main as main_module
+        monkeypatch.setattr(main_module, '_autopilot_states', {})
+
+    def test_status_returns_200_with_correct_shape_when_disabled(self, client, monkeypatch):
+        """Test: GET returns 200 with correct shape when autopilot is disabled."""
+        self._reset_autopilot_state(monkeypatch)
+
+        response = client.get("/api/autopilot/status")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Required fields present
+        assert "enabled" in data
+        assert "current_feature_id" in data
+        assert "current_feature_name" in data
+        assert "last_error" in data
+        assert "log" in data
+
+        # Correct values when disabled
+        assert data["enabled"] is False
+        assert data["current_feature_id"] is None
+        assert data["current_feature_name"] is None
+        assert data["last_error"] is None
+        assert isinstance(data["log"], list)
+
+    def test_status_log_entries_have_correct_shape(self, client, monkeypatch):
+        """Test that log entries contain timestamp, level, and message fields."""
+        self._reset_autopilot_state(monkeypatch)
+
+        # Trigger a disable so there's at least one log entry
+        client.post("/api/autopilot/disable")
+
+        response = client.get("/api/autopilot/status")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["log"]) > 0
+
+        entry = data["log"][0]
+        assert "timestamp" in entry
+        assert "level" in entry
+        assert "message" in entry
+        # timestamp is a non-empty ISO string
+        assert len(entry["timestamp"]) > 0
+        # level is one of the valid values
+        assert entry["level"] in ("info", "success", "error")
+        # message is a non-empty string
+        assert len(entry["message"]) > 0
+
+    def test_status_returns_correct_current_feature_id_when_enabled_and_running(self, client, monkeypatch):
+        """Test: GET returns correct current_feature_id when autopilot is enabled and running."""
+        self._reset_autopilot_state(monkeypatch)
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+
+        # Enable autopilot — test DB has feature 4 as in_progress so it's selected first
+        enable_resp = client.post("/api/autopilot/enable")
+        assert enable_resp.status_code == 200
+        expected_feature_id = enable_resp.json()["current_feature_id"]
+        expected_feature_name = enable_resp.json()["current_feature_name"]
+
+        # Now poll status
+        response = client.get("/api/autopilot/status")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["enabled"] is True
+        assert data["current_feature_id"] == expected_feature_id
+        assert data["current_feature_name"] == expected_feature_name
+        assert data["last_error"] is None
+
+    def test_status_returns_enabled_false_after_disable(self, client, monkeypatch):
+        """Test that status reflects disabled state after calling disable."""
+        self._reset_autopilot_state(monkeypatch)
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "terminate": lambda self: None})())
+
+        client.post("/api/autopilot/enable")
+        client.post("/api/autopilot/disable")
+
+        response = client.get("/api/autopilot/status")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["enabled"] is False
+        assert data["current_feature_id"] is None
+        assert data["current_feature_name"] is None
+
+    def test_status_log_accumulates_across_enable_disable(self, client, monkeypatch):
+        """Test that the log accumulates entries across enable and disable calls."""
+        self._reset_autopilot_state(monkeypatch)
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "terminate": lambda self: None})())
+
+        client.post("/api/autopilot/enable")
+        client.post("/api/autopilot/disable")
+
+        response = client.get("/api/autopilot/status")
+
+        assert response.status_code == 200
+        data = response.json()
+        # Should have entries from both enable (>= 3) and disable (1 more)
+        assert len(data["log"]) >= 3
 
 
 if __name__ == "__main__":

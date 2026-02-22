@@ -10,6 +10,8 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -109,13 +111,22 @@ else:
     _engine, _session_maker = create_database(PROJECT_DIR)
 
 
+class LogEntry(BaseModel):
+    """A single auto-pilot log entry with timestamp, severity level, and message."""
+    timestamp: str          # ISO 8601 UTC timestamp
+    level: str              # 'info' | 'success' | 'error'
+    message: str
+
+
 # Auto-pilot in-memory state, keyed by database path string
 class _AutoPilotState:
     """Tracks auto-pilot mode for a single database."""
     def __init__(self):
         self.enabled: bool = False
         self.current_feature_id: Optional[int] = None
-        self.log: list[str] = []
+        self.current_feature_name: Optional[str] = None
+        self.last_error: Optional[str] = None
+        self.log: deque = deque(maxlen=100)  # LogEntry items, circular buffer
         self.active_process = None  # subprocess.Popen handle, if any
 
 
@@ -128,6 +139,15 @@ def get_autopilot_state() -> _AutoPilotState:
     if db_key not in _autopilot_states:
         _autopilot_states[db_key] = _AutoPilotState()
     return _autopilot_states[db_key]
+
+
+def _append_log(state: _AutoPilotState, level: str, message: str) -> None:
+    """Append a structured log entry (timestamp + level + message) to autopilot state."""
+    state.log.append(LogEntry(
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        level=level,
+        message=message,
+    ))
 
 
 def get_next_feature_for_autopilot(session) -> Optional["Feature"]:
@@ -395,7 +415,9 @@ class AutoPilotStatusResponse(BaseModel):
     """Response for auto-pilot enable/status."""
     enabled: bool
     current_feature_id: Optional[int] = None
-    log: list[str] = []
+    current_feature_name: Optional[str] = None
+    last_error: Optional[str] = None
+    log: list[LogEntry] = []
 
 
 @app.get("/")
@@ -421,6 +443,7 @@ async def root():
             "plan_tasks": "POST /api/plan-tasks",
             "autopilot_enable": "POST /api/autopilot/enable",
             "autopilot_disable": "POST /api/autopilot/disable",
+            "autopilot_status": "GET /api/autopilot/status",
             "get_settings": "GET /api/settings",
             "update_settings": "PUT /api/settings"
         }
@@ -1165,18 +1188,22 @@ async def enable_autopilot():
         feature = get_next_feature_for_autopilot(session)
 
         if feature is None:
+            _append_log(state, 'info', 'No tasks available')
             return AutoPilotStatusResponse(
                 enabled=False,
                 current_feature_id=None,
-                log=["No tasks available"],
+                current_feature_name=None,
+                last_error=None,
+                log=list(state.log),
             )
 
         state.enabled = True
         state.current_feature_id = feature.id
-        state.log = [
-            f"Auto-pilot enabled for database: {_current_db_path.name}",
-            f"Starting feature #{feature.id}: {feature.name}",
-        ]
+        state.current_feature_name = feature.name
+        state.last_error = None
+        state.log.clear()
+        _append_log(state, 'info', f"Auto-pilot enabled for database: {_current_db_path.name}")
+        _append_log(state, 'info', f"Starting feature #{feature.id}: {feature.name}")
 
         # Build prompt using the same logic as launch_claude_for_feature
         settings = load_settings()
@@ -1223,10 +1250,10 @@ async def enable_autopilot():
                 if not launched:
                     state.enabled = False
                     state.current_feature_id = None
-                    raise HTTPException(
-                        status_code=500,
-                        detail="No PowerShell found. Install PowerShell 7 (pwsh) or ensure powershell.exe is available.",
-                    )
+                    state.current_feature_name = None
+                    err = "No PowerShell found. Install PowerShell 7 (pwsh) or ensure powershell.exe is available."
+                    state.last_error = err
+                    raise HTTPException(status_code=500, detail=err)
             else:
                 proc = subprocess.Popen(
                     ["claude", "--model", feature_model, "--dangerously-skip-permissions", "--print", prompt],
@@ -1236,22 +1263,27 @@ async def enable_autopilot():
         except FileNotFoundError:
             state.enabled = False
             state.current_feature_id = None
-            raise HTTPException(
-                status_code=500,
-                detail="Claude CLI not found. Make sure 'claude' is in your PATH.",
-            )
+            state.current_feature_name = None
+            err = "Claude CLI not found. Make sure 'claude' is in your PATH."
+            state.last_error = err
+            raise HTTPException(status_code=500, detail=err)
         except HTTPException:
             raise
         except Exception as e:
             state.enabled = False
             state.current_feature_id = None
-            raise HTTPException(status_code=500, detail=f"Failed to launch Claude: {str(e)}")
+            state.current_feature_name = None
+            err = f"Failed to launch Claude: {str(e)}"
+            state.last_error = err
+            raise HTTPException(status_code=500, detail=err)
 
-        state.log.append(f"Claude launched for feature #{feature.id} with model {feature_model}")
+        _append_log(state, 'info', f"Claude launched for feature #{feature.id} with model {feature_model}")
 
         return AutoPilotStatusResponse(
             enabled=True,
             current_feature_id=feature.id,
+            current_feature_name=feature.name,
+            last_error=None,
             log=list(state.log),
         )
     finally:
@@ -1279,11 +1311,35 @@ async def disable_autopilot():
 
     state.enabled = False
     state.current_feature_id = None
-    state.log.append("Auto-pilot manually disabled")
+    state.current_feature_name = None
+    state.last_error = None
+    _append_log(state, 'info', "Auto-pilot manually disabled")
 
     return AutoPilotStatusResponse(
         enabled=False,
         current_feature_id=None,
+        current_feature_name=None,
+        last_error=None,
+        log=list(state.log),
+    )
+
+
+@app.get("/api/autopilot/status", response_model=AutoPilotStatusResponse)
+async def get_autopilot_status():
+    """
+    Get the current auto-pilot state for the active database.
+
+    Returns the enabled flag, the feature currently being worked on (id and name),
+    the last error message (if any), and the event log (up to 100 entries).
+
+    The frontend polls this endpoint every 2 seconds while auto-pilot is enabled.
+    """
+    state = get_autopilot_state()
+    return AutoPilotStatusResponse(
+        enabled=state.enabled,
+        current_feature_id=state.current_feature_id,
+        current_feature_name=state.current_feature_name,
+        last_error=state.last_error,
         log=list(state.log),
     )
 
