@@ -236,6 +236,11 @@ class ReorderFeatureRequest(BaseModel):
     insert_before: bool
 
 
+class LaunchClaudeRequest(BaseModel):
+    """Request body for launching a Claude Code session."""
+    hidden_execution: bool = True
+
+
 class LaunchClaudeResponse(BaseModel):
     """Response for launching a Claude Code session."""
     launched: bool
@@ -243,6 +248,7 @@ class LaunchClaudeResponse(BaseModel):
     prompt: str
     working_directory: str
     model: str
+    hidden_execution: bool
 
 
 class SettingsResponse(BaseModel):
@@ -809,19 +815,23 @@ async def update_settings(request: UpdateSettingsRequest):
 
 
 @app.post("/api/features/{feature_id}/launch-claude", response_model=LaunchClaudeResponse)
-async def launch_claude_for_feature(feature_id: int):
+async def launch_claude_for_feature(feature_id: int, request: LaunchClaudeRequest = None):
     """
     Launch a Claude Code session to work on a specific feature.
 
     Opens Claude in a new terminal window with the feature context as the initial prompt.
-    Claude runs in non-interactive mode (--print) so the session and window close
-    automatically when the task is complete.
+    When hidden_execution=True (default), Claude runs with --print so the session closes
+    automatically when the task is complete. When hidden_execution=False, Claude opens
+    in interactive mode and the terminal stays open.
 
     The working directory is the folder containing the active features.db, so Claude
     operates in the correct project context.
 
     Only works for TODO and IN PROGRESS features (not completed features).
     """
+    if request is None:
+        request = LaunchClaudeRequest()
+
     session = get_session()
     try:
         feature = session.query(Feature).filter(Feature.id == feature_id).first()
@@ -866,7 +876,8 @@ async def launch_claude_for_feature(feature_id: int):
                 # PowerShell reads the file and passes its content as the first message
                 # --dangerously-skip-permissions enables full access mode (no permission prompts)
                 # --print runs Claude non-interactively so the session closes automatically when done
-                ps_cmd = f'claude --model {feature_model} --dangerously-skip-permissions --print (Get-Content -LiteralPath "{prompt_file}" -Raw)'
+                print_flag = "--print " if request.hidden_execution else ""
+                ps_cmd = f'claude --model {feature_model} --dangerously-skip-permissions {print_flag}(Get-Content -LiteralPath "{prompt_file}" -Raw)'
                 # Try pwsh (PowerShell 7) first, fall back to powershell (Windows PS 5)
                 ps_executables = ["pwsh", "powershell"]
                 launched = False
@@ -889,7 +900,11 @@ async def launch_claude_for_feature(feature_id: int):
                     )
             else:
                 # --print runs Claude non-interactively so the session closes automatically when done
-                subprocess.Popen(["claude", "--model", feature_model, "--dangerously-skip-permissions", "--print", prompt], cwd=working_dir)
+                cmd = ["claude", "--model", feature_model, "--dangerously-skip-permissions"]
+                if request.hidden_execution:
+                    cmd.append("--print")
+                cmd.append(prompt)
+                subprocess.Popen(cmd, cwd=working_dir)
         except FileNotFoundError:
             raise HTTPException(
                 status_code=500,
@@ -904,6 +919,7 @@ async def launch_claude_for_feature(feature_id: int):
             prompt=prompt,
             working_directory=working_dir,
             model=feature_model,
+            hidden_execution=request.hidden_execution,
         )
     finally:
         session.close()

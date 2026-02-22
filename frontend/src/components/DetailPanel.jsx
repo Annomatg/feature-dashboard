@@ -30,9 +30,11 @@ async function deleteFeatureApi(featureId) {
   }
 }
 
-async function launchClaudeApi(featureId) {
+async function launchClaudeApi(featureId, hiddenExecution) {
   const response = await fetch(`/api/features/${featureId}/launch-claude`, {
-    method: 'POST'
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hidden_execution: hiddenExecution })
   })
   if (!response.ok) {
     const error = await response.json()
@@ -306,6 +308,7 @@ function DetailPanel({ feature, onClose, onUpdate, onDelete }) {
   const [isSaving, setIsSaving] = useState(false)
   const [isLaunching, setIsLaunching] = useState(false)
   const [launchMessage, setLaunchMessage] = useState(null)
+  const [hiddenExecution, setHiddenExecution] = useState(true)
   const [comments, setComments] = useState([])
   const panelRef = useRef(null)
 
@@ -362,7 +365,7 @@ function DetailPanel({ feature, onClose, onUpdate, onDelete }) {
     setIsLaunching(true)
     setLaunchMessage(null)
     try {
-      await launchClaudeApi(feature.id)
+      await launchClaudeApi(feature.id, hiddenExecution)
       setLaunchMessage({ type: 'success', text: 'Claude launched!' })
     } catch (err) {
       setLaunchMessage({ type: 'error', text: err.message || 'Failed to launch' })
@@ -575,6 +578,19 @@ function DetailPanel({ feature, onClose, onUpdate, onDelete }) {
                   ))}
                 </div>
               </div>
+              <label
+                className="flex items-center gap-2 mb-2 cursor-pointer select-none"
+                data-testid="hidden-execution-label"
+              >
+                <input
+                  type="checkbox"
+                  checked={hiddenExecution}
+                  onChange={(e) => setHiddenExecution(e.target.checked)}
+                  data-testid="hidden-execution-checkbox"
+                  className="w-3.5 h-3.5 accent-primary cursor-pointer"
+                />
+                <span className="text-xs font-mono text-text-secondary">Hidden execution</span>
+              </label>
               <button
                 onClick={handleLaunchClaude}
                 disabled={isLaunching}

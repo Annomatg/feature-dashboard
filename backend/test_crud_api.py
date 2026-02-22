@@ -712,6 +712,87 @@ class TestLaunchClaude:
         assert "-NoExit" not in full_command
 
 
+class TestLaunchClaudeHiddenExecution:
+    """Tests for the hidden_execution option in launch-claude."""
+
+    def _get_full_command(self, popen_calls):
+        call_args = popen_calls[0]["args"][0]
+        return " ".join(call_args) if isinstance(call_args, list) else str(call_args)
+
+    def test_hidden_execution_true_uses_print_flag(self, client, monkeypatch):
+        """Test that hidden_execution=true includes --print flag."""
+        popen_calls = []
+
+        def mock_popen(*args, **kwargs):
+            popen_calls.append({"args": args, "kwargs": kwargs})
+            return type("P", (), {"pid": 1})()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        response = client.post("/api/features/1/launch-claude", json={"hidden_execution": True})
+
+        assert response.status_code == 200
+        assert response.json()["hidden_execution"] is True
+        assert "--print" in self._get_full_command(popen_calls)
+
+    def test_hidden_execution_false_omits_print_flag(self, client, monkeypatch):
+        """Test that hidden_execution=false omits the --print flag (interactive mode)."""
+        popen_calls = []
+
+        def mock_popen(*args, **kwargs):
+            popen_calls.append({"args": args, "kwargs": kwargs})
+            return type("P", (), {"pid": 1})()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        response = client.post("/api/features/1/launch-claude", json={"hidden_execution": False})
+
+        assert response.status_code == 200
+        assert response.json()["hidden_execution"] is False
+        assert "--print" not in self._get_full_command(popen_calls)
+
+    def test_hidden_execution_defaults_to_true(self, client, monkeypatch):
+        """Test that omitting hidden_execution defaults to True (hidden mode)."""
+        popen_calls = []
+
+        def mock_popen(*args, **kwargs):
+            popen_calls.append({"args": args, "kwargs": kwargs})
+            return type("P", (), {"pid": 1})()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        # No request body — should default to hidden_execution=True
+        response = client.post("/api/features/1/launch-claude")
+
+        assert response.status_code == 200
+        assert response.json()["hidden_execution"] is True
+        assert "--print" in self._get_full_command(popen_calls)
+
+    def test_hidden_execution_response_field_present(self, client, monkeypatch):
+        """Test that the response always includes hidden_execution field."""
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+
+        response = client.post("/api/features/1/launch-claude")
+
+        assert response.status_code == 200
+        assert "hidden_execution" in response.json()
+
+    def test_interactive_mode_still_uses_dangerously_skip_permissions(self, client, monkeypatch):
+        """Test that interactive mode (hidden_execution=false) still uses --dangerously-skip-permissions."""
+        popen_calls = []
+
+        def mock_popen(*args, **kwargs):
+            popen_calls.append({"args": args, "kwargs": kwargs})
+            return type("P", (), {"pid": 1})()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        response = client.post("/api/features/1/launch-claude", json={"hidden_execution": False})
+
+        assert response.status_code == 200
+        assert "--dangerously-skip-permissions" in self._get_full_command(popen_calls)
+
+
 # ==============================================================================
 # Settings endpoints
 # ==============================================================================
