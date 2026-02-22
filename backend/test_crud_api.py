@@ -2439,6 +2439,52 @@ class TestHandleAutopilotFailure:
 
         assert state.active_process is None
 
+    def test_sets_last_error_with_descriptive_message(self):
+        """Failure handler sets last_error to a descriptive message including feature id and exit code."""
+        import asyncio
+        from backend.main import handle_autopilot_failure, _AutoPilotState
+
+        state = _AutoPilotState()
+        asyncio.run(handle_autopilot_failure(7, 42, state))
+
+        assert state.last_error is not None
+        assert "7" in state.last_error
+        assert "42" in state.last_error
+        assert "not marked as passing" in state.last_error
+        # Log entry message must match last_error exactly
+        error_entries = [e for e in state.log if e.level == 'error']
+        assert len(error_entries) == 1
+        assert error_entries[0].message == state.last_error
+
+    def test_feature_state_in_db_unchanged_after_failure(self, test_db_with_path):
+        """Failure handler does not modify the feature's DB state."""
+        import asyncio
+        from backend.main import handle_autopilot_failure, _AutoPilotState
+        from api.database import Feature as FeatureModel
+
+        session_maker, db_path = test_db_with_path
+
+        # Record the initial state of feature 1 (passes=False, in_progress=False)
+        session = session_maker()
+        try:
+            before = session.query(FeatureModel).filter(FeatureModel.id == 1).first()
+            before_passes = before.passes
+            before_in_progress = before.in_progress
+        finally:
+            session.close()
+
+        state = _AutoPilotState()
+        asyncio.run(handle_autopilot_failure(1, 1, state))
+
+        # Feature must be unchanged in the DB
+        session = session_maker()
+        try:
+            after = session.query(FeatureModel).filter(FeatureModel.id == 1).first()
+            assert after.passes == before_passes
+            assert after.in_progress == before_in_progress
+        finally:
+            session.close()
+
 
 class TestDisableAutopilotCancelsMonitorTask:
     """Tests that disable_autopilot cancels the asyncio monitor task."""

@@ -299,9 +299,15 @@ async def handle_autopilot_failure(
 ) -> None:
     """Handle failed feature (process exited but feature.passes=False).
 
-    Logs the failure and disables auto-pilot.
+    Sets last_error, logs the failure, and disables auto-pilot.
+    The feature's DB state is left unchanged (not reverted).
     """
-    _append_log(state, 'error', f"Feature #{feature_id} failed — exit code {exit_code}")
+    msg = (
+        f"Feature #{feature_id} failed: process exited with code {exit_code}"
+        " and was not marked as passing"
+    )
+    state.last_error = msg
+    _append_log(state, 'error', msg)
     state.enabled = False
     state.current_feature_id = None
     state.current_feature_name = None
