@@ -342,6 +342,100 @@ class TestMoveFeature:
         assert response.status_code == 404
 
 
+class TestMoveFeatureWithDuplicatePriorities:
+    """Regression tests for move/reorder with duplicate priorities (Feature #35)."""
+
+    def test_move_down_when_both_features_share_same_priority(self, client):
+        """Bug: moving top-prio task down fails when another task shares the same priority.
+
+        When features 1 and 2 both have priority=1, moving feature 1 down should
+        give it a higher priority number (lower display rank), not fail or stay at 1.
+        """
+        # Force both TODO features to have priority 1 (duplicate)
+        client.patch("/api/features/1/priority", json={"priority": 1})
+        client.patch("/api/features/2/priority", json={"priority": 1})
+
+        response = client.patch("/api/features/1/move", json={"direction": "down"})
+
+        assert response.status_code == 200
+        f1_data = response.json()
+        f2_data = client.get("/api/features/2").json()
+
+        # Feature 1 must now sort AFTER feature 2 (higher priority number = lower rank)
+        assert f1_data["priority"] > f2_data["priority"]
+
+    def test_move_up_when_both_features_share_same_priority(self, client):
+        """Moving the second of two equal-priority features up should place it first."""
+        client.patch("/api/features/1/priority", json={"priority": 1})
+        client.patch("/api/features/2/priority", json={"priority": 1})
+
+        response = client.patch("/api/features/2/move", json={"direction": "up"})
+
+        assert response.status_code == 200
+        f2_data = response.json()
+        f1_data = client.get("/api/features/1").json()
+
+        # Feature 2 must now sort BEFORE feature 1
+        assert f2_data["priority"] < f1_data["priority"]
+
+    def test_reorder_high_prio_task_into_duplicate_group_keeps_distinct_priorities(self, client):
+        """Bug: reordering a prio-27 task between two prio-1 tasks collapses it to prio 1.
+
+        Expected: all three features end up with distinct priorities in the correct order.
+        """
+        # Set both TODO features to priority 1 (duplicate)
+        client.patch("/api/features/1/priority", json={"priority": 1})
+        client.patch("/api/features/2/priority", json={"priority": 1})
+
+        # Create a third TODO feature — gets auto-assigned a high priority
+        new_resp = client.post("/api/features", json={
+            "category": "Testing",
+            "name": "High Priority Task",
+            "description": "Should not collapse to prio 1 when reordered",
+            "steps": ["Verify priority stays distinct"],
+        })
+        assert new_resp.status_code == 201
+        new_id = new_resp.json()["id"]
+
+        # Reorder: insert the new feature between feature 1 and feature 2
+        response = client.patch(f"/api/features/{new_id}/reorder", json={
+            "target_id": 2,
+            "insert_before": True,
+        })
+
+        assert response.status_code == 200
+
+        f1 = client.get("/api/features/1").json()
+        f2 = client.get("/api/features/2").json()
+        fn = client.get(f"/api/features/{new_id}").json()
+
+        # All three must have distinct priorities
+        priorities = [f1["priority"], f2["priority"], fn["priority"]]
+        assert len(priorities) == len(set(priorities)), (
+            f"Priorities must be distinct, got: {priorities}"
+        )
+
+        # Ordering must be: feature 1 < new feature < feature 2
+        assert f1["priority"] < fn["priority"] < f2["priority"], (
+            f"Expected f1({f1['priority']}) < fn({fn['priority']}) < f2({f2['priority']})"
+        )
+
+    def test_reorder_preserves_ordering_with_unique_priorities(self, client):
+        """Existing reorder behavior must still work correctly with unique priorities."""
+        # Features 1 (prio 1) and 2 (prio 2) are both TODO, move 2 to before 1
+        response = client.patch("/api/features/2/reorder", json={
+            "target_id": 1,
+            "insert_before": True,
+        })
+
+        assert response.status_code == 200
+        f1 = client.get("/api/features/1").json()
+        f2 = client.get("/api/features/2").json()
+
+        # Feature 2 should now come before feature 1
+        assert f2["priority"] < f1["priority"]
+
+
 class TestPagination:
     """Tests for pagination support in GET /api/features"""
 

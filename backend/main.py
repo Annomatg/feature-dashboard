@@ -686,12 +686,35 @@ async def update_feature_priority(feature_id: int, request: UpdateFeaturePriorit
         session.close()
 
 
+def _deduplicate_priorities(sorted_priorities: list) -> list:
+    """
+    Given a sorted list of priorities that may contain duplicates, return a list
+    where duplicates are resolved by incrementing from the previous value.
+
+    Examples:
+        [1, 1, 27] -> [1, 2, 27]
+        [1, 1, 2]  -> [1, 2, 3]
+        [1, 2, 3]  -> [1, 2, 3]  (unchanged when already unique)
+    """
+    result = []
+    for p in sorted_priorities:
+        if not result:
+            result.append(p)
+        elif p > result[-1]:
+            result.append(p)
+        else:
+            result.append(result[-1] + 1)
+    return result
+
+
 @app.patch("/api/features/{feature_id}/move", response_model=FeatureResponse)
 async def move_feature(feature_id: int, request: MoveFeatureRequest):
     """
     Move a feature up or down within its current lane.
 
-    Swaps priorities with the adjacent feature in the specified direction.
+    Finds the adjacent feature by sorted position (not priority comparison) so
+    that duplicate priority values are handled correctly. Deduplicates lane
+    priorities after swapping to guarantee all values remain distinct.
     Direction must be "up" or "down".
     """
     if request.direction not in ["up", "down"]:
@@ -704,27 +727,35 @@ async def move_feature(feature_id: int, request: MoveFeatureRequest):
         if feature is None:
             raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
 
-        # Find adjacent feature in the same lane (same passes/in_progress state)
+        # Get all features in the same lane sorted by (priority, id) for stable ordering.
+        # Using id as a tiebreaker ensures deterministic results when priorities are equal.
+        lane_features = session.query(Feature).filter(
+            Feature.passes == feature.passes,
+            Feature.in_progress == feature.in_progress,
+        ).order_by(Feature.priority.asc(), Feature.id.asc()).all()
+
+        # Collect and deduplicate the sorted priority pool before any swap.
+        raw_priorities = [f.priority for f in lane_features]
+        deduped_priorities = _deduplicate_priorities(raw_priorities)
+
+        # Find this feature's position in the sorted lane.
+        feature_idx = next((i for i, f in enumerate(lane_features) if f.id == feature_id), None)
+
         if request.direction == "up":
-            # Find feature with next lower priority (smaller number = higher priority)
-            adjacent = session.query(Feature).filter(
-                Feature.passes == feature.passes,
-                Feature.in_progress == feature.in_progress,
-                Feature.priority < feature.priority
-            ).order_by(Feature.priority.desc()).first()
-        else:  # down
-            # Find feature with next higher priority (larger number = lower priority)
-            adjacent = session.query(Feature).filter(
-                Feature.passes == feature.passes,
-                Feature.in_progress == feature.in_progress,
-                Feature.priority > feature.priority
-            ).order_by(Feature.priority.asc()).first()
+            if feature_idx == 0:
+                raise HTTPException(status_code=400, detail=f"Cannot move feature {request.direction}: already at the edge")
+            adj_idx = feature_idx - 1
+        else:
+            if feature_idx == len(lane_features) - 1:
+                raise HTTPException(status_code=400, detail=f"Cannot move feature {request.direction}: already at the edge")
+            adj_idx = feature_idx + 1
 
-        if adjacent is None:
-            raise HTTPException(status_code=400, detail=f"Cannot move feature {request.direction}: already at the edge")
+        # Swap the two features in the ordered list.
+        lane_features[feature_idx], lane_features[adj_idx] = lane_features[adj_idx], lane_features[feature_idx]
 
-        # Swap priorities
-        feature.priority, adjacent.priority = adjacent.priority, feature.priority
+        # Assign deduplicated priorities in the new order.
+        for f, p in zip(lane_features, deduped_priorities):
+            f.priority = p
 
         session.commit()
         session.refresh(feature)
@@ -760,14 +791,15 @@ async def reorder_feature(feature_id: int, request: ReorderFeatureRequest):
         if feature.passes != target.passes or feature.in_progress != target.in_progress:
             raise HTTPException(status_code=400, detail="Features must be in the same lane")
 
-        # Get all features in the lane sorted by current priority
+        # Get all features in the lane sorted by (priority, id) for stable ordering.
         lane_features = session.query(Feature).filter(
             Feature.passes == feature.passes,
             Feature.in_progress == feature.in_progress,
-        ).order_by(Feature.priority.asc()).all()
+        ).order_by(Feature.priority.asc(), Feature.id.asc()).all()
 
-        # Collect current priority values to reuse (preserves cross-lane priority values)
-        priorities = [f.priority for f in lane_features]
+        # Deduplicate priority values so duplicate priorities in the lane
+        # don't cause incorrect priority assignment after reordering.
+        priorities = _deduplicate_priorities([f.priority for f in lane_features])
 
         # Build new order: remove dragged feature, insert at target position
         ordered = [f for f in lane_features if f.id != feature_id]
