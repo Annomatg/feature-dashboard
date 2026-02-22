@@ -150,8 +150,14 @@ def _append_log(state: _AutoPilotState, level: str, message: str) -> None:
     ))
 
 
-def get_next_feature_for_autopilot(session) -> Optional["Feature"]:
-    """Return the next feature to work on: in-progress first, then TODO by priority."""
+def get_next_autopilot_feature(session) -> Optional["Feature"]:
+    """Return the next feature to work on: in-progress first, then TODO by priority.
+
+    Selection order:
+    1. in_progress=True, passes=False  — ordered by priority ASC
+    2. in_progress=False, passes=False — ordered by priority ASC
+    3. None if no eligible features remain
+    """
     feature = (
         session.query(Feature)
         .filter(Feature.passes == False, Feature.in_progress == True)  # noqa: E712
@@ -1185,7 +1191,7 @@ async def enable_autopilot():
 
     session = get_session()
     try:
-        feature = get_next_feature_for_autopilot(session)
+        feature = get_next_autopilot_feature(session)
 
         if feature is None:
             _append_log(state, 'info', 'No tasks available')

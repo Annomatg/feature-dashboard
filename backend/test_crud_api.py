@@ -1243,6 +1243,120 @@ class TestPlanTasks:
         assert response.status_code == 422
 
 
+class TestGetNextAutopilotFeature:
+    """Unit tests for get_next_autopilot_feature(session) sequencer function."""
+
+    def test_in_progress_returned_before_todo(self, test_db):
+        """In-progress features are returned before TODO features regardless of priority."""
+        from backend.main import get_next_autopilot_feature
+
+        # Seed DB has: feature 1 (todo, prio 100), feature 2 (todo, prio 200),
+        #              feature 3 (done, prio 300), feature 4 (in_progress, prio 400)
+        # Feature 4 has higher priority number but is in_progress, so it wins
+        session = test_db()
+        try:
+            result = get_next_autopilot_feature(session)
+            assert result is not None
+            assert result.id == 4
+            assert result.in_progress is True
+        finally:
+            session.close()
+
+    def test_todo_features_ordered_by_priority(self, test_db):
+        """When no in-progress features exist, lowest priority number is returned first."""
+        from backend.main import get_next_autopilot_feature
+        from api.database import Feature
+
+        # Clear in_progress on feature 4 so only TODO features remain
+        session = test_db()
+        try:
+            f4 = session.query(Feature).filter(Feature.id == 4).first()
+            f4.in_progress = False
+            session.commit()
+
+            result = get_next_autopilot_feature(session)
+            assert result is not None
+            # Feature 1 has priority 100, feature 2 has priority 200 — pick lowest
+            assert result.id == 1
+            assert result.priority == 100
+        finally:
+            session.close()
+
+    def test_in_progress_features_ordered_by_priority_among_themselves(self, test_db):
+        """When multiple in-progress features exist, the one with the lowest priority is picked."""
+        from backend.main import get_next_autopilot_feature
+        from api.database import Feature
+
+        # Mark feature 1 (prio 100) as in_progress too — lower priority number than feature 4 (400)
+        session = test_db()
+        try:
+            f1 = session.query(Feature).filter(Feature.id == 1).first()
+            f1.in_progress = True
+            session.commit()
+
+            result = get_next_autopilot_feature(session)
+            assert result is not None
+            # Feature 1 has priority 100 < feature 4 priority 400
+            assert result.id == 1
+        finally:
+            session.close()
+
+    def test_returns_none_when_all_features_are_passing(self, test_db):
+        """Returns None when no in-progress or TODO features remain."""
+        from backend.main import get_next_autopilot_feature
+        from api.database import Feature
+
+        session = test_db()
+        try:
+            # Mark all non-done features as done
+            for fid in [1, 2, 4]:
+                f = session.query(Feature).filter(Feature.id == fid).first()
+                f.passes = True
+                f.in_progress = False
+            session.commit()
+
+            result = get_next_autopilot_feature(session)
+            assert result is None
+        finally:
+            session.close()
+
+    def test_returns_none_when_database_is_empty(self, test_db):
+        """Returns None when there are no features at all."""
+        from backend.main import get_next_autopilot_feature
+        from api.database import Feature
+
+        session = test_db()
+        try:
+            session.query(Feature).delete()
+            session.commit()
+
+            result = get_next_autopilot_feature(session)
+            assert result is None
+        finally:
+            session.close()
+
+    def test_skips_passing_in_progress_edge_case(self, test_db):
+        """A feature with both passes=True and in_progress=True is not returned."""
+        from backend.main import get_next_autopilot_feature
+        from api.database import Feature
+
+        session = test_db()
+        try:
+            # Force feature 4 into a passes=True, in_progress=True edge state
+            f4 = session.query(Feature).filter(Feature.id == 4).first()
+            f4.passes = True
+            # in_progress stays True
+            session.commit()
+
+            result = get_next_autopilot_feature(session)
+            assert result is not None
+            # Should fall through to TODO features (1 or 2), not pick the passing feature 4
+            assert result.passes is False
+            assert result.id in (1, 2)
+        finally:
+            session.close()
+
+
 class TestAutoPilotEnable:
     """Tests for POST /api/autopilot/enable"""
 
