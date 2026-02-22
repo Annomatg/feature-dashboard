@@ -20,6 +20,8 @@ from pydantic import BaseModel
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from sqlalchemy import func as sa_func
+
 from api.database import Comment, Feature, create_database
 
 # Initialize FastAPI app
@@ -74,6 +76,26 @@ async def startup_migrate_all():
 def get_session():
     """Get a database session."""
     return _session_maker()
+
+
+def get_comment_counts(session, feature_ids: list[int]) -> dict[int, int]:
+    """Return a mapping of feature_id -> comment_count for the given feature IDs."""
+    if not feature_ids:
+        return {}
+    rows = (
+        session.query(Comment.feature_id, sa_func.count(Comment.id))
+        .filter(Comment.feature_id.in_(feature_ids))
+        .group_by(Comment.feature_id)
+        .all()
+    )
+    return {fid: count for fid, count in rows}
+
+
+def feature_to_response(feature, comment_counts: dict[int, int]) -> "FeatureResponse":
+    """Convert a Feature ORM object to FeatureResponse including comment_count."""
+    d = feature.to_dict()
+    d["comment_count"] = comment_counts.get(feature.id, 0)
+    return FeatureResponse(**d)
 
 
 def load_settings() -> dict:
@@ -163,6 +185,7 @@ class FeatureResponse(BaseModel):
     created_at: Optional[str] = None
     modified_at: Optional[str] = None
     completed_at: Optional[str] = None
+    comment_count: int = 0
 
 
 class StatsResponse(BaseModel):
@@ -427,9 +450,10 @@ async def get_features(
             actual_offset = offset if offset is not None else 0
 
             features = query.limit(actual_limit).offset(actual_offset).all()
+            counts = get_comment_counts(session, [f.id for f in features])
 
             return PaginatedFeaturesResponse(
-                features=[FeatureResponse(**f.to_dict()) for f in features],
+                features=[feature_to_response(f, counts) for f in features],
                 total=total,
                 limit=actual_limit,
                 offset=actual_offset
@@ -437,7 +461,8 @@ async def get_features(
 
         # Otherwise return simple list (backward compatible)
         features = query.all()
-        return [FeatureResponse(**f.to_dict()) for f in features]
+        counts = get_comment_counts(session, [f.id for f in features])
+        return [feature_to_response(f, counts) for f in features]
     finally:
         session.close()
 
@@ -487,7 +512,8 @@ async def get_feature(feature_id: int):
         if feature is None:
             raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
 
-        return FeatureResponse(**feature.to_dict())
+        counts = get_comment_counts(session, [feature_id])
+        return feature_to_response(feature, counts)
     finally:
         session.close()
 
@@ -529,7 +555,7 @@ async def create_feature(request: CreateFeatureRequest):
         session.commit()
         session.refresh(new_feature)
 
-        return FeatureResponse(**new_feature.to_dict())
+        return feature_to_response(new_feature, {})
     except HTTPException:
         raise
     except Exception as e:
@@ -574,7 +600,7 @@ async def update_feature(feature_id: int, request: UpdateFeatureRequest):
         session.commit()
         session.refresh(feature)
 
-        return FeatureResponse(**feature.to_dict())
+        return feature_to_response(feature, get_comment_counts(session, [feature.id]))
     except HTTPException:
         raise
     except Exception as e:
@@ -644,7 +670,7 @@ async def update_feature_state(feature_id: int, request: UpdateFeatureStateReque
         session.commit()
         session.refresh(feature)
 
-        return FeatureResponse(**feature.to_dict())
+        return feature_to_response(feature, get_comment_counts(session, [feature.id]))
     except HTTPException:
         raise
     except Exception as e:
@@ -676,7 +702,7 @@ async def update_feature_priority(feature_id: int, request: UpdateFeaturePriorit
         session.commit()
         session.refresh(feature)
 
-        return FeatureResponse(**feature.to_dict())
+        return feature_to_response(feature, get_comment_counts(session, [feature.id]))
     except HTTPException:
         raise
     except Exception as e:
@@ -748,7 +774,7 @@ async def move_feature(feature_id: int, request: MoveFeatureRequest):
         session.commit()
         session.refresh(feature)
 
-        return FeatureResponse(**feature.to_dict())
+        return feature_to_response(feature, get_comment_counts(session, [feature.id]))
     except HTTPException:
         raise
     except Exception as e:
@@ -803,7 +829,7 @@ async def reorder_feature(feature_id: int, request: ReorderFeatureRequest):
         session.commit()
         session.refresh(feature)
 
-        return FeatureResponse(**feature.to_dict())
+        return feature_to_response(feature, get_comment_counts(session, [feature.id]))
     except HTTPException:
         raise
     except Exception as e:

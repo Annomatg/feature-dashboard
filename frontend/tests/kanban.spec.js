@@ -140,4 +140,81 @@ test.describe('Kanban Board', () => {
     const boxShadow = await firstCard.evaluate(el => window.getComputedStyle(el).boxShadow);
     expect(boxShadow).not.toBe('none');
   });
+
+  test('feature cards should display task ID and priority', async ({ page }) => {
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const firstCard = page.locator('.bg-surface.border.rounded-lg.p-4').first();
+    await firstCard.waitFor({ state: 'visible' });
+
+    // Task ID: shown as #<number> with title="Task ID"
+    const idSpan = firstCard.locator('[title="Task ID"]');
+    await expect(idSpan).toBeVisible();
+    const idText = await idSpan.textContent();
+    expect(idText).toMatch(/^#\d+$/);
+
+    // Priority: shown as P<number> with title="Priority"
+    const prioSpan = firstCard.locator('[title="Priority"]');
+    await expect(prioSpan).toBeVisible();
+    const prioText = await prioSpan.textContent();
+    expect(prioText).toMatch(/^P\d+$/);
+  });
+
+  test('feature cards should show comment indicator when feature has comments', async ({ page }) => {
+    // Create a test feature via test database API
+    const featureRes = await page.request.post('http://localhost:8001/api/features', {
+      data: {
+        category: 'Test',
+        name: 'Feature With Comment Indicator',
+        description: 'Testing comment icon',
+        steps: [],
+      }
+    });
+    expect(featureRes.ok()).toBeTruthy();
+    const feature = await featureRes.json();
+
+    // Add a comment to the feature
+    const commentRes = await page.request.post(`http://localhost:8001/api/features/${feature.id}/comments`, {
+      data: { content: 'A test comment' }
+    });
+    expect(commentRes.ok()).toBeTruthy();
+
+    // Reload to pick up new data
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    // Find the card and check for the comment indicator
+    const testCard = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Feature With Comment Indicator' });
+    await testCard.waitFor({ state: 'visible' });
+    await expect(testCard.locator('[data-testid="comment-indicator"]')).toBeVisible();
+
+    // Clean up
+    await page.request.delete(`http://localhost:8001/api/features/${feature.id}`);
+  });
+
+  test('feature cards should NOT show comment indicator when feature has no comments', async ({ page }) => {
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    // Create a feature with no comments
+    const featureRes = await page.request.post('http://localhost:8001/api/features', {
+      data: {
+        category: 'Test',
+        name: 'Feature Without Comments',
+        description: 'No comments here',
+        steps: [],
+      }
+    });
+    expect(featureRes.ok()).toBeTruthy();
+    const feature = await featureRes.json();
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const testCard = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Feature Without Comments' });
+    await testCard.waitFor({ state: 'visible' });
+    await expect(testCard.locator('[data-testid="comment-indicator"]')).not.toBeVisible();
+
+    // Clean up
+    await page.request.delete(`http://localhost:8001/api/features/${feature.id}`);
+  });
 });

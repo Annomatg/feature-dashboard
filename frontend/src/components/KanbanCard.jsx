@@ -1,4 +1,4 @@
-import { FileText } from 'lucide-react'
+import { FileText, MessageSquare } from 'lucide-react'
 
 function KanbanCard({
   feature,
@@ -63,11 +63,16 @@ function KanbanCard({
         }
       }}
     >
-      {/* Priority & Category */}
+      {/* ID, Priority & Category */}
       <div className="flex items-center justify-between mb-2">
-        <span className="font-mono text-xs text-text-secondary">
-          #{feature.priority.toString().padStart(3, '0')}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-xs text-text-secondary" title="Task ID">
+            #{feature.id}
+          </span>
+          <span className="font-mono text-xs text-text-secondary opacity-50" title="Priority">
+            P{feature.priority}
+          </span>
+        </div>
         <span
           className="px-2 py-0.5 rounded text-xs font-mono"
           style={{
@@ -84,13 +89,26 @@ function KanbanCard({
         <h3 className="text-text-primary font-semibold line-clamp-2 group-hover:text-white transition-colors flex-1">
           {feature.name}
         </h3>
-        {hasDescription && (
-          <FileText
-            size={14}
-            className="text-text-secondary flex-shrink-0 mt-0.5"
-            style={{ color: `${accentColor}80` }}
-          />
-        )}
+        <div className="flex items-center gap-1 flex-shrink-0 mt-0.5">
+          {hasDescription && (
+            <FileText
+              size={14}
+              style={{ color: `${accentColor}80` }}
+            />
+          )}
+          {feature.comment_count > 0 && (
+            <span
+              className="flex items-center gap-0.5"
+              title={`${feature.comment_count} comment${feature.comment_count !== 1 ? 's' : ''}`}
+              data-testid="comment-indicator"
+            >
+              <MessageSquare size={14} style={{ color: `${accentColor}80` }} />
+              <span className="font-mono text-xs" style={{ color: `${accentColor}80` }}>
+                {feature.comment_count}
+              </span>
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Steps count */}
