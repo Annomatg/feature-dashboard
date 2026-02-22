@@ -1,4 +1,4 @@
-import { Settings } from 'lucide-react'
+import { Settings, Sparkles } from 'lucide-react'
 import DatabaseSelector from './DatabaseSelector'
 
 function StatPill({ label, value, color }) {
@@ -14,7 +14,7 @@ function StatPill({ label, value, color }) {
   )
 }
 
-function Header({ totalFeatures, inProgressCount, doneCount, onSettingsClick }) {
+function Header({ totalFeatures, inProgressCount, doneCount, onSettingsClick, onPlanTasksClick }) {
   const donePercentage = totalFeatures > 0
     ? Math.round((doneCount / totalFeatures) * 100)
     : 0
@@ -54,6 +54,17 @@ function Header({ totalFeatures, inProgressCount, doneCount, onSettingsClick }) 
 
         {/* Database selector */}
         <DatabaseSelector />
+
+        {/* Plan Tasks button */}
+        <button
+          onClick={onPlanTasksClick}
+          data-testid="plan-tasks-btn"
+          className="p-2 rounded hover:bg-surface-light transition-colors"
+          aria-label="Plan tasks with Claude"
+          title="Plan Tasks"
+        >
+          <Sparkles size={18} className="text-text-secondary hover:text-text-primary transition-colors" />
+        </button>
 
         {/* Settings button */}
         <button

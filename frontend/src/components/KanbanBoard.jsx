@@ -4,6 +4,7 @@ import KanbanLane from './KanbanLane'
 import Toast from './Toast'
 import DetailPanel from './DetailPanel'
 import SettingsPanel from './SettingsPanel'
+import PlanTasksModal from './PlanTasksModal'
 import Header from './Header'
 import InfoBar from './InfoBar'
 
@@ -125,6 +126,7 @@ function KanbanBoard() {
   const [doneTotalCount, setDoneTotalCount] = useState(0)
   const [infoDismissed, setInfoDismissed] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [planTasksOpen, setPlanTasksOpen] = useState(false)
 
   const queryClient = useQueryClient()
   const dragState = useRef(null)
@@ -348,6 +350,7 @@ function KanbanBoard() {
         inProgressCount={inProgressCount}
         doneCount={doneTotalCount}
         onSettingsClick={() => setSettingsOpen(true)}
+        onPlanTasksClick={() => setPlanTasksOpen(true)}
       />
 
       {showInfoBar && (
@@ -450,6 +453,14 @@ function KanbanBoard() {
       {settingsOpen && (
         <SettingsPanel
           onClose={() => setSettingsOpen(false)}
+        />
+      )}
+
+      {/* Plan Tasks Modal */}
+      {planTasksOpen && (
+        <PlanTasksModal
+          onClose={() => setPlanTasksOpen(false)}
+          onToast={(type, message) => setToast({ type, message })}
         />
       )}
     </div>
