@@ -1243,6 +1243,241 @@ class TestPlanTasks:
         assert response.status_code == 422
 
 
+class TestSpawnClaudeForAutopilot:
+    """Unit tests for spawn_claude_for_autopilot(feature, settings, working_dir)."""
+
+    def _make_feature(self, model="sonnet", feature_id=7, name="Test Feature"):
+        """Return a simple namespace object that looks like a Feature ORM instance."""
+        import types
+        f = types.SimpleNamespace(
+            id=feature_id,
+            category="Testing",
+            name=name,
+            description="A test feature description",
+            steps=["Step one", "Step two"],
+            model=model,
+        )
+        return f
+
+    def _default_settings(self):
+        from backend.main import DEFAULT_PROMPT_TEMPLATE
+        return {"claude_prompt_template": DEFAULT_PROMPT_TEMPLATE}
+
+    def test_returns_popen_object(self, monkeypatch):
+        """spawn_claude_for_autopilot returns the Popen handle."""
+        from backend.main import spawn_claude_for_autopilot
+
+        class MockProc:
+            pid = 42
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: MockProc())
+
+        proc = spawn_claude_for_autopilot(
+            self._make_feature(), self._default_settings(), "/tmp/work"
+        )
+        assert proc.pid == 42
+
+    def test_uses_feature_model_in_command(self, monkeypatch):
+        """The feature's model field appears in the spawned command."""
+        from backend.main import spawn_claude_for_autopilot
+
+        popen_calls = []
+
+        def mock_popen(*args, **kwargs):
+            popen_calls.append({"args": args, "kwargs": kwargs})
+            return type("P", (), {"pid": 1})()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        spawn_claude_for_autopilot(
+            self._make_feature(model="opus"), self._default_settings(), "/tmp/work"
+        )
+
+        assert len(popen_calls) == 1
+        call_args = popen_calls[0]["args"][0]
+        full_command = " ".join(call_args) if isinstance(call_args, list) else str(call_args)
+        assert "opus" in full_command
+
+    def test_defaults_to_sonnet_when_model_is_none(self, monkeypatch):
+        """When feature.model is None, the command defaults to sonnet."""
+        from backend.main import spawn_claude_for_autopilot
+
+        popen_calls = []
+
+        def mock_popen(*args, **kwargs):
+            popen_calls.append({"args": args, "kwargs": kwargs})
+            return type("P", (), {"pid": 1})()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        spawn_claude_for_autopilot(
+            self._make_feature(model=None), self._default_settings(), "/tmp/work"
+        )
+
+        assert len(popen_calls) == 1
+        call_args = popen_calls[0]["args"][0]
+        full_command = " ".join(call_args) if isinstance(call_args, list) else str(call_args)
+        assert "sonnet" in full_command
+
+    def test_uses_prompt_template_from_settings(self, monkeypatch):
+        """The prompt passed to the process includes content from the settings template."""
+        from backend.main import spawn_claude_for_autopilot
+        import tempfile as _tempfile
+        import os
+
+        written_prompts = []
+        original_ntf = _tempfile.NamedTemporaryFile
+
+        # Intercept the temp file write to capture the rendered prompt
+        class CapturingNTF:
+            def __init__(self, *a, **kw):
+                self._ntf = original_ntf(*a, **kw)
+                self.name = self._ntf.name
+
+            def write(self, content):
+                written_prompts.append(content)
+                self._ntf.write(content)
+
+            def __enter__(self):
+                self._ntf.__enter__()
+                return self
+
+            def __exit__(self, *args):
+                return self._ntf.__exit__(*args)
+
+        monkeypatch.setattr(_tempfile, "NamedTemporaryFile", CapturingNTF)
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+
+        custom_settings = {"claude_prompt_template": "CUSTOM: {name} - {description}"}
+        feature = self._make_feature(name="My Feature")
+
+        spawn_claude_for_autopilot(feature, custom_settings, "/tmp/work")
+
+        # At least one temp file should have been written with the rendered prompt
+        assert len(written_prompts) > 0
+        rendered = written_prompts[0]
+        assert "CUSTOM:" in rendered
+        assert "My Feature" in rendered
+        assert "A test feature description" in rendered
+
+    def test_no_create_new_console_flag(self, monkeypatch):
+        """On Windows the process is spawned WITHOUT CREATE_NEW_CONSOLE (background)."""
+        import sys
+        from backend.main import spawn_claude_for_autopilot
+
+        popen_calls = []
+
+        def mock_popen(*args, **kwargs):
+            popen_calls.append({"args": args, "kwargs": kwargs})
+            return type("P", (), {"pid": 1})()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+        # Force Windows code path regardless of actual OS
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        spawn_claude_for_autopilot(
+            self._make_feature(), self._default_settings(), "/tmp/work"
+        )
+
+        assert len(popen_calls) == 1
+        kwargs = popen_calls[0]["kwargs"]
+        # CREATE_NEW_CONSOLE must NOT be set
+        assert "creationflags" not in kwargs or (
+            kwargs["creationflags"] & subprocess.CREATE_NEW_CONSOLE == 0
+        )
+
+    def test_uses_print_flag(self, monkeypatch):
+        """The spawned command includes --print for non-interactive execution."""
+        from backend.main import spawn_claude_for_autopilot
+
+        popen_calls = []
+
+        def mock_popen(*args, **kwargs):
+            popen_calls.append({"args": args, "kwargs": kwargs})
+            return type("P", (), {"pid": 1})()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        spawn_claude_for_autopilot(
+            self._make_feature(), self._default_settings(), "/tmp/work"
+        )
+
+        assert len(popen_calls) == 1
+        call_args = popen_calls[0]["args"][0]
+        full_command = " ".join(call_args) if isinstance(call_args, list) else str(call_args)
+        assert "--print" in full_command
+
+    def test_uses_dangerously_skip_permissions(self, monkeypatch):
+        """The spawned command includes --dangerously-skip-permissions."""
+        from backend.main import spawn_claude_for_autopilot
+
+        popen_calls = []
+
+        def mock_popen(*args, **kwargs):
+            popen_calls.append({"args": args, "kwargs": kwargs})
+            return type("P", (), {"pid": 1})()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        spawn_claude_for_autopilot(
+            self._make_feature(), self._default_settings(), "/tmp/work"
+        )
+
+        assert len(popen_calls) == 1
+        call_args = popen_calls[0]["args"][0]
+        full_command = " ".join(call_args) if isinstance(call_args, list) else str(call_args)
+        assert "--dangerously-skip-permissions" in full_command
+
+    def test_raises_runtime_error_when_no_powershell(self, monkeypatch):
+        """Raises RuntimeError when no PowerShell executable is found on Windows."""
+        import sys
+        from backend.main import spawn_claude_for_autopilot
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError()))
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        with pytest.raises(RuntimeError, match="No PowerShell found"):
+            spawn_claude_for_autopilot(
+                self._make_feature(), self._default_settings(), "/tmp/work"
+            )
+
+    def test_prompt_includes_feature_steps(self, monkeypatch):
+        """The rendered prompt includes the feature's step list."""
+        from backend.main import spawn_claude_for_autopilot
+        import tempfile as _tempfile
+
+        written_prompts = []
+        original_ntf = _tempfile.NamedTemporaryFile
+
+        class CapturingNTF:
+            def __init__(self, *a, **kw):
+                self._ntf = original_ntf(*a, **kw)
+                self.name = self._ntf.name
+
+            def write(self, content):
+                written_prompts.append(content)
+                self._ntf.write(content)
+
+            def __enter__(self):
+                self._ntf.__enter__()
+                return self
+
+            def __exit__(self, *args):
+                return self._ntf.__exit__(*args)
+
+        monkeypatch.setattr(_tempfile, "NamedTemporaryFile", CapturingNTF)
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+
+        spawn_claude_for_autopilot(
+            self._make_feature(), self._default_settings(), "/tmp/work"
+        )
+
+        assert len(written_prompts) > 0
+        rendered = written_prompts[0]
+        assert "Step one" in rendered
+        assert "Step two" in rendered
+
+
 class TestGetNextAutopilotFeature:
     """Unit tests for get_next_autopilot_feature(session) sequencer function."""
 

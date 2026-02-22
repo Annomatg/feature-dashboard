@@ -174,6 +174,66 @@ def get_next_autopilot_feature(session) -> Optional["Feature"]:
     return feature
 
 
+def spawn_claude_for_autopilot(feature, settings: dict, working_dir: str) -> "subprocess.Popen":
+    """Spawn a background Claude process for auto-pilot mode and return the Popen handle.
+
+    Differences from the interactive launch-claude endpoint:
+    - No CREATE_NEW_CONSOLE — runs silently in the background.
+    - Always uses --print (non-interactive, exits when done).
+    - Raises RuntimeError when no PowerShell executable is found (Windows).
+    - Raises FileNotFoundError when the Claude CLI is not in PATH (Linux/Mac).
+
+    Args:
+        feature:     Feature ORM object (must have id, category, name, description, steps, model).
+        settings:    Settings dict containing 'claude_prompt_template'.
+        working_dir: Working directory string for the spawned process.
+
+    Returns:
+        subprocess.Popen handle for the spawned process.
+    """
+    template = settings.get("claude_prompt_template", DEFAULT_PROMPT_TEMPLATE)
+    steps_text = "\n".join(f"{i + 1}. {step}" for i, step in enumerate(feature.steps))
+    prompt = template.format(
+        feature_id=feature.id,
+        category=feature.category,
+        name=feature.name,
+        description=feature.description,
+        steps=steps_text,
+    )
+
+    feature_model = feature.model or "sonnet"
+
+    if sys.platform == "win32":
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(prompt)
+            prompt_file = f.name
+
+        ps_cmd = (
+            f'claude --model {feature_model} --dangerously-skip-permissions '
+            f'--print (Get-Content -LiteralPath "{prompt_file}" -Raw)'
+        )
+        for ps_exe in ["pwsh", "powershell"]:
+            try:
+                return subprocess.Popen(
+                    [ps_exe, "-Command", ps_cmd],
+                    cwd=working_dir,
+                    # No CREATE_NEW_CONSOLE — background execution
+                )
+            except FileNotFoundError:
+                continue
+
+        raise RuntimeError(
+            "No PowerShell found. Install PowerShell 7 (pwsh) or ensure powershell.exe is available."
+        )
+    else:
+        return subprocess.Popen(
+            ["claude", "--model", feature_model, "--dangerously-skip-permissions", "--print", prompt],
+            cwd=working_dir,
+        )
+
+
 @app.on_event("startup")
 async def startup_migrate_all():
     """Run schema migrations on all configured databases at startup."""
@@ -1211,70 +1271,20 @@ async def enable_autopilot():
         _append_log(state, 'info', f"Auto-pilot enabled for database: {_current_db_path.name}")
         _append_log(state, 'info', f"Starting feature #{feature.id}: {feature.name}")
 
-        # Build prompt using the same logic as launch_claude_for_feature
         settings = load_settings()
-        template = settings.get("claude_prompt_template", DEFAULT_PROMPT_TEMPLATE)
-        steps_text = "\n".join(f"{i + 1}. {step}" for i, step in enumerate(feature.steps))
-        prompt = template.format(
-            feature_id=feature.id,
-            category=feature.category,
-            name=feature.name,
-            description=feature.description,
-            steps=steps_text,
-        )
-
-        feature_model = feature.model or "sonnet"
         working_dir = str(_current_db_path.parent)
+        feature_model = feature.model or "sonnet"
 
         try:
-            if sys.platform == "win32":
-                with tempfile.NamedTemporaryFile(
-                    mode="w", suffix=".txt", delete=False, encoding="utf-8"
-                ) as f:
-                    f.write(prompt)
-                    prompt_file = f.name
-
-                ps_cmd = (
-                    f'claude --model {feature_model} --dangerously-skip-permissions '
-                    f'--print (Get-Content -LiteralPath "{prompt_file}" -Raw)'
-                )
-                ps_executables = ["pwsh", "powershell"]
-                launched = False
-                for ps_exe in ps_executables:
-                    try:
-                        proc = subprocess.Popen(
-                            [ps_exe, "-Command", ps_cmd],
-                            creationflags=subprocess.CREATE_NEW_CONSOLE,
-                            cwd=working_dir,
-                        )
-                        state.active_process = proc
-                        launched = True
-                        break
-                    except FileNotFoundError:
-                        continue
-
-                if not launched:
-                    state.enabled = False
-                    state.current_feature_id = None
-                    state.current_feature_name = None
-                    err = "No PowerShell found. Install PowerShell 7 (pwsh) or ensure powershell.exe is available."
-                    state.last_error = err
-                    raise HTTPException(status_code=500, detail=err)
-            else:
-                proc = subprocess.Popen(
-                    ["claude", "--model", feature_model, "--dangerously-skip-permissions", "--print", prompt],
-                    cwd=working_dir,
-                )
-                state.active_process = proc
-        except FileNotFoundError:
+            proc = spawn_claude_for_autopilot(feature, settings, working_dir)
+            state.active_process = proc
+        except (FileNotFoundError, RuntimeError) as e:
             state.enabled = False
             state.current_feature_id = None
             state.current_feature_name = None
-            err = "Claude CLI not found. Make sure 'claude' is in your PATH."
+            err = str(e)
             state.last_error = err
             raise HTTPException(status_code=500, detail=err)
-        except HTTPException:
-            raise
         except Exception as e:
             state.enabled = False
             state.current_feature_id = None
