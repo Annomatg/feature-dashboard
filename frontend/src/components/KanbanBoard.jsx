@@ -381,6 +381,7 @@ function KanbanBoard() {
             dragState={dragState}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
+            onPlanClick={() => setPlanTasksOpen(true)}
           />
 
           <KanbanLane

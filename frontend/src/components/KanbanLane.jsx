@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { Plus } from 'lucide-react'
+import { Plus, Sparkles } from 'lucide-react'
 import KanbanCard from './KanbanCard'
 import NewFeatureCard from './NewFeatureCard'
 
@@ -70,6 +70,7 @@ function KanbanLane({
   hasMore = false,
   onShowMore,
   isLoadingMore = false,
+  onPlanClick,
 }) {
   const [isDragOver, setIsDragOver] = useState(false)
   // featureId being hovered over during same-lane drag (for drop indicator)
@@ -180,17 +181,34 @@ function KanbanLane({
             </div>
           </div>
 
-          <button
-            onClick={onAddClick}
-            className="p-2 rounded transition-all duration-200 hover:bg-surface-light group"
-            style={{ border: '1px solid #3d3d3d' }}
-            aria-label={`Add feature to ${title}`}
-          >
-            <Plus
-              size={18}
-              className="text-text-secondary group-hover:text-text-primary transition-colors"
-            />
-          </button>
+          <div className="flex items-center gap-1">
+            {onPlanClick && (
+              <button
+                onClick={onPlanClick}
+                className="p-2 rounded transition-all duration-200 hover:bg-surface-light group"
+                style={{ border: '1px solid #3d3d3d' }}
+                aria-label="Plan tasks with Claude"
+                data-testid="todo-plan-btn"
+                title="Plan Tasks"
+              >
+                <Sparkles
+                  size={18}
+                  className="text-text-secondary group-hover:text-text-primary transition-colors"
+                />
+              </button>
+            )}
+            <button
+              onClick={onAddClick}
+              className="p-2 rounded transition-all duration-200 hover:bg-surface-light group"
+              style={{ border: '1px solid #3d3d3d' }}
+              aria-label={`Add feature to ${title}`}
+            >
+              <Plus
+                size={18}
+                className="text-text-secondary group-hover:text-text-primary transition-colors"
+              />
+            </button>
+          </div>
         </div>
 
         {/* Divider — glows when drag target */}
