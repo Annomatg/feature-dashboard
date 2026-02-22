@@ -1243,5 +1243,213 @@ class TestPlanTasks:
         assert response.status_code == 422
 
 
+class TestAutoPilotEnable:
+    """Tests for POST /api/autopilot/enable"""
+
+    def _reset_autopilot_state(self, monkeypatch):
+        """Reset autopilot state dict to isolate tests from each other."""
+        import backend.main as main_module
+        monkeypatch.setattr(main_module, '_autopilot_states', {})
+
+    def _get_full_command(self, popen_calls):
+        call_args = popen_calls[0]["args"][0]
+        return " ".join(call_args) if isinstance(call_args, list) else str(call_args)
+
+    def test_enable_returns_200_with_todo_feature(self, client, monkeypatch):
+        """Test that enabling autopilot returns 200 with enabled=True when TODO features exist."""
+        self._reset_autopilot_state(monkeypatch)
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+
+        response = client.post("/api/autopilot/enable")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["enabled"] is True
+        assert data["current_feature_id"] is not None
+
+    def test_enable_picks_in_progress_feature_first(self, client, monkeypatch):
+        """Test that autopilot picks in-progress features before TODO features."""
+        self._reset_autopilot_state(monkeypatch)
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+
+        # Test DB has feature 4 as in_progress=True, passes=False
+        response = client.post("/api/autopilot/enable")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["enabled"] is True
+        # Feature 4 is in_progress, so it should be selected over TODO features 1/2
+        assert data["current_feature_id"] == 4
+
+    def test_enable_picks_todo_by_priority_when_no_in_progress(self, client, monkeypatch):
+        """Test that autopilot picks the highest priority TODO when no in-progress feature exists."""
+        self._reset_autopilot_state(monkeypatch)
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+
+        # Move feature 4 out of in_progress state
+        client.patch("/api/features/4/state", json={"in_progress": False})
+
+        response = client.post("/api/autopilot/enable")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["enabled"] is True
+        # Feature 1 has priority 100 (lowest = highest priority), feature 2 has 200
+        assert data["current_feature_id"] == 1
+
+    def test_enable_spawns_claude_process(self, client, monkeypatch):
+        """Test that enabling autopilot spawns exactly one Claude process."""
+        self._reset_autopilot_state(monkeypatch)
+        popen_calls = []
+
+        def mock_popen(*args, **kwargs):
+            popen_calls.append({"args": args, "kwargs": kwargs})
+            return type("P", (), {"pid": 1})()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        response = client.post("/api/autopilot/enable")
+
+        assert response.status_code == 200
+        assert len(popen_calls) == 1
+
+    def test_enable_uses_print_flag_for_hidden_execution(self, client, monkeypatch):
+        """Test that autopilot launches Claude with --print (hidden execution)."""
+        self._reset_autopilot_state(monkeypatch)
+        popen_calls = []
+
+        def mock_popen(*args, **kwargs):
+            popen_calls.append({"args": args, "kwargs": kwargs})
+            return type("P", (), {"pid": 1})()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        response = client.post("/api/autopilot/enable")
+
+        assert response.status_code == 200
+        assert len(popen_calls) == 1
+        full_command = self._get_full_command(popen_calls)
+        assert "--print" in full_command
+
+    def test_enable_uses_dangerously_skip_permissions(self, client, monkeypatch):
+        """Test that autopilot launches Claude with --dangerously-skip-permissions."""
+        self._reset_autopilot_state(monkeypatch)
+        popen_calls = []
+
+        def mock_popen(*args, **kwargs):
+            popen_calls.append({"args": args, "kwargs": kwargs})
+            return type("P", (), {"pid": 1})()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        response = client.post("/api/autopilot/enable")
+
+        assert response.status_code == 200
+        full_command = self._get_full_command(popen_calls)
+        assert "--dangerously-skip-permissions" in full_command
+
+    def test_enable_returns_log_entries(self, client, monkeypatch):
+        """Test that the response includes non-empty log entries."""
+        self._reset_autopilot_state(monkeypatch)
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+
+        response = client.post("/api/autopilot/enable")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data["log"], list)
+        assert len(data["log"]) > 0
+
+    def test_enable_when_already_enabled_returns_409(self, client, monkeypatch):
+        """Test that enabling autopilot when already enabled returns 409."""
+        self._reset_autopilot_state(monkeypatch)
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+
+        # Enable once
+        first = client.post("/api/autopilot/enable")
+        assert first.status_code == 200
+
+        # Try to enable again — should get 409
+        second = client.post("/api/autopilot/enable")
+        assert second.status_code == 409
+        assert "already enabled" in second.json()["detail"].lower()
+
+    def test_enable_with_no_tasks_returns_disabled(self, client, monkeypatch):
+        """Test that autopilot returns enabled=False with message when no tasks available."""
+        self._reset_autopilot_state(monkeypatch)
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+
+        # Mark all non-done features as done so no tasks remain
+        for fid in [1, 2, 4]:
+            client.patch(f"/api/features/{fid}/state", json={"passes": True})
+
+        response = client.post("/api/autopilot/enable")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["enabled"] is False
+        assert data["current_feature_id"] is None
+        assert any("no tasks" in entry.lower() for entry in data["log"])
+
+    def test_enable_with_no_tasks_does_not_spawn_process(self, client, monkeypatch):
+        """Test that no Claude process is spawned when no tasks are available."""
+        self._reset_autopilot_state(monkeypatch)
+        popen_calls = []
+
+        def mock_popen(*args, **kwargs):
+            popen_calls.append({"args": args, "kwargs": kwargs})
+            return type("P", (), {"pid": 1})()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        # Mark all non-done features as done
+        for fid in [1, 2, 4]:
+            client.patch(f"/api/features/{fid}/state", json={"passes": True})
+
+        response = client.post("/api/autopilot/enable")
+
+        assert response.status_code == 200
+        assert len(popen_calls) == 0
+
+    def test_enable_claude_not_found_returns_500(self, client, monkeypatch):
+        """Test that a missing Claude CLI returns 500 and disables autopilot."""
+        self._reset_autopilot_state(monkeypatch)
+
+        def mock_popen_not_found(*args, **kwargs):
+            raise FileNotFoundError("claude not found")
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen_not_found)
+
+        response = client.post("/api/autopilot/enable")
+
+        assert response.status_code == 500
+
+    def test_enable_response_fields_present(self, client, monkeypatch):
+        """Test that response always includes enabled, current_feature_id, and log."""
+        self._reset_autopilot_state(monkeypatch)
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+
+        response = client.post("/api/autopilot/enable")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "enabled" in data
+        assert "current_feature_id" in data
+        assert "log" in data
+
+    def test_enable_log_contains_feature_name(self, client, monkeypatch):
+        """Test that the log mentions the selected feature."""
+        self._reset_autopilot_state(monkeypatch)
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+
+        response = client.post("/api/autopilot/enable")
+
+        assert response.status_code == 200
+        data = response.json()
+        log_text = " ".join(data["log"])
+        # Should mention the feature ID
+        assert str(data["current_feature_id"]) in log_text
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

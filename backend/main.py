@@ -109,6 +109,44 @@ else:
     _engine, _session_maker = create_database(PROJECT_DIR)
 
 
+# Auto-pilot in-memory state, keyed by database path string
+class _AutoPilotState:
+    """Tracks auto-pilot mode for a single database."""
+    def __init__(self):
+        self.enabled: bool = False
+        self.current_feature_id: Optional[int] = None
+        self.log: list[str] = []
+
+
+_autopilot_states: dict[str, _AutoPilotState] = {}
+
+
+def get_autopilot_state() -> _AutoPilotState:
+    """Get or create the autopilot state for the currently active database."""
+    db_key = str(_current_db_path)
+    if db_key not in _autopilot_states:
+        _autopilot_states[db_key] = _AutoPilotState()
+    return _autopilot_states[db_key]
+
+
+def get_next_feature_for_autopilot(session) -> Optional["Feature"]:
+    """Return the next feature to work on: in-progress first, then TODO by priority."""
+    feature = (
+        session.query(Feature)
+        .filter(Feature.passes == False, Feature.in_progress == True)  # noqa: E712
+        .order_by(Feature.priority.asc())
+        .first()
+    )
+    if feature is None:
+        feature = (
+            session.query(Feature)
+            .filter(Feature.passes == False, Feature.in_progress == False)  # noqa: E712
+            .order_by(Feature.priority.asc())
+            .first()
+        )
+    return feature
+
+
 @app.on_event("startup")
 async def startup_migrate_all():
     """Run schema migrations on all configured databases at startup."""
@@ -352,6 +390,13 @@ class CreateCommentRequest(BaseModel):
     content: str
 
 
+class AutoPilotStatusResponse(BaseModel):
+    """Response for auto-pilot enable/status."""
+    enabled: bool
+    current_feature_id: Optional[int] = None
+    log: list[str] = []
+
+
 @app.get("/")
 async def root():
     """Root endpoint."""
@@ -373,6 +418,7 @@ async def root():
             "databases_select": "POST /api/databases/select",
             "launch_claude": "POST /api/features/{id}/launch-claude",
             "plan_tasks": "POST /api/plan-tasks",
+            "autopilot_enable": "POST /api/autopilot/enable",
             "get_settings": "GET /api/settings",
             "update_settings": "PUT /api/settings"
         }
@@ -1093,6 +1139,119 @@ async def plan_tasks(request: PlanTasksRequest):
         prompt=prompt,
         working_directory=working_dir,
     )
+
+
+@app.post("/api/autopilot/enable", response_model=AutoPilotStatusResponse)
+async def enable_autopilot():
+    """
+    Enable auto-pilot mode for the currently active database.
+
+    Picks the next available feature (in-progress first, then TODO by priority),
+    spawns a Claude process for it with hidden_execution=True, and returns the
+    current auto-pilot status.
+
+    Returns 409 if auto-pilot is already enabled.
+    If no tasks are available, returns enabled=False with a log message.
+    """
+    state = get_autopilot_state()
+
+    if state.enabled:
+        raise HTTPException(status_code=409, detail="Auto-pilot is already enabled")
+
+    session = get_session()
+    try:
+        feature = get_next_feature_for_autopilot(session)
+
+        if feature is None:
+            return AutoPilotStatusResponse(
+                enabled=False,
+                current_feature_id=None,
+                log=["No tasks available"],
+            )
+
+        state.enabled = True
+        state.current_feature_id = feature.id
+        state.log = [
+            f"Auto-pilot enabled for database: {_current_db_path.name}",
+            f"Starting feature #{feature.id}: {feature.name}",
+        ]
+
+        # Build prompt using the same logic as launch_claude_for_feature
+        settings = load_settings()
+        template = settings.get("claude_prompt_template", DEFAULT_PROMPT_TEMPLATE)
+        steps_text = "\n".join(f"{i + 1}. {step}" for i, step in enumerate(feature.steps))
+        prompt = template.format(
+            feature_id=feature.id,
+            category=feature.category,
+            name=feature.name,
+            description=feature.description,
+            steps=steps_text,
+        )
+
+        feature_model = feature.model or "sonnet"
+        working_dir = str(_current_db_path.parent)
+
+        try:
+            if sys.platform == "win32":
+                with tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".txt", delete=False, encoding="utf-8"
+                ) as f:
+                    f.write(prompt)
+                    prompt_file = f.name
+
+                ps_cmd = (
+                    f'claude --model {feature_model} --dangerously-skip-permissions '
+                    f'--print (Get-Content -LiteralPath "{prompt_file}" -Raw)'
+                )
+                ps_executables = ["pwsh", "powershell"]
+                launched = False
+                for ps_exe in ps_executables:
+                    try:
+                        subprocess.Popen(
+                            [ps_exe, "-Command", ps_cmd],
+                            creationflags=subprocess.CREATE_NEW_CONSOLE,
+                            cwd=working_dir,
+                        )
+                        launched = True
+                        break
+                    except FileNotFoundError:
+                        continue
+
+                if not launched:
+                    state.enabled = False
+                    state.current_feature_id = None
+                    raise HTTPException(
+                        status_code=500,
+                        detail="No PowerShell found. Install PowerShell 7 (pwsh) or ensure powershell.exe is available.",
+                    )
+            else:
+                subprocess.Popen(
+                    ["claude", "--model", feature_model, "--dangerously-skip-permissions", "--print", prompt],
+                    cwd=working_dir,
+                )
+        except FileNotFoundError:
+            state.enabled = False
+            state.current_feature_id = None
+            raise HTTPException(
+                status_code=500,
+                detail="Claude CLI not found. Make sure 'claude' is in your PATH.",
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            state.enabled = False
+            state.current_feature_id = None
+            raise HTTPException(status_code=500, detail=f"Failed to launch Claude: {str(e)}")
+
+        state.log.append(f"Claude launched for feature #{feature.id} with model {feature_model}")
+
+        return AutoPilotStatusResponse(
+            enabled=True,
+            current_feature_id=feature.id,
+            log=list(state.log),
+        )
+    finally:
+        session.close()
 
 
 @app.get("/api/features/{feature_id}/comments", response_model=list[CommentResponse])
