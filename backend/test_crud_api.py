@@ -71,14 +71,53 @@ def test_db():
 
 
 @pytest.fixture
-def client(test_db, monkeypatch):
-    """Create a test client with session monkeypatch."""
+def client(monkeypatch):
+    """Create a test client with a fully isolated test database.
+
+    Patches both _session_maker and _current_db_path so that all code paths
+    — including asyncio monitor tasks that open their own DB connections —
+    use the test database instead of the production one.
+    """
     import backend.main as main_module
 
-    # Monkeypatch the global _session_maker to use our test database
-    monkeypatch.setattr(main_module, '_session_maker', test_db)
+    temp_dir = tempfile.mkdtemp()
+    temp_db_path = Path(temp_dir) / "features.db"
+    engine, session_maker = create_database(Path(temp_dir))
+
+    session = session_maker()
+    try:
+        features = [
+            Feature(id=1, priority=100, category="Backend", name="Feature 1",
+                    description="Test feature 1", steps=["Step 1"], passes=False, in_progress=False),
+            Feature(id=2, priority=200, category="Backend", name="Feature 2",
+                    description="Test feature 2", steps=["Step 1"], passes=False, in_progress=False),
+            Feature(id=3, priority=300, category="Frontend", name="Feature 3",
+                    description="Test feature 3", steps=["Step 1"], passes=True, in_progress=False),
+            Feature(id=4, priority=400, category="Frontend", name="Feature 4",
+                    description="Test feature 4", steps=["Step 1"], passes=False, in_progress=True),
+        ]
+        for f in features:
+            session.add(f)
+        session.commit()
+    finally:
+        session.close()
+
+    monkeypatch.setattr(main_module, '_session_maker', session_maker)
+    monkeypatch.setattr(main_module, '_current_db_path', temp_db_path)
+    # Suppress background monitor tasks for endpoint tests — they run against
+    # the test DB but complete instantly (mock wait=0), altering state between
+    # API calls.  Tests that specifically verify monitor-task behaviour inject
+    # their own asyncio.create_task mock via a second monkeypatch.setattr call.
+    monkeypatch.setattr(main_module.asyncio, 'create_task',
+                        lambda coro: (coro.close(), None)[1])
 
     yield TestClient(app)
+
+    engine.dispose()
+    try:
+        shutil.rmtree(temp_dir)
+    except PermissionError:
+        pass
 
 
 class TestCreateFeature:
@@ -669,7 +708,7 @@ class TestLaunchClaude:
 
     def test_launch_in_progress_feature(self, client, monkeypatch):
         """Test launching Claude for an IN PROGRESS feature succeeds."""
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         # Feature 4 is in_progress=True, passes=False
         response = client.post("/api/features/4/launch-claude")
@@ -682,7 +721,7 @@ class TestLaunchClaude:
 
     def test_launch_done_feature_fails(self, client, monkeypatch):
         """Test that launching Claude for a completed feature returns 400."""
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         # Feature 3 is passes=True (done)
         response = client.post("/api/features/3/launch-claude")
@@ -692,7 +731,7 @@ class TestLaunchClaude:
 
     def test_launch_not_found(self, client, monkeypatch):
         """Test launching Claude for a non-existent feature returns 404."""
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         response = client.post("/api/features/999/launch-claude")
 
@@ -744,7 +783,7 @@ class TestLaunchClaude:
 
         # Use a fresh settings file with the default template so description is included
         monkeypatch.setattr(main_module, 'SETTINGS_FILE', tmp_path / "settings.json")
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         response = client.post("/api/features/1/launch-claude")
 
@@ -819,7 +858,7 @@ class TestLaunchClaudeHiddenExecution:
 
         def mock_popen(*args, **kwargs):
             popen_calls.append({"args": args, "kwargs": kwargs})
-            return type("P", (), {"pid": 1})()
+            return type("P", (), {"pid": 1, "wait": lambda self: 0})()
 
         monkeypatch.setattr(subprocess, "Popen", mock_popen)
 
@@ -835,7 +874,7 @@ class TestLaunchClaudeHiddenExecution:
 
         def mock_popen(*args, **kwargs):
             popen_calls.append({"args": args, "kwargs": kwargs})
-            return type("P", (), {"pid": 1})()
+            return type("P", (), {"pid": 1, "wait": lambda self: 0})()
 
         monkeypatch.setattr(subprocess, "Popen", mock_popen)
 
@@ -851,7 +890,7 @@ class TestLaunchClaudeHiddenExecution:
 
         def mock_popen(*args, **kwargs):
             popen_calls.append({"args": args, "kwargs": kwargs})
-            return type("P", (), {"pid": 1})()
+            return type("P", (), {"pid": 1, "wait": lambda self: 0})()
 
         monkeypatch.setattr(subprocess, "Popen", mock_popen)
 
@@ -864,7 +903,7 @@ class TestLaunchClaudeHiddenExecution:
 
     def test_hidden_execution_response_field_present(self, client, monkeypatch):
         """Test that the response always includes hidden_execution field."""
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         response = client.post("/api/features/1/launch-claude")
 
@@ -877,7 +916,7 @@ class TestLaunchClaudeHiddenExecution:
 
         def mock_popen(*args, **kwargs):
             popen_calls.append({"args": args, "kwargs": kwargs})
-            return type("P", (), {"pid": 1})()
+            return type("P", (), {"pid": 1, "wait": lambda self: 0})()
 
         monkeypatch.setattr(subprocess, "Popen", mock_popen)
 
@@ -1071,7 +1110,7 @@ class TestLaunchClaudeWithModel:
 
         def mock_popen(*args, **kwargs):
             popen_calls.append({"args": args, "kwargs": kwargs})
-            return type("P", (), {"pid": 1})()
+            return type("P", (), {"pid": 1, "wait": lambda self: 0})()
 
         monkeypatch.setattr(subprocess, "Popen", mock_popen)
 
@@ -1090,7 +1129,7 @@ class TestLaunchClaudeWithModel:
 
         def mock_popen(*args, **kwargs):
             popen_calls.append({"args": args, "kwargs": kwargs})
-            return type("P", (), {"pid": 1})()
+            return type("P", (), {"pid": 1, "wait": lambda self: 0})()
 
         monkeypatch.setattr(subprocess, "Popen", mock_popen)
 
@@ -1111,7 +1150,7 @@ class TestLaunchClaudeWithModel:
 
         def mock_popen(*args, **kwargs):
             popen_calls.append({"args": args, "kwargs": kwargs})
-            return type("P", (), {"pid": 1})()
+            return type("P", (), {"pid": 1, "wait": lambda self: 0})()
 
         monkeypatch.setattr(subprocess, "Popen", mock_popen)
 
@@ -1122,7 +1161,7 @@ class TestLaunchClaudeWithModel:
 
     def test_launch_response_includes_model(self, client, monkeypatch):
         """Test that launch response always includes the model field."""
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         response = client.post("/api/features/1/launch-claude")
         assert response.status_code == 200
@@ -1135,7 +1174,7 @@ class TestPlanTasks:
 
     def test_valid_description_returns_200_and_launched(self, client, monkeypatch):
         """Test that a valid description returns 200 with launched=True."""
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         response = client.post("/api/plan-tasks", json={
             "description": "Add dark mode support to the dashboard"
@@ -1147,7 +1186,7 @@ class TestPlanTasks:
 
     def test_empty_description_returns_400(self, client, monkeypatch):
         """Test that an empty description returns 400."""
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         response = client.post("/api/plan-tasks", json={"description": ""})
 
@@ -1156,7 +1195,7 @@ class TestPlanTasks:
 
     def test_whitespace_description_returns_400(self, client, monkeypatch):
         """Test that a whitespace-only description is also rejected."""
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         response = client.post("/api/plan-tasks", json={"description": "   "})
 
@@ -1164,7 +1203,7 @@ class TestPlanTasks:
 
     def test_prompt_contains_user_description(self, client, monkeypatch):
         """Test that the generated prompt embeds the user's description."""
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         description = "Add user authentication with OAuth"
         response = client.post("/api/plan-tasks", json={"description": description})
@@ -1178,7 +1217,7 @@ class TestPlanTasks:
 
         def mock_popen(*args, **kwargs):
             popen_calls.append({"args": args, "kwargs": kwargs})
-            return type("P", (), {"pid": 1})()
+            return type("P", (), {"pid": 1, "wait": lambda self: 0})()
 
         monkeypatch.setattr(subprocess, "Popen", mock_popen)
 
@@ -1197,7 +1236,7 @@ class TestPlanTasks:
 
         def mock_popen(*args, **kwargs):
             popen_calls.append({"args": args, "kwargs": kwargs})
-            return type("P", (), {"pid": 1})()
+            return type("P", (), {"pid": 1, "wait": lambda self: 0})()
 
         monkeypatch.setattr(subprocess, "Popen", mock_popen)
 
@@ -1223,7 +1262,7 @@ class TestPlanTasks:
 
     def test_response_includes_prompt_and_working_directory(self, client, monkeypatch):
         """Test that the response always includes prompt and working_directory."""
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         response = client.post("/api/plan-tasks", json={"description": "Add dark mode"})
 
@@ -1236,7 +1275,7 @@ class TestPlanTasks:
 
     def test_missing_description_field_returns_422(self, client, monkeypatch):
         """Test that omitting description entirely returns 422 validation error."""
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         response = client.post("/api/plan-tasks", json={})
 
@@ -1285,7 +1324,7 @@ class TestSpawnClaudeForAutopilot:
 
         def mock_popen(*args, **kwargs):
             popen_calls.append({"args": args, "kwargs": kwargs})
-            return type("P", (), {"pid": 1})()
+            return type("P", (), {"pid": 1, "wait": lambda self: 0})()
 
         monkeypatch.setattr(subprocess, "Popen", mock_popen)
 
@@ -1306,7 +1345,7 @@ class TestSpawnClaudeForAutopilot:
 
         def mock_popen(*args, **kwargs):
             popen_calls.append({"args": args, "kwargs": kwargs})
-            return type("P", (), {"pid": 1})()
+            return type("P", (), {"pid": 1, "wait": lambda self: 0})()
 
         monkeypatch.setattr(subprocess, "Popen", mock_popen)
 
@@ -1346,7 +1385,7 @@ class TestSpawnClaudeForAutopilot:
                 return self._ntf.__exit__(*args)
 
         monkeypatch.setattr(_tempfile, "NamedTemporaryFile", CapturingNTF)
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         custom_settings = {"claude_prompt_template": "CUSTOM: {name} - {description}"}
         feature = self._make_feature(name="My Feature")
@@ -1369,7 +1408,7 @@ class TestSpawnClaudeForAutopilot:
 
         def mock_popen(*args, **kwargs):
             popen_calls.append({"args": args, "kwargs": kwargs})
-            return type("P", (), {"pid": 1})()
+            return type("P", (), {"pid": 1, "wait": lambda self: 0})()
 
         monkeypatch.setattr(subprocess, "Popen", mock_popen)
         # Force Windows code path regardless of actual OS
@@ -1394,7 +1433,7 @@ class TestSpawnClaudeForAutopilot:
 
         def mock_popen(*args, **kwargs):
             popen_calls.append({"args": args, "kwargs": kwargs})
-            return type("P", (), {"pid": 1})()
+            return type("P", (), {"pid": 1, "wait": lambda self: 0})()
 
         monkeypatch.setattr(subprocess, "Popen", mock_popen)
 
@@ -1415,7 +1454,7 @@ class TestSpawnClaudeForAutopilot:
 
         def mock_popen(*args, **kwargs):
             popen_calls.append({"args": args, "kwargs": kwargs})
-            return type("P", (), {"pid": 1})()
+            return type("P", (), {"pid": 1, "wait": lambda self: 0})()
 
         monkeypatch.setattr(subprocess, "Popen", mock_popen)
 
@@ -1466,7 +1505,7 @@ class TestSpawnClaudeForAutopilot:
                 return self._ntf.__exit__(*args)
 
         monkeypatch.setattr(_tempfile, "NamedTemporaryFile", CapturingNTF)
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         spawn_claude_for_autopilot(
             self._make_feature(), self._default_settings(), "/tmp/work"
@@ -1607,7 +1646,7 @@ class TestAutoPilotEnable:
     def test_enable_returns_200_with_todo_feature(self, client, monkeypatch):
         """Test that enabling autopilot returns 200 with enabled=True when TODO features exist."""
         self._reset_autopilot_state(monkeypatch)
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         response = client.post("/api/autopilot/enable")
 
@@ -1619,7 +1658,7 @@ class TestAutoPilotEnable:
     def test_enable_picks_in_progress_feature_first(self, client, monkeypatch):
         """Test that autopilot picks in-progress features before TODO features."""
         self._reset_autopilot_state(monkeypatch)
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         # Test DB has feature 4 as in_progress=True, passes=False
         response = client.post("/api/autopilot/enable")
@@ -1633,7 +1672,7 @@ class TestAutoPilotEnable:
     def test_enable_picks_todo_by_priority_when_no_in_progress(self, client, monkeypatch):
         """Test that autopilot picks the highest priority TODO when no in-progress feature exists."""
         self._reset_autopilot_state(monkeypatch)
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         # Move feature 4 out of in_progress state
         client.patch("/api/features/4/state", json={"in_progress": False})
@@ -1653,7 +1692,7 @@ class TestAutoPilotEnable:
 
         def mock_popen(*args, **kwargs):
             popen_calls.append({"args": args, "kwargs": kwargs})
-            return type("P", (), {"pid": 1})()
+            return type("P", (), {"pid": 1, "wait": lambda self: 0})()
 
         monkeypatch.setattr(subprocess, "Popen", mock_popen)
 
@@ -1669,7 +1708,7 @@ class TestAutoPilotEnable:
 
         def mock_popen(*args, **kwargs):
             popen_calls.append({"args": args, "kwargs": kwargs})
-            return type("P", (), {"pid": 1})()
+            return type("P", (), {"pid": 1, "wait": lambda self: 0})()
 
         monkeypatch.setattr(subprocess, "Popen", mock_popen)
 
@@ -1687,7 +1726,7 @@ class TestAutoPilotEnable:
 
         def mock_popen(*args, **kwargs):
             popen_calls.append({"args": args, "kwargs": kwargs})
-            return type("P", (), {"pid": 1})()
+            return type("P", (), {"pid": 1, "wait": lambda self: 0})()
 
         monkeypatch.setattr(subprocess, "Popen", mock_popen)
 
@@ -1700,7 +1739,7 @@ class TestAutoPilotEnable:
     def test_enable_returns_log_entries(self, client, monkeypatch):
         """Test that the response includes non-empty log entries."""
         self._reset_autopilot_state(monkeypatch)
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         response = client.post("/api/autopilot/enable")
 
@@ -1712,7 +1751,7 @@ class TestAutoPilotEnable:
     def test_enable_when_already_enabled_returns_409(self, client, monkeypatch):
         """Test that enabling autopilot when already enabled returns 409."""
         self._reset_autopilot_state(monkeypatch)
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         # Enable once
         first = client.post("/api/autopilot/enable")
@@ -1726,7 +1765,7 @@ class TestAutoPilotEnable:
     def test_enable_with_no_tasks_returns_disabled(self, client, monkeypatch):
         """Test that autopilot returns enabled=False with message when no tasks available."""
         self._reset_autopilot_state(monkeypatch)
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         # Mark all non-done features as done so no tasks remain
         for fid in [1, 2, 4]:
@@ -1747,7 +1786,7 @@ class TestAutoPilotEnable:
 
         def mock_popen(*args, **kwargs):
             popen_calls.append({"args": args, "kwargs": kwargs})
-            return type("P", (), {"pid": 1})()
+            return type("P", (), {"pid": 1, "wait": lambda self: 0})()
 
         monkeypatch.setattr(subprocess, "Popen", mock_popen)
 
@@ -1776,7 +1815,7 @@ class TestAutoPilotEnable:
     def test_enable_response_fields_present(self, client, monkeypatch):
         """Test that response always includes enabled, current_feature_id, and log."""
         self._reset_autopilot_state(monkeypatch)
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         response = client.post("/api/autopilot/enable")
 
@@ -1789,7 +1828,7 @@ class TestAutoPilotEnable:
     def test_enable_log_contains_feature_name(self, client, monkeypatch):
         """Test that the log mentions the selected feature."""
         self._reset_autopilot_state(monkeypatch)
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         response = client.post("/api/autopilot/enable")
 
@@ -1821,7 +1860,7 @@ class TestAutoPilotDisable:
     def test_disable_after_enable_returns_200(self, client, monkeypatch):
         """Test that disabling after enabling returns 200 with enabled=False."""
         self._reset_autopilot_state(monkeypatch)
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "terminate": lambda self: None})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "terminate": lambda self: None, "wait": lambda self: 0})())
 
         client.post("/api/autopilot/enable")
 
@@ -1834,7 +1873,7 @@ class TestAutoPilotDisable:
     def test_disable_sets_current_feature_id_to_none(self, client, monkeypatch):
         """Test that disabling clears current_feature_id."""
         self._reset_autopilot_state(monkeypatch)
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "terminate": lambda self: None})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "terminate": lambda self: None, "wait": lambda self: 0})())
 
         enable_resp = client.post("/api/autopilot/enable")
         assert enable_resp.json()["current_feature_id"] is not None
@@ -1911,7 +1950,7 @@ class TestAutoPilotDisable:
     def test_disable_is_idempotent_multiple_calls(self, client, monkeypatch):
         """Test that calling disable multiple times always returns 200 with enabled=False."""
         self._reset_autopilot_state(monkeypatch)
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "terminate": lambda self: None})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "terminate": lambda self: None, "wait": lambda self: 0})())
 
         client.post("/api/autopilot/enable")
 
@@ -1935,7 +1974,7 @@ class TestAutoPilotDisable:
     def test_re_enable_after_disable_works(self, client, monkeypatch):
         """Test that autopilot can be re-enabled after being disabled."""
         self._reset_autopilot_state(monkeypatch)
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "terminate": lambda self: None})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "terminate": lambda self: None, "wait": lambda self: 0})())
 
         client.post("/api/autopilot/enable")
         client.post("/api/autopilot/disable")
@@ -2004,7 +2043,7 @@ class TestAutoPilotStatus:
     def test_status_returns_correct_current_feature_id_when_enabled_and_running(self, client, monkeypatch):
         """Test: GET returns correct current_feature_id when autopilot is enabled and running."""
         self._reset_autopilot_state(monkeypatch)
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         # Enable autopilot — test DB has feature 4 as in_progress so it's selected first
         enable_resp = client.post("/api/autopilot/enable")
@@ -2025,7 +2064,7 @@ class TestAutoPilotStatus:
     def test_status_returns_enabled_false_after_disable(self, client, monkeypatch):
         """Test that status reflects disabled state after calling disable."""
         self._reset_autopilot_state(monkeypatch)
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "terminate": lambda self: None})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "terminate": lambda self: None, "wait": lambda self: 0})())
 
         client.post("/api/autopilot/enable")
         client.post("/api/autopilot/disable")
@@ -2041,7 +2080,7 @@ class TestAutoPilotStatus:
     def test_status_log_accumulates_across_enable_disable(self, client, monkeypatch):
         """Test that the log accumulates entries across enable and disable calls."""
         self._reset_autopilot_state(monkeypatch)
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "terminate": lambda self: None})())
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "terminate": lambda self: None, "wait": lambda self: 0})())
 
         client.post("/api/autopilot/enable")
         client.post("/api/autopilot/disable")
@@ -2052,6 +2091,347 @@ class TestAutoPilotStatus:
         data = response.json()
         # Should have entries from both enable (>= 3) and disable (1 more)
         assert len(data["log"]) >= 3
+
+
+# ==============================================================================
+# test_db_with_path fixture — like test_db but also yields the db Path
+# ==============================================================================
+
+@pytest.fixture
+def test_db_with_path():
+    """Create an isolated test database; yield (session_maker, db_path)."""
+    temp_dir = tempfile.mkdtemp()
+    temp_db_path = Path(temp_dir) / "features.db"
+    engine, session_maker = create_database(Path(temp_dir))
+
+    session = session_maker()
+    try:
+        features = [
+            Feature(id=1, priority=100, category="Backend", name="Feature 1",
+                    description="Test feature 1", steps=["Step 1"], passes=False, in_progress=False),
+            Feature(id=2, priority=200, category="Backend", name="Feature 2",
+                    description="Test feature 2", steps=["Step 1"], passes=False, in_progress=False),
+            Feature(id=3, priority=300, category="Frontend", name="Feature 3",
+                    description="Test feature 3", steps=["Step 1"], passes=True, in_progress=False),
+            Feature(id=4, priority=400, category="Frontend", name="Feature 4",
+                    description="Test feature 4", steps=["Step 1"], passes=False, in_progress=True),
+        ]
+        for f in features:
+            session.add(f)
+        session.commit()
+    finally:
+        session.close()
+
+    yield session_maker, temp_db_path
+
+    engine.dispose()
+    try:
+        shutil.rmtree(temp_dir)
+    except PermissionError:
+        pass
+
+
+# ==============================================================================
+# Process monitor tests
+# ==============================================================================
+
+class TestMonitorClaudeProcess:
+    """Unit tests for monitor_claude_process coroutine."""
+
+    def _make_mock_process(self, return_code=0):
+        """Return a mock Popen-like object whose wait() returns return_code."""
+        return_code_ = return_code
+
+        class MockProcess:
+            returncode = return_code_
+
+            def wait(self):
+                return return_code_
+
+        return MockProcess()
+
+    def test_success_flow_triggered_when_feature_passes_true(self, test_db_with_path, monkeypatch):
+        """Success flow triggered when feature.passes becomes True after process exits."""
+        import asyncio
+        from backend.main import monitor_claude_process, _AutoPilotState
+        from api.database import Feature as FeatureModel
+
+        session_maker, db_path = test_db_with_path
+
+        # Mark feature 1 as passing in the test DB
+        session = session_maker()
+        try:
+            f1 = session.query(FeatureModel).filter(FeatureModel.id == 1).first()
+            f1.passes = True
+            session.commit()
+        finally:
+            session.close()
+
+        success_calls = []
+        failure_calls = []
+
+        async def mock_success(fid, state, path):
+            success_calls.append(fid)
+
+        async def mock_failure(fid, exit_code, state):
+            failure_calls.append((fid, exit_code))
+
+        import backend.main as main_module
+        monkeypatch.setattr(main_module, 'handle_autopilot_success', mock_success)
+        monkeypatch.setattr(main_module, 'handle_autopilot_failure', mock_failure)
+
+        state = _AutoPilotState()
+        proc = self._make_mock_process(return_code=0)
+
+        asyncio.run(monitor_claude_process(1, proc, db_path, state))
+
+        assert len(success_calls) == 1
+        assert success_calls[0] == 1
+        assert len(failure_calls) == 0
+
+    def test_failure_flow_triggered_when_passes_false_and_nonzero_exit(self, test_db_with_path, monkeypatch):
+        """Failure flow triggered when process exits with non-zero code and passes=False."""
+        import asyncio
+        from backend.main import monitor_claude_process, _AutoPilotState
+
+        session_maker, db_path = test_db_with_path
+        # Feature 1 has passes=False in the seed data — no modification needed
+
+        success_calls = []
+        failure_calls = []
+
+        async def mock_success(fid, state, path):
+            success_calls.append(fid)
+
+        async def mock_failure(fid, exit_code, state):
+            failure_calls.append((fid, exit_code))
+
+        import backend.main as main_module
+        monkeypatch.setattr(main_module, 'handle_autopilot_success', mock_success)
+        monkeypatch.setattr(main_module, 'handle_autopilot_failure', mock_failure)
+
+        state = _AutoPilotState()
+        proc = self._make_mock_process(return_code=1)
+
+        asyncio.run(monitor_claude_process(1, proc, db_path, state))
+
+        assert len(failure_calls) == 1
+        assert failure_calls[0][0] == 1   # feature_id
+        assert failure_calls[0][1] == 1   # exit_code
+        assert len(success_calls) == 0
+
+    def test_failure_flow_triggered_when_passes_false_and_zero_exit(self, test_db_with_path, monkeypatch):
+        """Failure flow is triggered even when exit code is 0 if passes=False."""
+        import asyncio
+        from backend.main import monitor_claude_process, _AutoPilotState
+
+        session_maker, db_path = test_db_with_path
+        # Feature 1 passes=False by default
+
+        failure_calls = []
+
+        async def mock_failure(fid, exit_code, state):
+            failure_calls.append((fid, exit_code))
+
+        import backend.main as main_module
+        monkeypatch.setattr(main_module, 'handle_autopilot_success', lambda *a: None)
+        monkeypatch.setattr(main_module, 'handle_autopilot_failure', mock_failure)
+
+        state = _AutoPilotState()
+        proc = self._make_mock_process(return_code=0)
+
+        asyncio.run(monitor_claude_process(1, proc, db_path, state))
+
+        assert len(failure_calls) == 1
+        assert failure_calls[0][1] == 0
+
+    def test_cancellation_is_handled_gracefully(self, monkeypatch):
+        """CancelledError during process wait does not propagate out of the coroutine."""
+        import asyncio
+        from backend.main import monitor_claude_process, _AutoPilotState
+
+        # Patch get_event_loop so run_in_executor raises CancelledError
+        completed = []
+
+        async def run():
+            loop = asyncio.get_running_loop()
+
+            async def mock_run_in_executor(executor, func, *args):
+                raise asyncio.CancelledError()
+
+            # Temporarily replace run_in_executor on this loop
+            original = loop.run_in_executor
+            loop.run_in_executor = mock_run_in_executor
+            try:
+                state = _AutoPilotState()
+
+                class MockProcess:
+                    def wait(self):
+                        return 0
+
+                await monitor_claude_process(1, MockProcess(), Path("/fake.db"), state)
+                completed.append(True)
+            finally:
+                loop.run_in_executor = original
+
+        asyncio.run(run())
+        assert len(completed) == 1  # Coroutine returned normally
+
+
+class TestHandleAutopilotSuccess:
+    """Unit tests for handle_autopilot_success."""
+
+    def test_logs_success_message(self, test_db_with_path, monkeypatch):
+        """Success handler appends a success log entry."""
+        import asyncio
+        from backend.main import handle_autopilot_success, _AutoPilotState
+
+        session_maker, db_path = test_db_with_path
+
+        # All features except feature 3 are non-passing; mock spawn to avoid real process
+        monkeypatch.setattr("backend.main.spawn_claude_for_autopilot",
+                            lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda s: 0})())
+
+        state = _AutoPilotState()
+        asyncio.run(handle_autopilot_success(99, state, db_path))
+
+        log_messages = [e.message for e in state.log]
+        assert any("99" in m and "completed successfully" in m for m in log_messages)
+
+    def test_starts_next_feature_when_available(self, test_db_with_path, monkeypatch):
+        """Success handler spawns Claude for the next pending feature."""
+        import asyncio
+        from backend.main import handle_autopilot_success, _AutoPilotState
+
+        session_maker, db_path = test_db_with_path
+        spawn_calls = []
+
+        def mock_spawn(feature, settings, working_dir):
+            spawn_calls.append(feature.id)
+            return type("P", (), {"pid": 1, "wait": lambda s: 0})()
+
+        monkeypatch.setattr("backend.main.spawn_claude_for_autopilot", mock_spawn)
+        # Prevent the newly created monitor task from running DB queries
+        monkeypatch.setattr("asyncio.create_task", lambda coro: coro.close() or None)
+
+        state = _AutoPilotState()
+        asyncio.run(handle_autopilot_success(99, state, db_path))
+
+        # Should have spawned Claude for the next feature (feature 4: in_progress=True)
+        assert len(spawn_calls) == 1
+        assert state.current_feature_id is not None
+
+    def test_disables_autopilot_when_no_tasks_remain(self, test_db_with_path, monkeypatch):
+        """Success handler disables auto-pilot when all features are done."""
+        import asyncio
+        from backend.main import handle_autopilot_success, _AutoPilotState
+        from api.database import Feature as FeatureModel
+
+        session_maker, db_path = test_db_with_path
+
+        # Mark all remaining non-passing features as passing
+        session = session_maker()
+        try:
+            for fid in [1, 2, 4]:
+                f = session.query(FeatureModel).filter(FeatureModel.id == fid).first()
+                f.passes = True
+                f.in_progress = False
+            session.commit()
+        finally:
+            session.close()
+
+        state = _AutoPilotState()
+        state.enabled = True
+        asyncio.run(handle_autopilot_success(99, state, db_path))
+
+        assert state.enabled is False
+        assert state.current_feature_id is None
+        log_messages = [e.message for e in state.log]
+        assert any("no more tasks" in m.lower() or "complete" in m.lower() for m in log_messages)
+
+
+class TestHandleAutopilotFailure:
+    """Unit tests for handle_autopilot_failure."""
+
+    def test_logs_error_message_with_exit_code(self):
+        """Failure handler appends an error log with the feature id and exit code."""
+        import asyncio
+        from backend.main import handle_autopilot_failure, _AutoPilotState
+
+        state = _AutoPilotState()
+        state.enabled = True
+        asyncio.run(handle_autopilot_failure(7, 42, state))
+
+        log_messages = [e.message for e in state.log]
+        assert any("7" in m and "42" in m for m in log_messages)
+        assert any(e.level == 'error' for e in state.log)
+
+    def test_disables_autopilot(self):
+        """Failure handler sets enabled=False."""
+        import asyncio
+        from backend.main import handle_autopilot_failure, _AutoPilotState
+
+        state = _AutoPilotState()
+        state.enabled = True
+        state.current_feature_id = 7
+        asyncio.run(handle_autopilot_failure(7, 1, state))
+
+        assert state.enabled is False
+        assert state.current_feature_id is None
+
+    def test_clears_active_process(self):
+        """Failure handler clears state.active_process."""
+        import asyncio
+        from backend.main import handle_autopilot_failure, _AutoPilotState
+
+        state = _AutoPilotState()
+        state.active_process = object()  # simulate a live process
+        asyncio.run(handle_autopilot_failure(7, 1, state))
+
+        assert state.active_process is None
+
+
+class TestDisableAutopilotCancelsMonitorTask:
+    """Tests that disable_autopilot cancels the asyncio monitor task."""
+
+    def _reset_autopilot_state(self, monkeypatch):
+        import backend.main as main_module
+        monkeypatch.setattr(main_module, '_autopilot_states', {})
+
+    def test_disable_cancels_monitor_task(self, client, monkeypatch):
+        """Disabling auto-pilot cancels the monitor task."""
+        self._reset_autopilot_state(monkeypatch)
+
+        cancel_calls = []
+
+        class MockTask:
+            def cancel(self):
+                cancel_calls.append(True)
+
+        monkeypatch.setattr("backend.main.asyncio.create_task", lambda coro: (coro.close(), MockTask())[1])
+        monkeypatch.setattr("backend.main.subprocess.Popen",
+                            lambda *a, **k: type("P", (), {"pid": 1, "terminate": lambda s: None})())
+
+        client.post("/api/autopilot/enable")
+        assert len(cancel_calls) == 0
+
+        client.post("/api/autopilot/disable")
+        assert len(cancel_calls) == 1
+
+    def test_disable_clears_monitor_task_field(self, client, monkeypatch):
+        """Disabling auto-pilot sets state.monitor_task to None."""
+        self._reset_autopilot_state(monkeypatch)
+        import backend.main as main_module
+
+        monkeypatch.setattr("backend.main.asyncio.create_task", lambda coro: (coro.close(), None)[1])
+        monkeypatch.setattr("backend.main.subprocess.Popen",
+                            lambda *a, **k: type("P", (), {"pid": 1, "terminate": lambda s: None})())
+
+        client.post("/api/autopilot/enable")
+        client.post("/api/autopilot/disable")
+
+        state = main_module.get_autopilot_state()
+        assert state.monitor_task is None
 
 
 if __name__ == "__main__":

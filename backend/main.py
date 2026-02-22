@@ -5,6 +5,7 @@ Feature Dashboard Backend API
 FastAPI server exposing feature data from SQLite database.
 """
 
+import asyncio
 import json
 import sqlite3
 import subprocess
@@ -128,6 +129,7 @@ class _AutoPilotState:
         self.last_error: Optional[str] = None
         self.log: deque = deque(maxlen=100)  # LogEntry items, circular buffer
         self.active_process = None  # subprocess.Popen handle, if any
+        self.monitor_task = None  # asyncio.Task handle, if monitoring
 
 
 _autopilot_states: dict[str, _AutoPilotState] = {}
@@ -232,6 +234,118 @@ def spawn_claude_for_autopilot(feature, settings: dict, working_dir: str) -> "su
             ["claude", "--model", feature_model, "--dangerously-skip-permissions", "--print", prompt],
             cwd=working_dir,
         )
+
+
+async def handle_autopilot_success(
+    feature_id: int, state: "_AutoPilotState", db_path: Path
+) -> None:
+    """Handle successful feature completion (feature.passes=True after process exits).
+
+    Logs the success, then picks the next pending feature and spawns Claude for it.
+    If no further work remains, disables auto-pilot and logs completion.
+    """
+    _append_log(state, 'success', f"Feature #{feature_id} completed successfully")
+
+    # Fetch the next feature with a fresh session
+    from sqlalchemy import create_engine as _create_engine
+    from sqlalchemy.orm import sessionmaker as _sessionmaker
+
+    db_url = f"sqlite:///{db_path.as_posix()}"
+    engine = _create_engine(db_url, connect_args={"check_same_thread": False})
+    sm = _sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    session = sm()
+    next_feature = None
+    try:
+        next_feature = get_next_autopilot_feature(session)
+    finally:
+        session.close()
+        engine.dispose()
+
+    if next_feature is None:
+        state.enabled = False
+        state.current_feature_id = None
+        state.current_feature_name = None
+        state.active_process = None
+        state.monitor_task = None
+        _append_log(state, 'info', "No more tasks — auto-pilot complete")
+        return
+
+    state.current_feature_id = next_feature.id
+    state.current_feature_name = next_feature.name
+    settings = load_settings()
+    try:
+        proc = spawn_claude_for_autopilot(next_feature, settings, str(db_path.parent))
+        state.active_process = proc
+        _append_log(state, 'info', f"Starting feature #{next_feature.id}: {next_feature.name}")
+        state.monitor_task = asyncio.create_task(
+            monitor_claude_process(next_feature.id, proc, db_path, state)
+        )
+    except (FileNotFoundError, RuntimeError) as e:
+        state.enabled = False
+        state.current_feature_id = None
+        state.current_feature_name = None
+        state.active_process = None
+        state.monitor_task = None
+        err = str(e)
+        state.last_error = err
+        _append_log(state, 'error', f"Failed to spawn Claude: {err}")
+
+
+async def handle_autopilot_failure(
+    feature_id: int, exit_code: int, state: "_AutoPilotState"
+) -> None:
+    """Handle failed feature (process exited but feature.passes=False).
+
+    Logs the failure and disables auto-pilot.
+    """
+    _append_log(state, 'error', f"Feature #{feature_id} failed — exit code {exit_code}")
+    state.enabled = False
+    state.current_feature_id = None
+    state.current_feature_name = None
+    state.active_process = None
+    state.monitor_task = None
+
+
+async def monitor_claude_process(
+    feature_id: int,
+    process: "subprocess.Popen",
+    db_path: Path,
+    state: "_AutoPilotState",
+) -> None:
+    """Monitor a Claude process and trigger success or failure flow when it exits.
+
+    Waits for the process without blocking the event loop by using run_in_executor.
+    After the process exits, opens a fresh DB session to check feature.passes:
+    - passes=True  → calls handle_autopilot_success
+    - passes=False → calls handle_autopilot_failure
+    Handles CancelledError silently so auto-pilot disable does not raise.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        exit_code = await loop.run_in_executor(None, process.wait)
+
+        # Open a fresh DB session — the process may have updated the DB while running
+        from sqlalchemy import create_engine as _create_engine
+        from sqlalchemy.orm import sessionmaker as _sessionmaker
+
+        db_url = f"sqlite:///{db_path.as_posix()}"
+        engine = _create_engine(db_url, connect_args={"check_same_thread": False})
+        sm = _sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        session = sm()
+        try:
+            feature = session.query(Feature).filter(Feature.id == feature_id).first()
+            passes = feature is not None and feature.passes
+        finally:
+            session.close()
+            engine.dispose()
+
+        if passes:
+            await handle_autopilot_success(feature_id, state, db_path)
+        else:
+            await handle_autopilot_failure(feature_id, exit_code, state)
+    except asyncio.CancelledError:
+        # Auto-pilot was disabled externally — exit cleanly without propagating
+        pass
 
 
 @app.on_event("startup")
@@ -1294,6 +1408,9 @@ async def enable_autopilot():
             raise HTTPException(status_code=500, detail=err)
 
         _append_log(state, 'info', f"Claude launched for feature #{feature.id} with model {feature_model}")
+        state.monitor_task = asyncio.create_task(
+            monitor_claude_process(feature.id, proc, _current_db_path, state)
+        )
 
         return AutoPilotStatusResponse(
             enabled=True,
@@ -1317,6 +1434,10 @@ async def disable_autopilot():
     Always returns 200 — idempotent even if auto-pilot was already disabled.
     """
     state = get_autopilot_state()
+
+    if state.monitor_task is not None:
+        state.monitor_task.cancel()
+        state.monitor_task = None
 
     if state.active_process is not None:
         try:
