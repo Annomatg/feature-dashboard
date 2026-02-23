@@ -183,8 +183,8 @@ test.describe('Kanban Board', () => {
     await page.reload();
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
 
-    // Find the card and check for the comment indicator
-    const testCard = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Feature With Comment Indicator' });
+    // Find the card by feature ID (avoids false matches on stale DB data)
+    const testCard = page.locator(`[data-testid="kanban-card"][data-feature-id="${feature.id}"]`);
     await testCard.waitFor({ state: 'visible' });
     await expect(testCard.locator('[data-testid="comment-indicator"]')).toBeVisible();
 
@@ -210,7 +210,8 @@ test.describe('Kanban Board', () => {
     await page.reload();
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
 
-    const testCard = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Feature Without Comments' });
+    // Find the card by feature ID (avoids false matches on stale DB data)
+    const testCard = page.locator(`[data-testid="kanban-card"][data-feature-id="${feature.id}"]`);
     await testCard.waitFor({ state: 'visible' });
     await expect(testCard.locator('[data-testid="comment-indicator"]')).not.toBeVisible();
 
