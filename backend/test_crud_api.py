@@ -2752,5 +2752,83 @@ class TestClearAutopilotLog:
         assert status["log"] == []
 
 
+class TestClearAutoPilotError:
+    """Tests for POST /api/autopilot/clear-error"""
+
+    def _reset_autopilot_state(self, monkeypatch):
+        import backend.main as main_module
+        monkeypatch.setattr(main_module, '_autopilot_states', {})
+
+    def test_clear_error_returns_200(self, client, monkeypatch):
+        """Clear error endpoint returns 200 with cleared=True."""
+        self._reset_autopilot_state(monkeypatch)
+
+        response = client.post("/api/autopilot/clear-error")
+        assert response.status_code == 200
+        assert response.json() == {"cleared": True}
+
+    def test_clear_error_clears_last_error(self, client, monkeypatch):
+        """Clear error endpoint sets last_error to None."""
+        self._reset_autopilot_state(monkeypatch)
+        import backend.main as main_module
+
+        # Manually set last_error
+        state = main_module.get_autopilot_state()
+        state.last_error = "Claude process exited with code 1"
+        assert state.last_error is not None
+
+        # Clear via API
+        client.post("/api/autopilot/clear-error")
+
+        state = main_module.get_autopilot_state()
+        assert state.last_error is None
+
+    def test_clear_error_idempotent_when_no_error(self, client, monkeypatch):
+        """Clearing an already-null last_error returns 200 without error."""
+        self._reset_autopilot_state(monkeypatch)
+
+        response = client.post("/api/autopilot/clear-error")
+        assert response.status_code == 200
+
+        # Call again — still 200
+        response = client.post("/api/autopilot/clear-error")
+        assert response.status_code == 200
+        assert response.json() == {"cleared": True}
+
+    def test_clear_error_does_not_affect_enabled_or_log(self, client, monkeypatch):
+        """Clearing the error does not change enabled state or log entries."""
+        self._reset_autopilot_state(monkeypatch)
+        import backend.main as main_module
+
+        state = main_module.get_autopilot_state()
+        state.enabled = False
+        state.last_error = "Some error"
+        main_module._append_log(state, 'error', 'Some error')
+
+        client.post("/api/autopilot/clear-error")
+
+        state = main_module.get_autopilot_state()
+        assert state.enabled is False
+        assert len(state.log) == 1
+
+    def test_status_last_error_null_after_clear(self, client, monkeypatch):
+        """GET /api/autopilot/status returns last_error=null after clear-error."""
+        self._reset_autopilot_state(monkeypatch)
+        import backend.main as main_module
+
+        # Set an error directly
+        state = main_module.get_autopilot_state()
+        state.last_error = "Feature failed"
+
+        status_before = client.get("/api/autopilot/status").json()
+        assert status_before["last_error"] == "Feature failed"
+
+        # Clear via API
+        client.post("/api/autopilot/clear-error")
+
+        status_after = client.get("/api/autopilot/status").json()
+        assert status_after["last_error"] is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

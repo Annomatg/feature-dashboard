@@ -8,6 +8,7 @@ import PlanTasksModal from './PlanTasksModal'
 import Header from './Header'
 import InfoBar from './InfoBar'
 import AutoPilotStatusBar from './AutoPilotStatusBar'
+import AutoPilotErrorBanner from './AutoPilotErrorBanner'
 import AutoPilotLog from './AutoPilotLog'
 
 const LANE_CONFIG = {
@@ -356,6 +357,7 @@ function KanbanBoard() {
       />
 
       <AutoPilotStatusBar />
+      <AutoPilotErrorBanner />
 
       {showInfoBar && (
         <InfoBar

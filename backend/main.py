@@ -1527,6 +1527,19 @@ async def clear_autopilot_log():
     return {"cleared": True}
 
 
+@app.post("/api/autopilot/clear-error")
+async def clear_autopilot_error():
+    """
+    Clear the last_error field for the active database's auto-pilot state.
+
+    Allows the user to dismiss the error banner after auto-pilot stops on failure.
+    Always returns 200 — idempotent even if last_error is already null.
+    """
+    state = get_autopilot_state()
+    state.last_error = None
+    return {"cleared": True}
+
+
 @app.get("/api/autopilot/status", response_model=AutoPilotStatusResponse)
 async def get_autopilot_status():
     """
