@@ -1480,6 +1480,19 @@ class TestSpawnClaudeForAutopilot:
                 self._make_feature(), self._default_settings(), "/tmp/work"
             )
 
+    def test_raises_descriptive_error_when_claude_not_in_path_on_linux(self, monkeypatch):
+        """On Linux/Mac, FileNotFoundError from Popen is re-raised with a descriptive message."""
+        import sys
+        from backend.main import spawn_claude_for_autopilot
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError()))
+        monkeypatch.setattr(sys, "platform", "linux")
+
+        with pytest.raises(FileNotFoundError, match="Claude CLI not found"):
+            spawn_claude_for_autopilot(
+                self._make_feature(), self._default_settings(), "/tmp/work"
+            )
+
     def test_prompt_includes_feature_steps(self, monkeypatch):
         """The rendered prompt includes the feature's step list."""
         from backend.main import spawn_claude_for_autopilot
@@ -1811,6 +1824,43 @@ class TestAutoPilotEnable:
         response = client.post("/api/autopilot/enable")
 
         assert response.status_code == 500
+
+    def test_claude_not_found_status_shows_disabled_with_error(self, client, monkeypatch):
+        """GET /api/autopilot/status returns enabled=False with CLI-not-found error after spawn failure."""
+        import sys
+        self._reset_autopilot_state(monkeypatch)
+
+        # Force the Linux/Mac code path so subprocess.Popen is called with ["claude", ...]
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError()))
+
+        # Enable autopilot — will fail because claude is not in PATH
+        client.post("/api/autopilot/enable")
+
+        # Status must reflect the disabled state with the descriptive error
+        response = client.get("/api/autopilot/status")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["enabled"] is False
+        assert data["last_error"] is not None
+        assert "Claude CLI not found" in data["last_error"]
+        assert "PATH" in data["last_error"]
+
+    def test_claude_not_found_appends_error_log_entry(self, client, monkeypatch):
+        """After a CLI-not-found failure the log contains an error entry with the descriptive message."""
+        import sys
+        self._reset_autopilot_state(monkeypatch)
+
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError()))
+
+        client.post("/api/autopilot/enable")
+
+        response = client.get("/api/autopilot/status")
+        data = response.json()
+        error_entries = [e for e in data["log"] if e["level"] == "error"]
+        assert len(error_entries) >= 1
+        assert any("Claude CLI not found" in e["message"] for e in error_entries)
 
     def test_enable_response_fields_present(self, client, monkeypatch):
         """Test that response always includes enabled, current_feature_id, and log."""

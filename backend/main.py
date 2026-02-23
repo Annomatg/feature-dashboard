@@ -250,10 +250,13 @@ def spawn_claude_for_autopilot(feature, settings: dict, working_dir: str) -> "su
             "No PowerShell found. Install PowerShell 7 (pwsh) or ensure powershell.exe is available."
         )
     else:
-        return subprocess.Popen(
-            ["claude", "--model", feature_model, "--dangerously-skip-permissions", "--print", prompt],
-            cwd=working_dir,
-        )
+        try:
+            return subprocess.Popen(
+                ["claude", "--model", feature_model, "--dangerously-skip-permissions", "--print", prompt],
+                cwd=working_dir,
+            )
+        except FileNotFoundError:
+            raise FileNotFoundError("Claude CLI not found. Make sure claude is in your PATH.")
 
 
 async def handle_autopilot_success(
@@ -1447,6 +1450,7 @@ async def enable_autopilot():
             state.current_feature_model = None
             err = str(e)
             state.last_error = err
+            _append_log(state, 'error', err)
             raise HTTPException(status_code=500, detail=err)
         except Exception as e:
             state.enabled = False
