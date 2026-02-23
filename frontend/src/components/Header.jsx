@@ -1,5 +1,6 @@
 import { Settings, Sparkles } from 'lucide-react'
 import DatabaseSelector from './DatabaseSelector'
+import AutoPilotToggle from './AutoPilotToggle'
 
 function StatPill({ label, value, color }) {
   return (
@@ -54,6 +55,9 @@ function Header({ totalFeatures, inProgressCount, doneCount, onSettingsClick, on
 
         {/* Database selector */}
         <DatabaseSelector />
+
+        {/* Auto-Pilot toggle */}
+        <AutoPilotToggle />
 
         {/* Plan Tasks button */}
         <button
