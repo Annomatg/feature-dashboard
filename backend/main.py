@@ -154,6 +154,22 @@ def _append_log(state: _AutoPilotState, level: str, message: str) -> None:
     ))
 
 
+def handle_all_complete(state: "_AutoPilotState") -> None:
+    """Cleanly stop auto-pilot when no features remain.
+
+    Sets enabled=False, clears current_feature_id, current_feature_name,
+    last_error, active_process, and monitor_task, then appends an info log
+    entry indicating all tasks are done.
+    """
+    state.enabled = False
+    state.current_feature_id = None
+    state.current_feature_name = None
+    state.last_error = None
+    state.active_process = None
+    state.monitor_task = None
+    _append_log(state, 'info', "All tasks complete \u2014 auto-pilot disabled")
+
+
 def get_next_autopilot_feature(session) -> Optional["Feature"]:
     """Return the next feature to work on: in-progress first, then TODO by priority.
 
@@ -265,12 +281,7 @@ async def handle_autopilot_success(
         engine.dispose()
 
     if next_feature is None:
-        state.enabled = False
-        state.current_feature_id = None
-        state.current_feature_name = None
-        state.active_process = None
-        state.monitor_task = None
-        _append_log(state, 'info', "All tasks complete")
+        handle_all_complete(state)
         return
 
     # Skip loop guard: abort if the same feature is returned consecutively 3+ times

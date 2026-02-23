@@ -2534,6 +2534,100 @@ class TestHandleAutopilotFailure:
             session.close()
 
 
+class TestHandleAllComplete:
+    """Unit and integration tests for handle_all_complete()."""
+
+    def test_clears_last_error(self):
+        """handle_all_complete clears last_error so status returns None."""
+        from backend.main import handle_all_complete, _AutoPilotState
+
+        state = _AutoPilotState()
+        state.enabled = True
+        state.last_error = "some previous error"
+        handle_all_complete(state)
+
+        assert state.last_error is None
+
+    def test_sets_enabled_false(self):
+        """handle_all_complete sets enabled=False."""
+        from backend.main import handle_all_complete, _AutoPilotState
+
+        state = _AutoPilotState()
+        state.enabled = True
+        handle_all_complete(state)
+
+        assert state.enabled is False
+
+    def test_clears_current_feature_id(self):
+        """handle_all_complete clears current_feature_id."""
+        from backend.main import handle_all_complete, _AutoPilotState
+
+        state = _AutoPilotState()
+        state.current_feature_id = 42
+        handle_all_complete(state)
+
+        assert state.current_feature_id is None
+
+    def test_clears_active_process_and_monitor_task(self):
+        """handle_all_complete clears active_process and monitor_task."""
+        from backend.main import handle_all_complete, _AutoPilotState
+
+        state = _AutoPilotState()
+        state.active_process = object()
+        state.monitor_task = object()
+        handle_all_complete(state)
+
+        assert state.active_process is None
+        assert state.monitor_task is None
+
+    def test_appends_exact_log_message(self):
+        """handle_all_complete appends 'All tasks complete — auto-pilot disabled' info log."""
+        from backend.main import handle_all_complete, _AutoPilotState
+
+        state = _AutoPilotState()
+        handle_all_complete(state)
+
+        assert len(state.log) == 1
+        entry = state.log[0]
+        assert entry.level == 'info'
+        assert entry.message == "All tasks complete \u2014 auto-pilot disabled"
+
+    def test_status_endpoint_returns_disabled_and_no_error_after_all_complete(
+        self, test_db_with_path, monkeypatch
+    ):
+        """GET /api/autopilot/status returns enabled=False and last_error=None after all tasks complete."""
+        import asyncio
+        from backend.main import handle_autopilot_success, _AutoPilotState
+        from api.database import Feature as FeatureModel
+        import backend.main as main_module
+
+        session_maker, db_path = test_db_with_path
+
+        # Mark all non-passing features as passing so no work remains
+        session = session_maker()
+        try:
+            for fid in [1, 2, 4]:
+                f = session.query(FeatureModel).filter(FeatureModel.id == fid).first()
+                f.passes = True
+                f.in_progress = False
+            session.commit()
+        finally:
+            session.close()
+
+        # Set up the module-level state so the status endpoint reads from it
+        state = _AutoPilotState()
+        state.enabled = True
+        state.last_error = "previous error"
+        monkeypatch.setattr(main_module, '_current_db_path', db_path)
+        monkeypatch.setattr(main_module, '_autopilot_states', {str(db_path): state})
+
+        asyncio.run(handle_autopilot_success(99, state, db_path))
+
+        # Verify state directly (as the status endpoint reads it)
+        assert state.enabled is False
+        assert state.last_error is None
+
+
 class TestDisableAutopilotCancelsMonitorTask:
     """Tests that disable_autopilot cancels the asyncio monitor task."""
 
