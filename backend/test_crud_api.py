@@ -2671,5 +2671,86 @@ class TestDisableAutopilotCancelsMonitorTask:
         assert state.monitor_task is None
 
 
+class TestClearAutopilotLog:
+    """Tests for POST /api/autopilot/log/clear"""
+
+    def _reset_autopilot_state(self, monkeypatch):
+        import backend.main as main_module
+        monkeypatch.setattr(main_module, '_autopilot_states', {})
+
+    def test_clear_log_returns_200(self, client, monkeypatch):
+        """Clear log endpoint returns 200 with cleared=true."""
+        self._reset_autopilot_state(monkeypatch)
+
+        response = client.post("/api/autopilot/log/clear")
+        assert response.status_code == 200
+        assert response.json() == {"cleared": True}
+
+    def test_clear_log_empties_log(self, client, monkeypatch):
+        """Clear log endpoint removes all log entries from state."""
+        self._reset_autopilot_state(monkeypatch)
+        import backend.main as main_module
+
+        # Populate the log by calling disable (which appends a log entry)
+        monkeypatch.setattr("backend.main.subprocess.Popen",
+                            lambda *a, **k: type("P", (), {"pid": 1, "terminate": lambda s: None})())
+        client.post("/api/autopilot/disable")
+
+        state = main_module.get_autopilot_state()
+        assert len(state.log) > 0
+
+        # Now clear
+        client.post("/api/autopilot/log/clear")
+
+        assert len(state.log) == 0
+
+    def test_clear_log_idempotent_on_empty_log(self, client, monkeypatch):
+        """Clearing an already-empty log returns 200 without error."""
+        self._reset_autopilot_state(monkeypatch)
+
+        response = client.post("/api/autopilot/log/clear")
+        assert response.status_code == 200
+
+        # Call again — still returns 200
+        response = client.post("/api/autopilot/log/clear")
+        assert response.status_code == 200
+        assert response.json() == {"cleared": True}
+
+    def test_clear_log_does_not_affect_enabled_state(self, client, monkeypatch):
+        """Clearing the log does not change the enabled flag or current feature."""
+        self._reset_autopilot_state(monkeypatch)
+        import backend.main as main_module
+
+        # Manually set state fields
+        state = main_module.get_autopilot_state()
+        state.enabled = True
+        state.current_feature_id = 42
+        state.current_feature_name = "Test Feature"
+
+        client.post("/api/autopilot/log/clear")
+
+        state = main_module.get_autopilot_state()
+        assert state.enabled is True
+        assert state.current_feature_id == 42
+        assert state.current_feature_name == "Test Feature"
+
+    def test_status_log_empty_after_clear(self, client, monkeypatch):
+        """GET /api/autopilot/status returns empty log after clear."""
+        self._reset_autopilot_state(monkeypatch)
+        import backend.main as main_module
+
+        # Add a log entry directly
+        state = main_module.get_autopilot_state()
+        main_module._append_log(state, 'info', 'Test entry')
+        assert len(state.log) == 1
+
+        # Clear via API
+        client.post("/api/autopilot/log/clear")
+
+        # Status should reflect empty log
+        status = client.get("/api/autopilot/status").json()
+        assert status["log"] == []
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

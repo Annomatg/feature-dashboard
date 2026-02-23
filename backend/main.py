@@ -668,6 +668,7 @@ async def root():
             "autopilot_enable": "POST /api/autopilot/enable",
             "autopilot_disable": "POST /api/autopilot/disable",
             "autopilot_status": "GET /api/autopilot/status",
+            "autopilot_log_clear": "POST /api/autopilot/log/clear",
             "get_settings": "GET /api/settings",
             "update_settings": "PUT /api/settings"
         }
@@ -1511,6 +1512,19 @@ async def disable_autopilot():
         last_error=None,
         log=list(state.log),
     )
+
+
+@app.post("/api/autopilot/log/clear")
+async def clear_autopilot_log():
+    """
+    Clear all auto-pilot log entries for the active database.
+
+    Empties the in-memory log deque without affecting the enabled/running state.
+    Always returns 200 — idempotent even if the log is already empty.
+    """
+    state = get_autopilot_state()
+    state.log.clear()
+    return {"cleared": True}
 
 
 @app.get("/api/autopilot/status", response_model=AutoPilotStatusResponse)

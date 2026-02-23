@@ -8,6 +8,7 @@ import PlanTasksModal from './PlanTasksModal'
 import Header from './Header'
 import InfoBar from './InfoBar'
 import AutoPilotStatusBar from './AutoPilotStatusBar'
+import AutoPilotLog from './AutoPilotLog'
 
 const LANE_CONFIG = {
   todo: {
@@ -431,6 +432,8 @@ function KanbanBoard() {
         </div>
 
       </div>
+
+      <AutoPilotLog />
 
       {/* Toast notifications */}
       {toast && (
