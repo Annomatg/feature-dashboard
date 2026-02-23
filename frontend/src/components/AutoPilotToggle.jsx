@@ -35,7 +35,7 @@ function AutoPilotToggle() {
   const { data: status } = useQuery({
     queryKey: ['autopilot-status'],
     queryFn: fetchAutoPilotStatus,
-    refetchInterval: (data) => (data?.enabled ? 2000 : 10000),
+    refetchInterval: (query) => (query.state.data?.enabled ? 2000 : 10000),
   })
 
   const enabled = status?.enabled ?? false

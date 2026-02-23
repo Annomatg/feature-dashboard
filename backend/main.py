@@ -126,6 +126,7 @@ class _AutoPilotState:
         self.enabled: bool = False
         self.current_feature_id: Optional[int] = None
         self.current_feature_name: Optional[str] = None
+        self.current_feature_model: Optional[str] = None
         self.last_error: Optional[str] = None
         self.log: deque = deque(maxlen=100)  # LogEntry items, circular buffer
         self.active_process = None  # subprocess.Popen handle, if any
@@ -164,6 +165,7 @@ def handle_all_complete(state: "_AutoPilotState") -> None:
     state.enabled = False
     state.current_feature_id = None
     state.current_feature_name = None
+    state.current_feature_model = None
     state.last_error = None
     state.active_process = None
     state.monitor_task = None
@@ -294,6 +296,7 @@ async def handle_autopilot_success(
             state.enabled = False
             state.current_feature_id = None
             state.current_feature_name = None
+            state.current_feature_model = None
             state.active_process = None
             state.monitor_task = None
             return
@@ -303,6 +306,7 @@ async def handle_autopilot_success(
 
     state.current_feature_id = next_feature.id
     state.current_feature_name = next_feature.name
+    state.current_feature_model = next_feature.model or "sonnet"
     settings = load_settings()
     try:
         proc = spawn_claude_for_autopilot(next_feature, settings, str(db_path.parent))
@@ -315,6 +319,7 @@ async def handle_autopilot_success(
         state.enabled = False
         state.current_feature_id = None
         state.current_feature_name = None
+        state.current_feature_model = None
         state.active_process = None
         state.monitor_task = None
         err = str(e)
@@ -339,6 +344,7 @@ async def handle_autopilot_failure(
     state.enabled = False
     state.current_feature_id = None
     state.current_feature_name = None
+    state.current_feature_model = None
     state.active_process = None
     state.monitor_task = None
 
@@ -633,6 +639,7 @@ class AutoPilotStatusResponse(BaseModel):
     enabled: bool
     current_feature_id: Optional[int] = None
     current_feature_name: Optional[str] = None
+    current_feature_model: Optional[str] = None
     last_error: Optional[str] = None
     log: list[LogEntry] = []
 
@@ -1417,6 +1424,7 @@ async def enable_autopilot():
         state.enabled = True
         state.current_feature_id = feature.id
         state.current_feature_name = feature.name
+        state.current_feature_model = feature.model or "sonnet"
         state.last_error = None
         state.last_skipped_feature_id = feature.id
         state.consecutive_skip_count = 0
@@ -1435,6 +1443,7 @@ async def enable_autopilot():
             state.enabled = False
             state.current_feature_id = None
             state.current_feature_name = None
+            state.current_feature_model = None
             err = str(e)
             state.last_error = err
             raise HTTPException(status_code=500, detail=err)
@@ -1442,6 +1451,7 @@ async def enable_autopilot():
             state.enabled = False
             state.current_feature_id = None
             state.current_feature_name = None
+            state.current_feature_model = None
             err = f"Failed to launch Claude: {str(e)}"
             state.last_error = err
             raise HTTPException(status_code=500, detail=err)
@@ -1455,6 +1465,7 @@ async def enable_autopilot():
             enabled=True,
             current_feature_id=feature.id,
             current_feature_name=feature.name,
+            current_feature_model=feature.model or "sonnet",
             last_error=None,
             log=list(state.log),
         )
@@ -1488,6 +1499,7 @@ async def disable_autopilot():
     state.enabled = False
     state.current_feature_id = None
     state.current_feature_name = None
+    state.current_feature_model = None
     state.last_error = None
     _append_log(state, 'info', "Auto-pilot manually disabled")
 
@@ -1495,6 +1507,7 @@ async def disable_autopilot():
         enabled=False,
         current_feature_id=None,
         current_feature_name=None,
+        current_feature_model=None,
         last_error=None,
         log=list(state.log),
     )
@@ -1515,6 +1528,7 @@ async def get_autopilot_status():
         enabled=state.enabled,
         current_feature_id=state.current_feature_id,
         current_feature_name=state.current_feature_name,
+        current_feature_model=state.current_feature_model,
         last_error=state.last_error,
         log=list(state.log),
     )

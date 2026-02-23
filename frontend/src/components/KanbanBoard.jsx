@@ -7,6 +7,7 @@ import SettingsPanel from './SettingsPanel'
 import PlanTasksModal from './PlanTasksModal'
 import Header from './Header'
 import InfoBar from './InfoBar'
+import AutoPilotStatusBar from './AutoPilotStatusBar'
 
 const LANE_CONFIG = {
   todo: {
@@ -352,6 +353,8 @@ function KanbanBoard() {
         onSettingsClick={() => setSettingsOpen(true)}
         onPlanTasksClick={() => setPlanTasksOpen(true)}
       />
+
+      <AutoPilotStatusBar />
 
       {showInfoBar && (
         <InfoBar
