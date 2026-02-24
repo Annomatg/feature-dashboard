@@ -1739,6 +1739,51 @@ async def delete_comment(feature_id: int, comment_id: int):
         session.close()
 
 
+# ---------------------------------------------------------------------------
+# Interview endpoints
+# ---------------------------------------------------------------------------
+
+from backend.interview_state import get_interview_session  # noqa: E402
+
+
+class InterviewQuestionRequest(BaseModel):
+    text: str
+    options: list[str]
+
+
+@app.post("/api/interview/question", status_code=200)
+async def post_interview_question(request: InterviewQuestionRequest):
+    """
+    Push a new question into the interview session.
+
+    Called by Claude Code to send the next question to the browser.
+    Overwrites any previously active question and resets answer state.
+
+    Returns 409 if the browser has already submitted an answer that Claude
+    has not yet consumed via GET /api/interview/answer.
+    """
+    if not request.text.strip():
+        raise HTTPException(status_code=422, detail="Question text must not be empty")
+    if not request.options:
+        raise HTTPException(status_code=422, detail="At least one option is required")
+
+    session = get_interview_session()
+
+    if session.has_unconsumed_answer():
+        raise HTTPException(
+            status_code=409,
+            detail="An answer is pending and has not been consumed yet. "
+                   "Call GET /api/interview/answer before posting a new question.",
+        )
+
+    await session.set_question(request.text, request.options)
+
+    return {
+        "text": session.active_question["text"],
+        "options": session.active_question["options"],
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
