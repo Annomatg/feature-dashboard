@@ -44,6 +44,19 @@ export default defineConfig({
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
     },
+    {
+      // Portrait mobile project — iPhone 14 viewport (390x844, DPR 3x) on Chromium
+      // Runs only portrait-mobile.spec.js to avoid breaking viewport-specific tests
+      name: 'mobile-portrait',
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 390, height: 844 },
+        deviceScaleFactor: 3,
+        isMobile: true,
+        hasTouch: true,
+      },
+      testMatch: '**/portrait-mobile.spec.js',
+    },
   ],
 
   // Run dev server and backend before starting the tests
