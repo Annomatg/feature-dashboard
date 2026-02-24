@@ -35,7 +35,7 @@ test.describe('Kanban Board', () => {
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
 
     // Check that at least one feature card is visible
-    const featureCards = await page.locator('.bg-surface.border.rounded-lg.p-4').all();
+    const featureCards = await page.locator('[data-testid="kanban-card"]').all();
     expect(featureCards.length).toBeGreaterThan(0);
   });
 
@@ -43,7 +43,7 @@ test.describe('Kanban Board', () => {
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
 
     // Wait for at least one feature card
-    const firstCard = page.locator('.bg-surface.border.rounded-lg.p-4').first();
+    const firstCard = page.locator('[data-testid="kanban-card"]').first();
     await firstCard.waitFor({ state: 'visible' });
 
     // Check that the card contains expected elements
@@ -74,7 +74,7 @@ test.describe('Kanban Board', () => {
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
 
     // Wait for at least one feature card
-    const firstCard = page.locator('.bg-surface.border.rounded-lg.p-4').first();
+    const firstCard = page.locator('[data-testid="kanban-card"]').first();
     await firstCard.waitFor({ state: 'visible' });
 
     // Check that the FileText icon is visible (cards with descriptions should have the icon)
@@ -104,7 +104,7 @@ test.describe('Kanban Board', () => {
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
 
     // Find the card for our test feature
-    const testCard = page.locator('.bg-surface.border.rounded-lg.p-4').filter({ hasText: 'Test Feature Without Description' });
+    const testCard = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Test Feature Without Description' });
     await testCard.waitFor({ state: 'visible' });
 
     // Check that NO FileText icon is present (only category badge might have icon)
@@ -121,7 +121,7 @@ test.describe('Kanban Board', () => {
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
 
     // Click on the first feature card
-    const firstCard = page.locator('.bg-surface.border.rounded-lg.p-4').first();
+    const firstCard = page.locator('[data-testid="kanban-card"]').first();
     await firstCard.click();
 
     // Detail panel should open
@@ -132,7 +132,7 @@ test.describe('Kanban Board', () => {
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
 
     // Click on the first feature card
-    const firstCard = page.locator('.bg-surface.border.rounded-lg.p-4').first();
+    const firstCard = page.locator('[data-testid="kanban-card"]').first();
     await firstCard.click();
 
     // Wait for the style to update
@@ -146,7 +146,7 @@ test.describe('Kanban Board', () => {
   test('feature cards should display task ID and priority', async ({ page }) => {
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
 
-    const firstCard = page.locator('.bg-surface.border.rounded-lg.p-4').first();
+    const firstCard = page.locator('[data-testid="kanban-card"]').first();
     await firstCard.waitFor({ state: 'visible' });
 
     // Task ID: shown as #<number> with title="Task ID"

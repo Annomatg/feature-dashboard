@@ -1,5 +1,12 @@
 import { FileText, MessageSquare } from 'lucide-react'
 
+// Detect touch-only devices once at module load time.
+// On touch devices the HTML5 drag-and-drop API is not triggered by touch events,
+// so we disable draggable and the grab cursor to avoid a confusing UX.
+const isTouchDevice =
+  typeof window !== 'undefined' &&
+  (navigator.maxTouchPoints > 0 || 'ontouchstart' in window)
+
 function KanbanCard({
   feature,
   accentColor,
@@ -33,13 +40,15 @@ function KanbanCard({
 
   return (
     <div
-      draggable
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
+      draggable={!isTouchDevice}
+      onDragStart={!isTouchDevice ? handleDragStart : undefined}
+      onDragEnd={!isTouchDevice ? handleDragEnd : undefined}
       onClick={() => onClick?.(feature)}
       data-testid="kanban-card"
       data-feature-id={feature.id}
-      className="bg-surface border rounded-lg p-4 transition-all duration-200 cursor-grab active:cursor-grabbing group relative select-none"
+      className={`bg-surface border rounded-lg p-3 md:p-4 transition-all duration-200 group relative select-none ${
+        isTouchDevice ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'
+      }`}
       style={{
         borderLeftWidth: '3px',
         borderLeftColor: accentColor,
@@ -64,8 +73,8 @@ function KanbanCard({
       }}
     >
       {/* ID, Priority & Category */}
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between mb-2 gap-2">
+        <div className="flex items-center gap-2 min-w-0 flex-shrink-0">
           <span className="font-mono text-xs text-text-secondary" title="Task ID">
             #{feature.id}
           </span>
@@ -74,11 +83,12 @@ function KanbanCard({
           </span>
         </div>
         <span
-          className="px-2 py-0.5 rounded text-xs font-mono"
+          className="px-2 py-0.5 rounded text-xs font-mono truncate max-w-[100px] md:max-w-[160px]"
           style={{
             backgroundColor: `${accentColor}10`,
             color: accentColor
           }}
+          title={feature.category}
         >
           {feature.category}
         </span>
@@ -86,7 +96,7 @@ function KanbanCard({
 
       {/* Feature Name */}
       <div className="flex items-start gap-2 mb-2">
-        <h3 className="text-text-primary font-semibold line-clamp-2 group-hover:text-white transition-colors flex-1">
+        <h3 className="text-sm text-text-primary font-semibold line-clamp-2 group-hover:text-white transition-colors flex-1 min-w-0">
           {feature.name}
         </h3>
         <div className="flex items-center gap-1 flex-shrink-0 mt-0.5">

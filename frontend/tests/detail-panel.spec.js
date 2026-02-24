@@ -8,7 +8,7 @@ test.describe('Detail Panel', () => {
 
   test('should open detail panel when clicking a card', async ({ page }) => {
     // Click on first feature card
-    const firstCard = page.locator('.bg-surface.border.rounded-lg.p-4').first();
+    const firstCard = page.locator('[data-testid="kanban-card"]').first();
     await firstCard.waitFor({ state: 'visible' });
     await firstCard.click();
 
@@ -18,7 +18,7 @@ test.describe('Detail Panel', () => {
 
   test('should show feature title, category, and description in panel', async ({ page }) => {
     // Click on first card (Test Feature with Description - id=1, Backend)
-    const firstCard = page.locator('.bg-surface.border.rounded-lg.p-4').first();
+    const firstCard = page.locator('[data-testid="kanban-card"]').first();
     await firstCard.click();
 
     const panel = page.getByTestId('detail-panel');
@@ -32,7 +32,7 @@ test.describe('Detail Panel', () => {
   });
 
   test('should close panel when clicking X button', async ({ page }) => {
-    const firstCard = page.locator('.bg-surface.border.rounded-lg.p-4').first();
+    const firstCard = page.locator('[data-testid="kanban-card"]').first();
     await firstCard.click();
 
     await expect(page.getByTestId('detail-panel')).toBeVisible();
@@ -44,7 +44,7 @@ test.describe('Detail Panel', () => {
   });
 
   test('should close panel when pressing Escape', async ({ page }) => {
-    const firstCard = page.locator('.bg-surface.border.rounded-lg.p-4').first();
+    const firstCard = page.locator('[data-testid="kanban-card"]').first();
     await firstCard.click();
 
     await expect(page.getByTestId('detail-panel')).toBeVisible();
@@ -55,7 +55,7 @@ test.describe('Detail Panel', () => {
   });
 
   test('should close panel when clicking backdrop', async ({ page }) => {
-    const firstCard = page.locator('.bg-surface.border.rounded-lg.p-4').first();
+    const firstCard = page.locator('[data-testid="kanban-card"]').first();
     await firstCard.click();
 
     await expect(page.getByTestId('detail-panel')).toBeVisible();
@@ -84,7 +84,7 @@ test.describe('Detail Panel', () => {
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
 
     // Find and click the test feature card
-    const testCard = page.locator('.bg-surface.border.rounded-lg.p-4').filter({ hasText: 'Panel Edit Test Feature' });
+    const testCard = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Panel Edit Test Feature' });
     await testCard.waitFor({ state: 'visible' });
     await testCard.click();
 
@@ -116,7 +116,7 @@ test.describe('Detail Panel', () => {
   });
 
   test('should cancel edit when pressing Escape', async ({ page }) => {
-    const firstCard = page.locator('.bg-surface.border.rounded-lg.p-4').first();
+    const firstCard = page.locator('[data-testid="kanban-card"]').first();
     await firstCard.click();
 
     const panel = page.getByTestId('detail-panel');
@@ -143,7 +143,7 @@ test.describe('Detail Panel', () => {
   });
 
   test('should show delete confirmation prompt', async ({ page }) => {
-    const firstCard = page.locator('.bg-surface.border.rounded-lg.p-4').first();
+    const firstCard = page.locator('[data-testid="kanban-card"]').first();
     await firstCard.click();
 
     await expect(page.getByTestId('detail-panel')).toBeVisible();
@@ -156,7 +156,7 @@ test.describe('Detail Panel', () => {
   });
 
   test('should cancel delete when clicking Cancel', async ({ page }) => {
-    const firstCard = page.locator('.bg-surface.border.rounded-lg.p-4').first();
+    const firstCard = page.locator('[data-testid="kanban-card"]').first();
     await firstCard.click();
 
     await page.getByTestId('delete-feature-btn').click();
@@ -186,7 +186,7 @@ test.describe('Detail Panel', () => {
     await page.reload();
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
 
-    const testCard = page.locator('.bg-surface.border.rounded-lg.p-4').filter({ hasText: 'Launch Claude TODO Test' });
+    const testCard = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Launch Claude TODO Test' });
     await testCard.waitFor({ state: 'visible' });
     await testCard.click();
 
@@ -214,7 +214,7 @@ test.describe('Detail Panel', () => {
     await page.reload();
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
 
-    const testCard = page.locator('.bg-surface.border.rounded-lg.p-4').filter({ hasText: 'Launch Claude InProgress Test' });
+    const testCard = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Launch Claude InProgress Test' });
     await testCard.waitFor({ state: 'visible' });
     await testCard.click();
 
@@ -247,7 +247,7 @@ test.describe('Detail Panel', () => {
     await page.reload();
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
 
-    const testCard = page.locator('.bg-surface.border.rounded-lg.p-4').filter({ hasText: 'Launch Claude Done Test' });
+    const testCard = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Launch Claude Done Test' });
     await testCard.waitFor({ state: 'visible' });
     await testCard.click();
 
@@ -288,7 +288,7 @@ test.describe('Detail Panel', () => {
       });
     });
 
-    const testCard = page.locator('.bg-surface.border.rounded-lg.p-4').filter({ hasText: 'Launch Claude API Call Test' });
+    const testCard = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Launch Claude API Call Test' });
     await testCard.waitFor({ state: 'visible' });
     await testCard.click();
 
@@ -328,7 +328,7 @@ test.describe('Detail Panel', () => {
       });
     });
 
-    const testCard = page.locator('.bg-surface.border.rounded-lg.p-4').filter({ hasText: 'Launch Claude Error Test' });
+    const testCard = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Launch Claude Error Test' });
     await testCard.waitFor({ state: 'visible' });
     await testCard.click();
 
@@ -361,7 +361,7 @@ test.describe('Detail Panel', () => {
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
 
     // Open the panel for this feature
-    const testCard = page.locator('.bg-surface.border.rounded-lg.p-4').filter({ hasText: 'Feature To Delete' });
+    const testCard = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Feature To Delete' });
     await testCard.waitFor({ state: 'visible' });
     await testCard.click();
 
@@ -375,7 +375,7 @@ test.describe('Detail Panel', () => {
     await expect(page.getByTestId('detail-panel')).not.toBeVisible();
 
     // Feature should be gone from the board
-    await expect(page.locator('.bg-surface.border.rounded-lg.p-4').filter({ hasText: 'Feature To Delete' })).not.toBeVisible();
+    await expect(page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Feature To Delete' })).not.toBeVisible();
 
     // Verify via API that it's gone
     const getResponse = await page.request.get(`http://localhost:8001/api/features/${created.id}`);
@@ -398,7 +398,7 @@ test.describe('Detail Panel', () => {
     await page.reload();
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
 
-    const testCard = page.locator('.bg-surface.border.rounded-lg.p-4').filter({ hasText: 'No Comments Feature' });
+    const testCard = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'No Comments Feature' });
     await testCard.waitFor({ state: 'visible' });
     await testCard.click();
 
@@ -432,7 +432,7 @@ test.describe('Detail Panel', () => {
     await page.reload();
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
 
-    const testCard = page.locator('.bg-surface.border.rounded-lg.p-4').filter({ hasText: 'Feature With Comments' });
+    const testCard = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Feature With Comments' });
     await testCard.waitFor({ state: 'visible' });
     await testCard.click();
 
@@ -477,7 +477,7 @@ test.describe('Detail Panel', () => {
     await page.reload();
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
 
-    const testCard = page.locator('.bg-surface.border.rounded-lg.p-4').filter({ hasText: 'Feature With Multiple Comments' });
+    const testCard = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Feature With Multiple Comments' });
     await testCard.waitFor({ state: 'visible' });
     await testCard.click();
 
@@ -522,7 +522,7 @@ test.describe('Detail Panel', () => {
     await page.reload();
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
 
-    const testCard = page.locator('.bg-surface.border.rounded-lg.p-4').filter({ hasText: 'Feature Comment Timestamp' });
+    const testCard = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Feature Comment Timestamp' });
     await testCard.waitFor({ state: 'visible' });
     await testCard.click();
 
