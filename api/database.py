@@ -224,8 +224,19 @@ def create_database(project_dir: Path, db_filename: str = "features.db") -> tupl
     Returns:
         Tuple of (engine, SessionLocal)
     """
+    from sqlalchemy import event as sa_event
+
     db_url = get_database_url(project_dir, db_filename)
     engine = create_engine(db_url, connect_args={"check_same_thread": False})
+
+    # SQLite disables foreign key enforcement by default.
+    # Enable it on every new connection so ON DELETE CASCADE works correctly.
+    @sa_event.listens_for(engine, "connect")
+    def _enable_foreign_keys(dbapi_connection, _connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     Base.metadata.create_all(bind=engine)
     run_migrations(engine)
 
