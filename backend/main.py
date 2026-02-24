@@ -139,10 +139,17 @@ _autopilot_states: dict[str, _AutoPilotState] = {}
 
 
 def get_autopilot_state() -> _AutoPilotState:
-    """Get or create the autopilot state for the currently active database."""
+    """Get or create the autopilot state for the currently active database.
+
+    When creating a new state entry, initialises the ``enabled`` flag from the
+    persisted value in dashboards.json so that the UI toggle is restored
+    correctly after a frontend reload (without a backend restart).
+    """
     db_key = str(_current_db_path)
     if db_key not in _autopilot_states:
-        _autopilot_states[db_key] = _AutoPilotState()
+        state = _AutoPilotState()
+        state.enabled = _read_autopilot_from_config()
+        _autopilot_states[db_key] = state
     return _autopilot_states[db_key]
 
 
@@ -402,7 +409,7 @@ async def startup_migrate_all():
 
 
 def _reset_autopilot_in_config() -> None:
-    """Reset autopilot_enabled to False in dashboards.json if persisted.
+    """Reset autopilot to False in dashboards.json if persisted.
 
     Preventive measure: clears any persisted autopilot state so that a backend
     restart does not unexpectedly resume auto-pilot without user action.
@@ -415,14 +422,67 @@ def _reset_autopilot_in_config() -> None:
         modified = False
         if isinstance(data, list):
             for entry in data:
-                if isinstance(entry, dict) and entry.get('autopilot_enabled'):
-                    entry['autopilot_enabled'] = False
+                if isinstance(entry, dict) and entry.get('autopilot'):
+                    entry['autopilot'] = False
                     modified = True
         if modified:
             with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2)
     except Exception:
         pass  # Never fail startup due to config file issues
+
+
+def _read_autopilot_from_config() -> bool:
+    """Read the persisted autopilot state for the currently active database.
+
+    Returns the ``autopilot`` boolean stored in dashboards.json for the entry
+    whose path matches ``_current_db_path``.  Returns False if the config file
+    cannot be read, the current path is not listed, or the field is absent.
+    """
+    if not CONFIG_FILE.exists():
+        return False
+    try:
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            for entry in data:
+                if isinstance(entry, dict):
+                    entry_path = Path(entry.get('path', ''))
+                    if not entry_path.is_absolute():
+                        entry_path = PROJECT_DIR / entry_path
+                    if entry_path.resolve() == _current_db_path.resolve():
+                        return bool(entry.get('autopilot', False))
+    except Exception:
+        pass
+    return False
+
+
+def _write_autopilot_to_config(enabled: bool) -> None:
+    """Persist the autopilot toggle state for the currently active database.
+
+    Finds the dashboards.json entry whose path matches ``_current_db_path`` and
+    sets its ``autopilot`` field to *enabled*.  Silently does nothing when the
+    config file is absent, cannot be parsed, or does not contain a matching
+    entry (e.g. when running against a temporary test database).
+    """
+    if not CONFIG_FILE.exists():
+        return
+    try:
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            for entry in data:
+                if isinstance(entry, dict):
+                    entry_path = Path(entry.get('path', ''))
+                    if not entry_path.is_absolute():
+                        entry_path = PROJECT_DIR / entry_path
+                    if entry_path.resolve() == _current_db_path.resolve():
+                        entry['autopilot'] = enabled
+                        break
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+    except Exception:
+        pass  # Never fail an API call due to config file issues
 
 
 @app.on_event("startup")
@@ -438,7 +498,7 @@ async def startup_reset_autopilot():
     # is better than implicit — particularly when tests re-use the module.
     _autopilot_states.clear()
 
-    # Reset any autopilot_enabled fields persisted in dashboards.json
+    # Reset any autopilot fields persisted in dashboards.json
     _reset_autopilot_in_config()
 
     # Log the reset for the current database's state
@@ -1510,6 +1570,7 @@ async def enable_autopilot():
         state.monitor_task = asyncio.create_task(
             monitor_claude_process(feature.id, proc, _current_db_path, state)
         )
+        _write_autopilot_to_config(True)
 
         return AutoPilotStatusResponse(
             enabled=True,
@@ -1552,6 +1613,7 @@ async def disable_autopilot():
     state.current_feature_model = None
     state.last_error = None
     _append_log(state, 'info', "Auto-pilot manually disabled")
+    _write_autopilot_to_config(False)
 
     return AutoPilotStatusResponse(
         enabled=False,

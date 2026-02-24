@@ -2972,13 +2972,13 @@ class TestStartupAutoPilotReset:
         log_messages = [entry["message"] for entry in data["log"]]
         assert any("reset" in m.lower() for m in log_messages)
 
-    def test_reset_config_clears_autopilot_enabled_field(self, tmp_path, monkeypatch):
-        """_reset_autopilot_in_config() sets autopilot_enabled=False in dashboards.json."""
+    def test_reset_config_clears_autopilot_field(self, tmp_path, monkeypatch):
+        """_reset_autopilot_in_config() sets autopilot=False in dashboards.json."""
         import json
         import backend.main as main_module
 
         config = [
-            {"name": "DB 1", "path": "a.db", "autopilot_enabled": True},
+            {"name": "DB 1", "path": "a.db", "autopilot": True},
             {"name": "DB 2", "path": "b.db"},
         ]
         config_file = tmp_path / "dashboards.json"
@@ -2988,10 +2988,10 @@ class TestStartupAutoPilotReset:
         main_module._reset_autopilot_in_config()
 
         result = json.loads(config_file.read_text())
-        assert result[0]["autopilot_enabled"] is False
+        assert result[0]["autopilot"] is False
 
     def test_reset_config_noop_when_no_autopilot_field(self, tmp_path, monkeypatch):
-        """_reset_autopilot_in_config() does not modify dashboards.json if no autopilot_enabled field."""
+        """_reset_autopilot_in_config() does not modify dashboards.json if no autopilot field."""
         import json
         import backend.main as main_module
 
@@ -3017,13 +3017,13 @@ class TestStartupAutoPilotReset:
         main_module._reset_autopilot_in_config()
 
     def test_reset_config_resets_multiple_entries(self, tmp_path, monkeypatch):
-        """_reset_autopilot_in_config() resets all entries with autopilot_enabled=True."""
+        """_reset_autopilot_in_config() resets all entries with autopilot=True."""
         import json
         import backend.main as main_module
 
         config = [
-            {"name": "DB 1", "path": "a.db", "autopilot_enabled": True},
-            {"name": "DB 2", "path": "b.db", "autopilot_enabled": True},
+            {"name": "DB 1", "path": "a.db", "autopilot": True},
+            {"name": "DB 2", "path": "b.db", "autopilot": True},
             {"name": "DB 3", "path": "c.db"},
         ]
         config_file = tmp_path / "dashboards.json"
@@ -3033,9 +3033,245 @@ class TestStartupAutoPilotReset:
         main_module._reset_autopilot_in_config()
 
         result = json.loads(config_file.read_text())
-        assert result[0]["autopilot_enabled"] is False
-        assert result[1]["autopilot_enabled"] is False
-        assert "autopilot_enabled" not in result[2]
+        assert result[0]["autopilot"] is False
+        assert result[1]["autopilot"] is False
+        assert "autopilot" not in result[2]
+
+
+class TestAutoPilotPersistence:
+    """Tests for autopilot state persistence in dashboards.json.
+
+    Verifies that enable/disable write the ``autopilot`` field to the config
+    file, that the status endpoint restores the toggle from the persisted value
+    after in-memory state is cleared (simulating a frontend reload), and that
+    switching databases surfaces the correct per-database autopilot state.
+    """
+
+    @pytest.fixture
+    def client_with_config(self, monkeypatch, tmp_path):
+        """Test client with isolated DB *and* a temp dashboards.json config.
+
+        The CONFIG_FILE global is patched to a temp JSON file containing a
+        single entry whose ``path`` matches the temp database path, so that
+        _read_autopilot_from_config / _write_autopilot_to_config work against
+        a real (but isolated) file instead of the production dashboards.json.
+        """
+        import json
+        import backend.main as main_module
+
+        temp_db_path = tmp_path / "features.db"
+        engine, session_maker = create_database(tmp_path)
+
+        session = session_maker()
+        try:
+            features = [
+                Feature(id=1, priority=100, category="Backend", name="Feature 1",
+                        description="Test feature 1", steps=["Step 1"], passes=False, in_progress=False),
+                Feature(id=2, priority=200, category="Backend", name="Feature 2",
+                        description="Test feature 2", steps=["Step 1"], passes=False, in_progress=False),
+                Feature(id=3, priority=300, category="Frontend", name="Feature 3",
+                        description="Test feature 3", steps=["Step 1"], passes=True, in_progress=False),
+                Feature(id=4, priority=400, category="Frontend", name="Feature 4",
+                        description="Test feature 4", steps=["Step 1"], passes=False, in_progress=True),
+            ]
+            for f in features:
+                session.add(f)
+            session.commit()
+        finally:
+            session.close()
+
+        config_path = tmp_path / "dashboards.json"
+        config_data = [{"name": "Test DB", "path": str(temp_db_path)}]
+        config_path.write_text(json.dumps(config_data))
+
+        monkeypatch.setattr(main_module, '_session_maker', session_maker)
+        monkeypatch.setattr(main_module, '_current_db_path', temp_db_path)
+        monkeypatch.setattr(main_module, 'CONFIG_FILE', config_path)
+        monkeypatch.setattr(main_module, '_autopilot_states', {})
+        monkeypatch.setattr(main_module.asyncio, 'create_task',
+                            lambda coro: (coro.close(), None)[1])
+
+        yield TestClient(app), temp_db_path, config_path
+
+        engine.dispose()
+        try:
+            shutil.rmtree(str(tmp_path))
+        except (PermissionError, FileNotFoundError):
+            pass
+
+    def test_enable_writes_autopilot_true_to_config(self, client_with_config, monkeypatch):
+        """POST /api/autopilot/enable writes autopilot=true to dashboards.json."""
+        import json
+        import backend.main as main_module
+
+        client, temp_db_path, config_path = client_with_config
+
+        monkeypatch.setattr(
+            main_module, 'subprocess',
+            type('M', (), {'Popen': lambda *a, **kw: type('P', (), {'pid': 1})()})()
+        )
+
+        response = client.post("/api/autopilot/enable")
+        assert response.status_code == 200
+        assert response.json()["enabled"] is True
+
+        config = json.loads(config_path.read_text())
+        assert config[0].get("autopilot") is True
+
+    def test_disable_writes_autopilot_false_to_config(self, client_with_config, monkeypatch):
+        """POST /api/autopilot/disable writes autopilot=false to dashboards.json."""
+        import json
+        import backend.main as main_module
+
+        client, temp_db_path, config_path = client_with_config
+
+        monkeypatch.setattr(
+            main_module, 'subprocess',
+            type('M', (), {'Popen': lambda *a, **kw: type('P', (), {'pid': 1})()})()
+        )
+
+        client.post("/api/autopilot/enable")
+        client.post("/api/autopilot/disable")
+
+        config = json.loads(config_path.read_text())
+        assert config[0].get("autopilot") is False
+
+    def test_status_reads_persisted_state_after_memory_cleared(self, client_with_config, monkeypatch):
+        """GET /api/autopilot/status returns enabled=True from config after in-memory state is cleared.
+
+        Simulates a frontend reload: the in-memory state dict is wiped but the
+        config file still has autopilot=true, so the status endpoint should
+        restore the enabled flag from the persisted value.
+        """
+        import json
+        import backend.main as main_module
+
+        client, temp_db_path, config_path = client_with_config
+
+        # Write autopilot=true directly to the config file (bypassing enable endpoint)
+        config_data = [{"name": "Test DB", "path": str(temp_db_path), "autopilot": True}]
+        config_path.write_text(json.dumps(config_data))
+
+        # Clear in-memory state (simulates what happens between a frontend reload
+        # when the backend is still running but the state hasn't been initialised
+        # for this db yet)
+        main_module._autopilot_states.clear()
+
+        response = client.get("/api/autopilot/status")
+        assert response.status_code == 200
+        assert response.json()["enabled"] is True
+
+    def test_status_returns_false_when_config_has_no_autopilot_field(self, client_with_config):
+        """GET /api/autopilot/status returns enabled=False when config has no autopilot field."""
+        import backend.main as main_module
+
+        client, temp_db_path, config_path = client_with_config
+
+        # _autopilot_states is already empty (fixture initialises to {})
+        response = client.get("/api/autopilot/status")
+        assert response.status_code == 200
+        assert response.json()["enabled"] is False
+
+    def test_switching_databases_shows_correct_autopilot_state(self, monkeypatch, tmp_path):
+        """get_autopilot_state() initialises enabled from the per-db persisted value.
+
+        DB A has autopilot=true in config → state.enabled should be True.
+        DB B has autopilot=false (absent) → state.enabled should be False.
+        """
+        import json
+        import backend.main as main_module
+
+        db_path_a = tmp_path / "a.db"
+        db_path_b = tmp_path / "b.db"
+
+        config_path = tmp_path / "dashboards.json"
+        config_data = [
+            {"name": "DB A", "path": str(db_path_a), "autopilot": True},
+            {"name": "DB B", "path": str(db_path_b)},
+        ]
+        config_path.write_text(json.dumps(config_data))
+
+        monkeypatch.setattr(main_module, 'CONFIG_FILE', config_path)
+        monkeypatch.setattr(main_module, '_autopilot_states', {})
+
+        # Simulate switching to DB A
+        monkeypatch.setattr(main_module, '_current_db_path', db_path_a)
+        state_a = main_module.get_autopilot_state()
+        assert state_a.enabled is True
+
+        # Reset in-memory state and simulate switching to DB B
+        monkeypatch.setattr(main_module, '_autopilot_states', {})
+        monkeypatch.setattr(main_module, '_current_db_path', db_path_b)
+        state_b = main_module.get_autopilot_state()
+        assert state_b.enabled is False
+
+    def test_enable_no_write_when_spawn_fails(self, client_with_config, monkeypatch):
+        """POST /api/autopilot/enable does not write autopilot=true when Claude spawn fails."""
+        import json
+        import backend.main as main_module
+
+        client, temp_db_path, config_path = client_with_config
+
+        # Make subprocess.Popen raise FileNotFoundError (claude not found)
+        def raise_fnf(*args, **kwargs):
+            raise FileNotFoundError("claude: command not found")
+
+        monkeypatch.setattr(main_module.subprocess, 'Popen', raise_fnf)
+
+        response = client.post("/api/autopilot/enable")
+        assert response.status_code == 500
+
+        # Config should NOT have autopilot=true because spawn failed
+        config = json.loads(config_path.read_text())
+        assert config[0].get("autopilot") is not True
+
+    def test_read_autopilot_from_config_returns_false_when_no_file(self, monkeypatch, tmp_path):
+        """_read_autopilot_from_config() returns False when CONFIG_FILE does not exist."""
+        import backend.main as main_module
+
+        monkeypatch.setattr(main_module, 'CONFIG_FILE', tmp_path / "nonexistent.json")
+        monkeypatch.setattr(main_module, '_current_db_path', tmp_path / "features.db")
+
+        assert main_module._read_autopilot_from_config() is False
+
+    def test_read_autopilot_from_config_returns_false_when_path_not_in_config(self, monkeypatch, tmp_path):
+        """_read_autopilot_from_config() returns False when the current db path is not in config."""
+        import json
+        import backend.main as main_module
+
+        config_path = tmp_path / "dashboards.json"
+        config_path.write_text(json.dumps([{"name": "Other", "path": str(tmp_path / "other.db"), "autopilot": True}]))
+        monkeypatch.setattr(main_module, 'CONFIG_FILE', config_path)
+        monkeypatch.setattr(main_module, '_current_db_path', tmp_path / "features.db")
+
+        assert main_module._read_autopilot_from_config() is False
+
+    def test_write_autopilot_to_config_noop_when_no_file(self, monkeypatch, tmp_path):
+        """_write_autopilot_to_config() silently does nothing when CONFIG_FILE is absent."""
+        import backend.main as main_module
+
+        monkeypatch.setattr(main_module, 'CONFIG_FILE', tmp_path / "nonexistent.json")
+        monkeypatch.setattr(main_module, '_current_db_path', tmp_path / "features.db")
+
+        # Should not raise
+        main_module._write_autopilot_to_config(True)
+
+    def test_write_autopilot_to_config_noop_when_path_not_in_config(self, monkeypatch, tmp_path):
+        """_write_autopilot_to_config() does not modify config when db path not found."""
+        import json
+        import backend.main as main_module
+
+        original = [{"name": "Other", "path": str(tmp_path / "other.db")}]
+        config_path = tmp_path / "dashboards.json"
+        config_path.write_text(json.dumps(original))
+        monkeypatch.setattr(main_module, 'CONFIG_FILE', config_path)
+        monkeypatch.setattr(main_module, '_current_db_path', tmp_path / "features.db")
+
+        main_module._write_autopilot_to_config(True)
+
+        result = json.loads(config_path.read_text())
+        # Other entry should be unmodified, no autopilot field added
+        assert result[0].get("autopilot") is None
 
 
 if __name__ == "__main__":
