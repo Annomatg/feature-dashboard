@@ -88,7 +88,7 @@ function SettingsPanel({ onClose }) {
       <div
         ref={panelRef}
         data-testid="settings-panel"
-        className="fixed top-0 right-0 h-full w-[480px] bg-surface border-l border-border z-50 flex flex-col shadow-2xl animate-slide-in-right"
+        className="fixed top-0 right-0 h-full w-full md:w-[480px] bg-surface border-l border-border z-50 flex flex-col shadow-2xl animate-slide-in-right"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

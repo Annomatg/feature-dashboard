@@ -409,7 +409,7 @@ function DetailPanel({ feature, onClose, onUpdate, onDelete }) {
       <div
         ref={panelRef}
         data-testid="detail-panel"
-        className="fixed top-0 right-0 h-full w-[420px] bg-surface border-l border-border z-50 flex flex-col shadow-2xl animate-slide-in-right"
+        className="fixed top-0 right-0 h-full w-full md:w-[420px] bg-surface border-l border-border z-50 flex flex-col shadow-2xl animate-slide-in-right"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

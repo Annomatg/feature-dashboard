@@ -177,3 +177,91 @@ test.describe('Feature cards at 390px portrait', () => {
     await expect(page.getByTestId('detail-panel')).toBeVisible({ timeout: 5000 });
   });
 });
+
+// ---------------------------------------------------------------------------
+// 4. Detail panel — fits within 390px portrait
+// ---------------------------------------------------------------------------
+
+test.describe('Detail panel at 390px portrait', () => {
+  test('panel opens and fits within the viewport width', async ({ page }) => {
+    const firstCard = page.getByTestId('kanban-card').first();
+    await firstCard.waitFor({ state: 'visible' });
+    await firstCard.click();
+
+    const panel = page.getByTestId('detail-panel');
+    await expect(panel).toBeVisible({ timeout: 5000 });
+
+    const box = await panel.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box.width).toBeLessThanOrEqual(390);
+  });
+
+  test('no horizontal overflow while detail panel is open', async ({ page }) => {
+    const firstCard = page.getByTestId('kanban-card').first();
+    await firstCard.waitFor({ state: 'visible' });
+    await firstCard.click();
+    await expect(page.getByTestId('detail-panel')).toBeVisible({ timeout: 5000 });
+
+    const scrollWidth = await page.evaluate(() => document.body.scrollWidth);
+    expect(scrollWidth).toBeLessThanOrEqual(390);
+  });
+
+  test('close button is visible inside the panel', async ({ page }) => {
+    const firstCard = page.getByTestId('kanban-card').first();
+    await firstCard.waitFor({ state: 'visible' });
+    await firstCard.click();
+    await expect(page.getByTestId('detail-panel')).toBeVisible({ timeout: 5000 });
+
+    await expect(page.getByTestId('detail-panel-close')).toBeVisible();
+  });
+
+  test('close button dismisses the panel', async ({ page }) => {
+    const firstCard = page.getByTestId('kanban-card').first();
+    await firstCard.waitFor({ state: 'visible' });
+    await firstCard.click();
+    await expect(page.getByTestId('detail-panel')).toBeVisible({ timeout: 5000 });
+
+    await page.getByTestId('detail-panel-close').click();
+    await expect(page.getByTestId('detail-panel')).not.toBeVisible();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. Settings panel — fits within 390px portrait
+// ---------------------------------------------------------------------------
+
+test.describe('Settings panel at 390px portrait', () => {
+  test('panel opens and fits within the viewport width', async ({ page }) => {
+    await page.getByTestId('settings-btn').click();
+
+    const panel = page.getByTestId('settings-panel');
+    await expect(panel).toBeVisible({ timeout: 5000 });
+
+    const box = await panel.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box.width).toBeLessThanOrEqual(390);
+  });
+
+  test('no horizontal overflow while settings panel is open', async ({ page }) => {
+    await page.getByTestId('settings-btn').click();
+    await expect(page.getByTestId('settings-panel')).toBeVisible({ timeout: 5000 });
+
+    const scrollWidth = await page.evaluate(() => document.body.scrollWidth);
+    expect(scrollWidth).toBeLessThanOrEqual(390);
+  });
+
+  test('close button is visible inside the panel', async ({ page }) => {
+    await page.getByTestId('settings-btn').click();
+    await expect(page.getByTestId('settings-panel')).toBeVisible({ timeout: 5000 });
+
+    await expect(page.getByTestId('settings-panel-close')).toBeVisible();
+  });
+
+  test('close button dismisses the panel', async ({ page }) => {
+    await page.getByTestId('settings-btn').click();
+    await expect(page.getByTestId('settings-panel')).toBeVisible({ timeout: 5000 });
+
+    await page.getByTestId('settings-panel-close').click();
+    await expect(page.getByTestId('settings-panel')).not.toBeVisible();
+  });
+});
