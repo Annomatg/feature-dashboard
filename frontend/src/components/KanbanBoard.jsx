@@ -118,6 +118,8 @@ function getLaneLabel(lane) {
   return 'Todo'
 }
 
+const LANE_KEYS = ['todo', 'inProgress', 'done']
+
 function KanbanBoard() {
   const [selectedFeatureId, setSelectedFeatureId] = useState(null)
   const [addingToLane, setAddingToLane] = useState(null)
@@ -130,6 +132,7 @@ function KanbanBoard() {
   const [infoDismissed, setInfoDismissed] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [planTasksOpen, setPlanTasksOpen] = useState(false)
+  const [activeMobileLane, setActiveMobileLane] = useState('todo')
 
   const queryClient = useQueryClient()
   const dragState = useRef(null)
@@ -367,70 +370,107 @@ function KanbanBoard() {
         />
       )}
 
-      <div className="flex-1 overflow-hidden px-6 pb-6 pt-6">
-        {/* Kanban Board - 3 Column Layout */}
-        <div className="max-w-[1800px] mx-auto grid grid-cols-3 grid-rows-1 gap-6 h-full">
-          <KanbanLane
-            title={LANE_CONFIG.todo.title}
-            count={todoFeatures.length}
-            features={todoFeatures}
-            accentColor={LANE_CONFIG.todo.accentColor}
-            onAddClick={() => handleAddFeature('todo')}
-            selectedFeatureId={selectedFeatureId}
-            onCardClick={handleCardClick}
-            isAddingFeature={addingToLane === 'todo'}
-            onSaveFeature={handleSaveFeature}
-            onCancelAdd={handleCancelAdd}
-            lane="todo"
-            onMoveToLane={handleMoveToLane}
-            onReorder={handleReorder}
-            dragState={dragState}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-            onPlanClick={() => setPlanTasksOpen(true)}
-          />
+      {/* Mobile lane tab bar — only rendered on narrow screens */}
+      <div data-testid="mobile-lane-tabs" className="flex md:hidden gap-1 px-4 pt-4 flex-shrink-0">
+        {LANE_KEYS.map(key => {
+          const config = LANE_CONFIG[key]
+          const count = key === 'todo' ? todoFeatures.length
+            : key === 'inProgress' ? inProgressFeatures.length
+            : doneTotalCount
+          const isActive = activeMobileLane === key
+          return (
+            <button
+              key={key}
+              data-testid={`lane-tab-${key}`}
+              onClick={() => setActiveMobileLane(key)}
+              className="flex-1 py-2 px-2 rounded font-mono text-xs uppercase tracking-wider transition-colors flex items-center justify-center gap-1.5"
+              style={{
+                color: isActive ? config.accentColor : '#a3a3a3',
+                border: `1px solid ${isActive ? config.accentColor + '60' : '#3d3d3d'}`,
+                backgroundColor: isActive ? `${config.accentColor}15` : 'transparent',
+              }}
+            >
+              {config.title}
+              <span className="font-semibold tabular-nums">
+                {count}
+              </span>
+            </button>
+          )
+        })}
+      </div>
 
-          <KanbanLane
-            title={LANE_CONFIG.inProgress.title}
-            count={inProgressFeatures.length}
-            features={inProgressFeatures}
-            accentColor={LANE_CONFIG.inProgress.accentColor}
-            onAddClick={() => handleAddFeature('inProgress')}
-            selectedFeatureId={selectedFeatureId}
-            onCardClick={handleCardClick}
-            isAddingFeature={addingToLane === 'inProgress'}
-            onSaveFeature={handleSaveFeature}
-            onCancelAdd={handleCancelAdd}
-            lane="inProgress"
-            onMoveToLane={handleMoveToLane}
-            onReorder={handleReorder}
-            dragState={dragState}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-          />
+      <div className="flex-1 overflow-hidden px-4 pb-4 pt-3 md:px-6 md:pb-6 md:pt-6">
+        {/* Kanban Board — 1 column on mobile (tab-switched), 3 columns on desktop */}
+        <div className="max-w-[1800px] mx-auto grid grid-cols-1 md:grid-cols-3 grid-rows-1 gap-6 h-full">
 
-          <KanbanLane
-            title={LANE_CONFIG.done.title}
-            count={doneTotalCount}
-            features={doneFeatures}
-            accentColor={LANE_CONFIG.done.accentColor}
-            onAddClick={() => handleAddFeature('done')}
-            selectedFeatureId={selectedFeatureId}
-            onCardClick={handleCardClick}
-            isAddingFeature={addingToLane === 'done'}
-            onSaveFeature={handleSaveFeature}
-            onCancelAdd={handleCancelAdd}
-            lane="done"
-            onMoveToLane={handleMoveToLane}
-            onReorder={handleReorder}
-            dragState={dragState}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-            isDoneLane={true}
-            hasMore={doneFeatures.length < doneTotalCount}
-            onShowMore={handleShowMoreDone}
-            isLoadingMore={isDoneLoading && doneOffset > 0}
-          />
+          <div className={`${activeMobileLane !== 'todo' ? 'hidden md:block' : ''} h-full min-w-0`}>
+            <KanbanLane
+              title={LANE_CONFIG.todo.title}
+              count={todoFeatures.length}
+              features={todoFeatures}
+              accentColor={LANE_CONFIG.todo.accentColor}
+              onAddClick={() => handleAddFeature('todo')}
+              selectedFeatureId={selectedFeatureId}
+              onCardClick={handleCardClick}
+              isAddingFeature={addingToLane === 'todo'}
+              onSaveFeature={handleSaveFeature}
+              onCancelAdd={handleCancelAdd}
+              lane="todo"
+              onMoveToLane={handleMoveToLane}
+              onReorder={handleReorder}
+              dragState={dragState}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+              onPlanClick={() => setPlanTasksOpen(true)}
+            />
+          </div>
+
+          <div className={`${activeMobileLane !== 'inProgress' ? 'hidden md:block' : ''} h-full min-w-0`}>
+            <KanbanLane
+              title={LANE_CONFIG.inProgress.title}
+              count={inProgressFeatures.length}
+              features={inProgressFeatures}
+              accentColor={LANE_CONFIG.inProgress.accentColor}
+              onAddClick={() => handleAddFeature('inProgress')}
+              selectedFeatureId={selectedFeatureId}
+              onCardClick={handleCardClick}
+              isAddingFeature={addingToLane === 'inProgress'}
+              onSaveFeature={handleSaveFeature}
+              onCancelAdd={handleCancelAdd}
+              lane="inProgress"
+              onMoveToLane={handleMoveToLane}
+              onReorder={handleReorder}
+              dragState={dragState}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+            />
+          </div>
+
+          <div className={`${activeMobileLane !== 'done' ? 'hidden md:block' : ''} h-full min-w-0`}>
+            <KanbanLane
+              title={LANE_CONFIG.done.title}
+              count={doneTotalCount}
+              features={doneFeatures}
+              accentColor={LANE_CONFIG.done.accentColor}
+              onAddClick={() => handleAddFeature('done')}
+              selectedFeatureId={selectedFeatureId}
+              onCardClick={handleCardClick}
+              isAddingFeature={addingToLane === 'done'}
+              onSaveFeature={handleSaveFeature}
+              onCancelAdd={handleCancelAdd}
+              lane="done"
+              onMoveToLane={handleMoveToLane}
+              onReorder={handleReorder}
+              dragState={dragState}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+              isDoneLane={true}
+              hasMore={doneFeatures.length < doneTotalCount}
+              onShowMore={handleShowMoreDone}
+              isLoadingMore={isDoneLoading && doneOffset > 0}
+            />
+          </div>
+
         </div>
 
       </div>
