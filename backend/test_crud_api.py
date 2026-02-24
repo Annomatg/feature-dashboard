@@ -2880,5 +2880,163 @@ class TestClearAutoPilotError:
         assert status_after["last_error"] is None
 
 
+class TestStartupAutoPilotReset:
+    """Tests for startup_reset_autopilot() and _reset_autopilot_in_config()."""
+
+    def test_status_returns_disabled_after_state_reinit(self, client, monkeypatch):
+        """After simulated restart (state re-init), GET /api/autopilot/status returns enabled=False."""
+        import backend.main as main_module
+
+        # Simulate pre-existing enabled state from before restart
+        pre_restart_state = main_module._AutoPilotState()
+        pre_restart_state.enabled = True
+        pre_restart_state.current_feature_id = 1
+        pre_restart_state.current_feature_name = "Old Feature"
+        old_key = str(main_module._current_db_path)
+        monkeypatch.setattr(main_module, '_autopilot_states', {old_key: pre_restart_state})
+
+        # Simulate startup reset: clear the state dict
+        main_module._autopilot_states.clear()
+
+        response = client.get("/api/autopilot/status")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["enabled"] is False
+        assert data["current_feature_id"] is None
+
+    def test_no_orphaned_process_after_state_reinit(self, client, monkeypatch):
+        """No orphaned process/task references exist after state re-init."""
+        import backend.main as main_module
+
+        # Simulate state with live references
+        pre_restart_state = main_module._AutoPilotState()
+        pre_restart_state.active_process = object()
+        pre_restart_state.monitor_task = object()
+        old_key = str(main_module._current_db_path)
+        monkeypatch.setattr(main_module, '_autopilot_states', {old_key: pre_restart_state})
+
+        # Simulate startup reset
+        main_module._autopilot_states.clear()
+
+        # Fresh state has no process references
+        new_state = main_module.get_autopilot_state()
+        assert new_state.active_process is None
+        assert new_state.monitor_task is None
+
+    def test_startup_reset_clears_state_dict(self, monkeypatch):
+        """startup_reset_autopilot() clears all in-memory autopilot states."""
+        import asyncio
+        import backend.main as main_module
+
+        pre_state = main_module._AutoPilotState()
+        pre_state.enabled = True
+        monkeypatch.setattr(main_module, '_autopilot_states', {'some_key': pre_state})
+        monkeypatch.setattr(main_module, '_reset_autopilot_in_config', lambda: None)
+
+        asyncio.run(main_module.startup_reset_autopilot())
+
+        # State dict should have exactly one entry (the newly created state)
+        # with enabled=False
+        assert len(main_module._autopilot_states) == 1
+        new_state = list(main_module._autopilot_states.values())[0]
+        assert new_state.enabled is False
+
+    def test_startup_log_contains_reset_message(self, monkeypatch):
+        """startup_reset_autopilot() appends 'Auto-pilot reset on backend restart' to the log."""
+        import asyncio
+        import backend.main as main_module
+
+        monkeypatch.setattr(main_module, '_autopilot_states', {})
+        monkeypatch.setattr(main_module, '_reset_autopilot_in_config', lambda: None)
+
+        asyncio.run(main_module.startup_reset_autopilot())
+
+        state = main_module.get_autopilot_state()
+        log_messages = [entry.message for entry in state.log]
+        assert 'Auto-pilot reset on backend restart' in log_messages
+
+    def test_startup_log_visible_via_status_endpoint(self, client, monkeypatch):
+        """GET /api/autopilot/status after startup shows reset log entry."""
+        import asyncio
+        import backend.main as main_module
+
+        monkeypatch.setattr(main_module, '_autopilot_states', {})
+        monkeypatch.setattr(main_module, '_reset_autopilot_in_config', lambda: None)
+
+        asyncio.run(main_module.startup_reset_autopilot())
+
+        response = client.get("/api/autopilot/status")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["enabled"] is False
+        log_messages = [entry["message"] for entry in data["log"]]
+        assert any("reset" in m.lower() for m in log_messages)
+
+    def test_reset_config_clears_autopilot_enabled_field(self, tmp_path, monkeypatch):
+        """_reset_autopilot_in_config() sets autopilot_enabled=False in dashboards.json."""
+        import json
+        import backend.main as main_module
+
+        config = [
+            {"name": "DB 1", "path": "a.db", "autopilot_enabled": True},
+            {"name": "DB 2", "path": "b.db"},
+        ]
+        config_file = tmp_path / "dashboards.json"
+        config_file.write_text(json.dumps(config))
+        monkeypatch.setattr(main_module, 'CONFIG_FILE', config_file)
+
+        main_module._reset_autopilot_in_config()
+
+        result = json.loads(config_file.read_text())
+        assert result[0]["autopilot_enabled"] is False
+
+    def test_reset_config_noop_when_no_autopilot_field(self, tmp_path, monkeypatch):
+        """_reset_autopilot_in_config() does not modify dashboards.json if no autopilot_enabled field."""
+        import json
+        import backend.main as main_module
+
+        original = [{"name": "DB 1", "path": "a.db"}]
+        config_file = tmp_path / "dashboards.json"
+        original_text = json.dumps(original)
+        config_file.write_text(original_text)
+        monkeypatch.setattr(main_module, 'CONFIG_FILE', config_file)
+
+        main_module._reset_autopilot_in_config()
+
+        # File content should be unchanged (no write occurred)
+        assert config_file.read_text() == original_text
+
+    def test_reset_config_noop_when_no_file(self, tmp_path, monkeypatch):
+        """_reset_autopilot_in_config() silently does nothing if dashboards.json doesn't exist."""
+        import backend.main as main_module
+
+        nonexistent = tmp_path / "nonexistent.json"
+        monkeypatch.setattr(main_module, 'CONFIG_FILE', nonexistent)
+
+        # Should not raise any exception
+        main_module._reset_autopilot_in_config()
+
+    def test_reset_config_resets_multiple_entries(self, tmp_path, monkeypatch):
+        """_reset_autopilot_in_config() resets all entries with autopilot_enabled=True."""
+        import json
+        import backend.main as main_module
+
+        config = [
+            {"name": "DB 1", "path": "a.db", "autopilot_enabled": True},
+            {"name": "DB 2", "path": "b.db", "autopilot_enabled": True},
+            {"name": "DB 3", "path": "c.db"},
+        ]
+        config_file = tmp_path / "dashboards.json"
+        config_file.write_text(json.dumps(config))
+        monkeypatch.setattr(main_module, 'CONFIG_FILE', config_file)
+
+        main_module._reset_autopilot_in_config()
+
+        result = json.loads(config_file.read_text())
+        assert result[0]["autopilot_enabled"] is False
+        assert result[1]["autopilot_enabled"] is False
+        assert "autopilot_enabled" not in result[2]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

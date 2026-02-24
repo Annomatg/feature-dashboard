@@ -401,6 +401,51 @@ async def startup_migrate_all():
     migrate_all_dashboards()
 
 
+def _reset_autopilot_in_config() -> None:
+    """Reset autopilot_enabled to False in dashboards.json if persisted.
+
+    Preventive measure: clears any persisted autopilot state so that a backend
+    restart does not unexpectedly resume auto-pilot without user action.
+    """
+    if not CONFIG_FILE.exists():
+        return
+    try:
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        modified = False
+        if isinstance(data, list):
+            for entry in data:
+                if isinstance(entry, dict) and entry.get('autopilot_enabled'):
+                    entry['autopilot_enabled'] = False
+                    modified = True
+        if modified:
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+    except Exception:
+        pass  # Never fail startup due to config file issues
+
+
+@app.on_event("startup")
+async def startup_reset_autopilot():
+    """Reset auto-pilot state on every backend startup.
+
+    Ensures no orphaned autopilot state from a previous session causes
+    unexpected behavior after a backend restart (e.g., DevServer reload).
+    In-memory state is implicitly empty on first import; this function makes
+    the intent explicit and also handles persisted config fields.
+    """
+    # Defensive clear: dict is already empty on fresh module load, but explicit
+    # is better than implicit — particularly when tests re-use the module.
+    _autopilot_states.clear()
+
+    # Reset any autopilot_enabled fields persisted in dashboards.json
+    _reset_autopilot_in_config()
+
+    # Log the reset for the current database's state
+    state = get_autopilot_state()
+    _append_log(state, 'info', 'Auto-pilot reset on backend restart')
+
+
 def get_session():
     """Get a database session."""
     return _session_maker()
