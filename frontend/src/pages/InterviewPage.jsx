@@ -42,6 +42,13 @@ function InterviewPage() {
   const [featuresCreated, setFeaturesCreated] = useState(0)
   const [sessionKey, setSessionKey] = useState(0) // increment to reconnect SSE
 
+  // Set page title on mount, restore on unmount
+  useEffect(() => {
+    const previous = document.title
+    document.title = 'Feature Interview | Feature Dashboard'
+    return () => { document.title = previous }
+  }, [])
+
   useEffect(() => {
     const src = new EventSource('/api/interview/question/stream')
 

@@ -209,6 +209,10 @@ test.describe('InterviewPage functional behaviour', () => {
     await expect(page.getByTestId('interview-page')).toBeVisible()
   })
 
+  test('sets page title to "Feature Interview | Feature Dashboard"', async ({ page }) => {
+    await expect(page).toHaveTitle('Feature Interview | Feature Dashboard')
+  })
+
   test('session-ended state is shown when SSE sends end event', async ({ page }) => {
     const page2 = await page.context().newPage()
     await page2.route('**/api/interview/question/stream', (route) => {
