@@ -1904,7 +1904,8 @@ async def interview_question_stream():
                 elif event["type"] == "answer_received":
                     yield "event: answer_received\ndata: {}\n\n"
                 elif event["type"] == "session_ended":
-                    yield "event: end\ndata: {}\n\n"
+                    features_created = event.get("features_created", 0)
+                    yield f"event: end\ndata: {json.dumps({'features_created': features_created})}\n\n"
                     break
         finally:
             session.unsubscribe(queue)
@@ -1987,7 +1988,7 @@ async def post_interview_answer(request: InterviewAnswerRequest):
 
 
 @app.delete("/api/interview/session", status_code=200)
-async def delete_interview_session():
+async def delete_interview_session(features_created: int = 0):
     """
     End the current interview session and notify all connected browsers.
 
@@ -1995,10 +1996,14 @@ async def delete_interview_session():
     a session_ended event to every SSE subscriber so the browser can close
     the interview UI.
 
+    Optional query parameter:
+        features_created (int, default 0): number of features created during
+        the session, forwarded to SSE subscribers in the end event payload.
+
     Idempotent: safe to call even when no session is active.
     """
     session = get_interview_session()
-    await session.reset()
+    await session.reset(features_created=features_created)
     return {"message": "Session ended"}
 
 

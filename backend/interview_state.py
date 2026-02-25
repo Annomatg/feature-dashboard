@@ -90,7 +90,7 @@ class InterviewSession:
     # Session lifecycle
     # ------------------------------------------------------------------
 
-    async def reset(self) -> None:
+    async def reset(self, features_created: int = 0) -> None:
         """Clear all session state and notify SSE subscribers that the session ended."""
         async with self._lock:
             self.active_question = None
@@ -98,7 +98,7 @@ class InterviewSession:
             self.started_at = None
             self._answer_ready.clear()
 
-        await self.broadcast({"type": "session_ended"})
+        await self.broadcast({"type": "session_ended", "features_created": features_created})
 
     # ------------------------------------------------------------------
     # SSE subscriber management (used by GET /api/interview/question/stream)

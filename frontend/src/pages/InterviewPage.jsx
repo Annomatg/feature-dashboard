@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import SurveyCard from '../components/SurveyCard'
 
 /**
@@ -34,9 +35,12 @@ function Spinner({ size = 8, colorClass = 'border-primary', testId }) {
  *   error        → unrecoverable error (bad data, POST failure)
  */
 function InterviewPage() {
+  const navigate = useNavigate()
   const [question, setQuestion] = useState(null) // { text, options }
   const [status, setStatus] = useState('waiting')
   const [errorMsg, setErrorMsg] = useState('')
+  const [featuresCreated, setFeaturesCreated] = useState(0)
+  const [sessionKey, setSessionKey] = useState(0) // increment to reconnect SSE
 
   useEffect(() => {
     const src = new EventSource('/api/interview/question/stream')
@@ -57,7 +61,13 @@ function InterviewPage() {
       }
     })
 
-    src.addEventListener('end', () => {
+    src.addEventListener('end', (e) => {
+      try {
+        const data = JSON.parse(e.data || '{}')
+        setFeaturesCreated(data.features_created ?? 0)
+      } catch {
+        setFeaturesCreated(0)
+      }
       setStatus('ended')
       src.close()
     })
@@ -76,7 +86,7 @@ function InterviewPage() {
     }
 
     return () => src.close()
-  }, [])
+  }, [sessionKey])
 
   const handleAnswer = async (answer) => {
     setStatus('answered')
@@ -168,9 +178,33 @@ function InterviewPage() {
                 <h2 className="text-xl font-bold text-text-primary mb-2">
                   Interview complete
                 </h2>
-                <p className="text-text-secondary text-base">
-                  Your answers have been recorded. You can close this tab.
+                <p
+                  className="text-text-secondary text-base"
+                  data-testid="interview-features-count"
+                >
+                  {featuresCreated} feature{featuresCreated !== 1 ? 's' : ''} created
                 </p>
+              </div>
+              <div className="flex flex-col gap-3 w-full max-w-xs">
+                <button
+                  onClick={() => navigate('/')}
+                  className="px-6 py-3 rounded-lg bg-primary text-white text-sm font-mono font-semibold hover:opacity-80 transition-opacity"
+                  data-testid="interview-view-board-btn"
+                >
+                  View Board
+                </button>
+                <button
+                  onClick={() => {
+                    setStatus('waiting')
+                    setQuestion(null)
+                    setFeaturesCreated(0)
+                    setSessionKey((k) => k + 1)
+                  }}
+                  className="px-6 py-3 rounded-lg border border-border text-text-secondary text-sm font-mono font-semibold hover:border-text-secondary hover:text-text-primary transition-colors"
+                  data-testid="interview-new-session-btn"
+                >
+                  Start New Interview
+                </button>
               </div>
             </div>
           )}

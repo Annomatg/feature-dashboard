@@ -234,7 +234,15 @@ class TestReset:
 
         assert not q.empty()
         event = q.get_nowait()
-        assert event == {"type": "session_ended"}
+        assert event == {"type": "session_ended", "features_created": 0}
+
+    def test_broadcasts_session_ended_event_with_features_created(self, session):
+        q = session.subscribe()
+        run(session.reset(features_created=5))
+
+        assert not q.empty()
+        event = q.get_nowait()
+        assert event == {"type": "session_ended", "features_created": 5}
 
     def test_idempotent_when_no_active_session(self, session):
         run(session.reset())  # nothing set — should not raise

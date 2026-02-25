@@ -843,3 +843,38 @@ class TestDeleteInterviewSession:
 
         assert len(received) == 1
         assert received[0][0] == "end"
+
+    def test_delete_with_features_created_includes_count_in_sse_end_event(self, live_server):
+        """
+        DELETE /api/interview/session?features_created=3 forwards the count
+        in the SSE end event payload so the browser can display it.
+        """
+        base_url, _ = live_server
+        received: list[tuple[str, dict]] = []
+        ready = threading.Event()
+        done = threading.Event()
+
+        def read_stream():
+            with httpx.Client(timeout=10.0) as c:
+                with c.stream("GET", f"{base_url}/api/interview/question/stream") as resp:
+                    ready.set()
+                    events = _read_sse_events(resp, stop_after=1)
+                    received.extend(events)
+            done.set()
+
+        t = threading.Thread(target=read_stream, daemon=True)
+        t.start()
+
+        assert ready.wait(timeout=5.0), "SSE stream did not connect"
+        time.sleep(0.1)
+
+        with httpx.Client() as c:
+            c.delete(f"{base_url}/api/interview/session?features_created=3")
+
+        assert done.wait(timeout=5.0), "SSE stream did not receive end event"
+        t.join(timeout=2.0)
+
+        assert len(received) == 1
+        event_type, data = received[0]
+        assert event_type == "end"
+        assert data.get("features_created") == 3
