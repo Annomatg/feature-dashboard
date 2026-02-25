@@ -503,3 +503,128 @@ class TestGetInterviewQuestionStream:
             assert events[0][0] == "heartbeat"
         finally:
             main_module._SSE_HEARTBEAT_SECONDS = 15.0
+
+
+# ---------------------------------------------------------------------------
+# POST /api/interview/answer tests
+# ---------------------------------------------------------------------------
+
+class TestPostInterviewAnswer:
+    """Tests for POST /api/interview/answer"""
+
+    def test_post_answer_returns_200_with_status_and_value(self, client):
+        """A valid answer is accepted and echoed back."""
+        session = state_module.get_interview_session()
+        session.active_question = {"text": "Pick one", "options": ["A", "B"]}
+
+        response = client.post("/api/interview/answer", json={"value": "A"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "received"
+        assert data["value"] == "A"
+
+    def test_post_answer_stores_in_session(self, client):
+        """The submitted answer is stored as pending_answer in the session."""
+        session = state_module.get_interview_session()
+        session.active_question = {"text": "Pick one", "options": ["A", "B"]}
+
+        client.post("/api/interview/answer", json={"value": "B"})
+
+        assert session.pending_answer == "B"
+
+    def test_post_answer_sets_answer_ready_event(self, client):
+        """Submitting an answer signals the answer_ready event."""
+        session = state_module.get_interview_session()
+        session.active_question = {"text": "Pick one", "options": ["Yes", "No"]}
+
+        client.post("/api/interview/answer", json={"value": "Yes"})
+
+        assert session._answer_ready.is_set()
+
+    def test_post_answer_returns_400_when_no_active_question(self, client):
+        """Returns 400 when no question is currently active."""
+        response = client.post("/api/interview/answer", json={"value": "A"})
+
+        assert response.status_code == 400
+        assert "active question" in response.json()["detail"].lower()
+
+    def test_post_answer_returns_400_when_answer_already_pending(self, client):
+        """Returns 400 when an answer is already pending and not yet consumed."""
+        session = state_module.get_interview_session()
+        session.active_question = {"text": "Pick one", "options": ["A", "B"]}
+        session.pending_answer = "A"
+
+        response = client.post("/api/interview/answer", json={"value": "B"})
+
+        assert response.status_code == 400
+        assert "already been submitted" in response.json()["detail"].lower()
+
+    def test_post_answer_400_does_not_overwrite_existing_answer(self, client):
+        """When 400 is returned for a duplicate answer, the original is preserved."""
+        session = state_module.get_interview_session()
+        session.active_question = {"text": "Pick one", "options": ["A", "B"]}
+        session.pending_answer = "A"
+
+        client.post("/api/interview/answer", json={"value": "B"})
+
+        assert session.pending_answer == "A"
+
+    def test_post_answer_rejects_empty_value(self, client):
+        """Empty or whitespace-only answer value is rejected with 422."""
+        session = state_module.get_interview_session()
+        session.active_question = {"text": "Pick one", "options": ["A", "B"]}
+
+        response = client.post("/api/interview/answer", json={"value": "   "})
+
+        assert response.status_code == 422
+
+    def test_post_answer_rejects_missing_value(self, client):
+        """Missing value field is rejected with 422."""
+        response = client.post("/api/interview/answer", json={})
+
+        assert response.status_code == 422
+
+    def test_post_answer_broadcasts_answer_received_to_sse(self, live_server):
+        """
+        Submitting an answer broadcasts an 'answer_received' event to SSE
+        subscribers so the browser can transition to a waiting state.
+        """
+        import backend.main as main_module
+        base_url, _ = live_server
+        main_module._SSE_HEARTBEAT_SECONDS = 15.0
+
+        # Set up an active question via the API
+        with httpx.Client() as setup_client:
+            setup_client.post(f"{base_url}/api/interview/question", json={
+                "text": "Pick one",
+                "options": ["Alpha", "Beta"],
+            })
+
+        received: list[tuple[str, dict]] = []
+        ready = threading.Event()
+        done = threading.Event()
+
+        def read_stream():
+            with httpx.Client(timeout=10.0) as client:
+                with client.stream("GET", f"{base_url}/api/interview/question/stream") as resp:
+                    ready.set()
+                    # First event is the existing question; second is answer_received
+                    events = _read_sse_events(resp, stop_after=2)
+                    received.extend(events)
+            done.set()
+
+        t = threading.Thread(target=read_stream, daemon=True)
+        t.start()
+
+        assert ready.wait(timeout=5.0), "SSE stream did not connect"
+        time.sleep(0.1)  # give the generator a moment to emit the initial question
+
+        with httpx.Client() as client:
+            client.post(f"{base_url}/api/interview/answer", json={"value": "Alpha"})
+
+        assert done.wait(timeout=5.0), "SSE stream did not receive answer_received event"
+        t.join(timeout=2.0)
+
+        event_types = [e[0] for e in received]
+        assert "answer_received" in event_types

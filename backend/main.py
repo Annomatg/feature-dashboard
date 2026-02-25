@@ -1826,10 +1826,11 @@ async def interview_question_stream():
                         f"event: question\n"
                         f"data: {json.dumps({'text': event['text'], 'options': event['options']})}\n\n"
                     )
+                elif event["type"] == "answer_received":
+                    yield "event: answer_received\ndata: {}\n\n"
                 elif event["type"] == "session_ended":
                     yield "event: end\ndata: {}\n\n"
                     break
-                # Other event types (e.g. answer_received) are not forwarded
         finally:
             session.unsubscribe(queue)
 
@@ -1841,6 +1842,44 @@ async def interview_question_stream():
             "X-Accel-Buffering": "no",
         },
     )
+
+
+class InterviewAnswerRequest(BaseModel):
+    value: str
+
+
+@app.post("/api/interview/answer", status_code=200)
+async def post_interview_answer(request: InterviewAnswerRequest):
+    """
+    Submit the user's answer to the current interview question.
+
+    Called by the browser when the user selects an answer option.
+    Stores the answer in session state and broadcasts an answer_received event
+    to all SSE subscribers so the browser can show a waiting state.
+
+    Returns 400 if there is no active question pending an answer, or if an
+    answer has already been submitted and not yet consumed by Claude.
+    """
+    if not request.value.strip():
+        raise HTTPException(status_code=422, detail="Answer value must not be empty")
+
+    session = get_interview_session()
+
+    if session.active_question is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No active question is pending an answer.",
+        )
+
+    if session.has_unconsumed_answer():
+        raise HTTPException(
+            status_code=400,
+            detail="An answer has already been submitted and not yet consumed.",
+        )
+
+    await session.submit_answer(request.value)
+
+    return {"status": "received", "value": request.value}
 
 
 if __name__ == "__main__":
