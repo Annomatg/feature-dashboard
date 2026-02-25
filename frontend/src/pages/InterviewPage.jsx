@@ -2,6 +2,19 @@ import { useState, useEffect } from 'react'
 import SurveyCard from '../components/SurveyCard'
 
 /**
+ * Spinner — matches the border-based animate-spin used in KanbanBoard and SettingsPanel.
+ */
+function Spinner({ size = 8, colorClass = 'border-primary', testId }) {
+  return (
+    <div
+      className={`w-${size} h-${size} border-4 ${colorClass} border-t-transparent rounded-full animate-spin`}
+      data-testid={testId}
+      aria-label="Loading"
+    />
+  )
+}
+
+/**
  * InterviewPage — /interview
  *
  * Connects to the backend SSE stream and renders questions as SurveyCards.
@@ -11,15 +24,27 @@ import SurveyCard from '../components/SurveyCard'
  *   question  — { text, options[] } — render SurveyCard
  *   end       — session terminated
  *   heartbeat — ignored (keep-alive)
+ *
+ * Status machine:
+ *   waiting      → SSE connected, no question yet
+ *   active       → question received, waiting for user answer
+ *   answered     → answer submitted, waiting for server ACK + next question
+ *   reconnecting → SSE connection dropped, auto-reconnecting
+ *   ended        → session terminated by server
+ *   error        → unrecoverable error (bad data, POST failure)
  */
 function InterviewPage() {
   const [question, setQuestion] = useState(null) // { text, options }
-  // 'waiting' | 'active' | 'answered' | 'ended' | 'error'
   const [status, setStatus] = useState('waiting')
   const [errorMsg, setErrorMsg] = useState('')
 
   useEffect(() => {
     const src = new EventSource('/api/interview/question/stream')
+
+    src.onopen = () => {
+      // On (re)open: if we were reconnecting, return to waiting state
+      setStatus((prev) => (prev === 'reconnecting' ? 'waiting' : prev))
+    }
 
     src.addEventListener('question', (e) => {
       try {
@@ -37,19 +62,16 @@ function InterviewPage() {
       src.close()
     })
 
-    src.addEventListener('heartbeat', () => {
-      // keep-alive — no action needed
-    })
+    // heartbeat — keep-alive, no action needed
+    src.addEventListener('heartbeat', () => {})
 
     src.onerror = () => {
-      // EventSource reconnects automatically; only surface an error if we never
-      // received a question yet, so the user isn't left staring at a blank page.
+      // EventSource reconnects automatically — show transient "Reconnecting…" state.
+      // Do not interrupt an active question (user still needs to answer it), and
+      // do not overwrite terminal states (ended / error).
       setStatus((prev) => {
-        if (prev === 'waiting') {
-          setErrorMsg('Connection to server lost. Please refresh the page.')
-          return 'error'
-        }
-        return prev
+        if (prev === 'active' || prev === 'ended' || prev === 'error') return prev
+        return 'reconnecting'
       })
     }
 
@@ -64,7 +86,7 @@ function InterviewPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ value: answer }),
       })
-      // Wait for the next question via SSE; reset to waiting state
+      // Answer ACKed — wait for the next question via SSE
       setQuestion(null)
       setStatus('waiting')
     } catch {
@@ -82,22 +104,13 @@ function InterviewPage() {
       <div className="flex-1 flex flex-col items-center justify-center px-4 py-8 w-full">
         <div className="w-full max-w-2xl" data-testid="interview-content">
 
-          {/* Waiting for next question */}
+          {/* Waiting for first / next question */}
           {status === 'waiting' && (
             <div
               className="flex flex-col items-center gap-4 text-center"
               data-testid="interview-waiting"
             >
-              {/* Pulsing indicator */}
-              <div className="flex gap-1.5">
-                {[0, 1, 2].map((i) => (
-                  <span
-                    key={i}
-                    className="w-2 h-2 rounded-full bg-primary animate-pulse"
-                    style={{ animationDelay: `${i * 150}ms` }}
-                  />
-                ))}
-              </div>
+              <Spinner testId="interview-spinner" />
               <p className="text-text-secondary text-base">
                 Waiting for next question…
               </p>
@@ -113,23 +126,28 @@ function InterviewPage() {
             />
           )}
 
-          {/* Submitting answer */}
+          {/* Answer submitted — waiting for server ACK + next question */}
           {status === 'answered' && (
             <div
               className="flex flex-col items-center gap-4 text-center"
               data-testid="interview-answered"
             >
-              <div className="flex gap-1.5">
-                {[0, 1, 2].map((i) => (
-                  <span
-                    key={i}
-                    className="w-2 h-2 rounded-full bg-success animate-pulse"
-                    style={{ animationDelay: `${i * 150}ms` }}
-                  />
-                ))}
-              </div>
+              <Spinner testId="interview-spinner" />
               <p className="text-text-secondary text-base">
-                Answer received — waiting for next question…
+                Waiting for next question…
+              </p>
+            </div>
+          )}
+
+          {/* SSE dropped — auto-reconnecting */}
+          {status === 'reconnecting' && (
+            <div
+              className="flex flex-col items-center gap-4 text-center"
+              data-testid="interview-reconnecting"
+            >
+              <Spinner colorClass="border-warning" testId="interview-spinner" />
+              <p className="text-warning text-base font-medium">
+                Reconnecting…
               </p>
             </div>
           )}
@@ -157,7 +175,7 @@ function InterviewPage() {
             </div>
           )}
 
-          {/* Error state */}
+          {/* Unrecoverable error */}
           {status === 'error' && (
             <div
               className="flex flex-col items-center gap-4 text-center"
