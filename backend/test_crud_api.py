@@ -1281,6 +1281,60 @@ class TestPlanTasks:
 
         assert response.status_code == 422
 
+    def test_working_directory_uses_active_db_parent(self, client, monkeypatch):
+        """Regression test: plan-tasks must launch in the active database's parent directory.
+
+        Bug: working_dir was hardcoded to PROJECT_DIR, so selecting a different
+        database (e.g. code-similarity-mcp) still launched Claude in the
+        feature-dashboard directory.  Fix: use _current_db_path.parent.
+        """
+        import backend.main as main_module
+
+        # Simulate switching to a different project's database
+        other_dir = tempfile.mkdtemp()
+        other_db_path = Path(other_dir) / "features.db"
+        monkeypatch.setattr(main_module, "_current_db_path", other_db_path)
+
+        popen_calls = []
+
+        def mock_popen(*args, **kwargs):
+            popen_calls.append(kwargs)
+            return type("P", (), {"pid": 1, "wait": lambda self: 0})()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        response = client.post("/api/plan-tasks", json={"description": "Add search"})
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # The response working_directory should be the other project's dir
+        assert data["working_directory"] == other_dir
+
+        # The subprocess cwd must also match the other project's directory
+        assert len(popen_calls) == 1
+        assert popen_calls[0]["cwd"] == other_dir
+
+        # Cleanup temp dir created in this test
+        try:
+            shutil.rmtree(other_dir)
+        except PermissionError:
+            pass
+
+    def test_working_directory_uses_default_db_parent_without_switch(self, client, monkeypatch):
+        """Plan-tasks uses the current active database's parent (not a hardcoded PROJECT_DIR)."""
+        import backend.main as main_module
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
+
+        response = client.post("/api/plan-tasks", json={"description": "Add dark mode"})
+
+        assert response.status_code == 200
+        data = response.json()
+
+        expected_dir = str(main_module._current_db_path.parent)
+        assert data["working_directory"] == expected_dir
+
 
 class TestSpawnClaudeForAutopilot:
     """Unit tests for spawn_claude_for_autopilot(feature, settings, working_dir)."""

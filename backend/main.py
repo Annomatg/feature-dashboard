@@ -1522,7 +1522,7 @@ async def plan_tasks(request: PlanTasksRequest):
         raise HTTPException(status_code=400, detail="Description cannot be empty")
 
     prompt = PLAN_TASKS_PROMPT_TEMPLATE.format(description=request.description.strip())
-    working_dir = str(PROJECT_DIR)
+    working_dir = str(_current_db_path.parent)
 
     try:
         if sys.platform == "win32":
