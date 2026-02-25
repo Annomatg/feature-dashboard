@@ -18,6 +18,7 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 # Add parent directory to path for imports
@@ -1782,6 +1783,64 @@ async def post_interview_question(request: InterviewQuestionRequest):
         "text": session.active_question["text"],
         "options": session.active_question["options"],
     }
+
+
+# Heartbeat interval for the SSE stream (seconds).
+# Override in tests to avoid 15-second waits.
+_SSE_HEARTBEAT_SECONDS: float = 15.0
+
+
+@app.get("/api/interview/question/stream")
+async def interview_question_stream():
+    """
+    SSE endpoint for receiving interview questions in real time.
+
+    Browser subscribes to this endpoint for the duration of an interview.
+    Events pushed:
+      - question:   when Claude posts a new question via POST /api/interview/question
+      - heartbeat:  every 15 s to keep the connection alive through proxies
+      - end:        when the session is terminated via DELETE /api/interview/session
+    """
+    session = get_interview_session()
+    queue = session.subscribe()
+
+    async def event_generator():
+        try:
+            # Send the currently active question immediately if one exists
+            if session.active_question:
+                q = session.active_question
+                yield (
+                    f"event: question\n"
+                    f"data: {json.dumps({'text': q['text'], 'options': q['options']})}\n\n"
+                )
+
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=_SSE_HEARTBEAT_SECONDS)
+                except asyncio.TimeoutError:
+                    yield "event: heartbeat\ndata: {}\n\n"
+                    continue
+
+                if event["type"] == "question":
+                    yield (
+                        f"event: question\n"
+                        f"data: {json.dumps({'text': event['text'], 'options': event['options']})}\n\n"
+                    )
+                elif event["type"] == "session_ended":
+                    yield "event: end\ndata: {}\n\n"
+                    break
+                # Other event types (e.g. answer_received) are not forwarded
+        finally:
+            session.unsubscribe(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 if __name__ == "__main__":

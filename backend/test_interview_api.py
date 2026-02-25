@@ -4,16 +4,29 @@ Integration tests for Interview API endpoints.
 
 Tests the /api/interview/* endpoints:
   - POST /api/interview/question
+  - GET  /api/interview/question/stream  (SSE)
 
-Uses FastAPI TestClient for isolated, synchronous HTTP testing.
+POST tests use FastAPI TestClient (sync, no network).
+
+SSE tests use a *real* uvicorn server started in a background thread.
+httpx.ASGITransport buffers the full response before returning, so it
+cannot test an infinite streaming endpoint. A real HTTP server and real
+TCP connections are the only reliable way to test SSE + disconnect.
+
 Interview state is reset between tests via the module-level singleton.
 """
 
 import asyncio
+import json
+import socket
 import sys
+import threading
+import time
 from pathlib import Path
 
+import httpx
 import pytest
+import uvicorn
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -216,3 +229,277 @@ class TestPostInterviewQuestion:
         })
 
         assert response.json()["options"] == options
+
+
+# ---------------------------------------------------------------------------
+# Live uvicorn server fixture (SSE tests need real TCP, not mocked transport)
+# ---------------------------------------------------------------------------
+#
+# httpx.ASGITransport buffers the entire response body before returning, so
+# it deadlocks on an infinite SSE stream.  The only reliable approach is a
+# real uvicorn server running in a background thread so that genuine TCP
+# connections can be opened, read, and closed.
+#
+# State isolation: the server runs in the same process as the tests and
+# shares the _interview_session singleton.  Python 3.10+ asyncio objects
+# (Event, Queue) use get_running_loop() lazily, so they can be created
+# in the main test thread and safely used from uvicorn's event loop.
+
+@pytest.fixture(scope="module")
+def live_server():
+    """
+    Start a real uvicorn server in a background thread.
+
+    Yields (base_url, server_loop) so tests can schedule coroutines on the
+    server's event loop via asyncio.run_coroutine_threadsafe().
+    """
+    # Pick a free ephemeral port
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+
+    config = uvicorn.Config(
+        app,
+        host="127.0.0.1",
+        port=port,
+        log_level="critical",
+    )
+    server = uvicorn.Server(config)
+
+    loop_holder: list[asyncio.AbstractEventLoop] = []
+
+    def run_server():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop_holder.append(loop)       # expose loop to the test thread
+        loop.run_until_complete(server.serve())
+
+    thread = threading.Thread(target=run_server, daemon=True)
+    thread.start()
+
+    # Wait for the loop to be created
+    deadline = time.monotonic() + 5.0
+    while not loop_holder and time.monotonic() < deadline:
+        time.sleep(0.01)
+    if not loop_holder:
+        raise RuntimeError("Server event loop did not start")
+    server_loop = loop_holder[0]
+
+    base_url = f"http://127.0.0.1:{port}"
+
+    # Wait until the server is accepting connections
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        try:
+            with httpx.Client(timeout=0.5) as probe:
+                probe.get(f"{base_url}/api/features")
+            break
+        except Exception:
+            time.sleep(0.05)
+    else:
+        raise RuntimeError("Live test server did not start within 10 s")
+
+    yield base_url, server_loop
+
+    server.should_exit = True
+    thread.join(timeout=5)
+
+
+# ---------------------------------------------------------------------------
+# SSE helpers
+# ---------------------------------------------------------------------------
+
+def _read_sse_events(
+    response: httpx.Response,
+    *,
+    stop_after: int = 1,
+) -> list[tuple[str, dict]]:
+    """
+    Read lines from an open SSE streaming response until `stop_after` events
+    have been collected, then return them as (event_type, data_dict) tuples.
+    """
+    events: list[tuple[str, dict]] = []
+    current_event_type: str | None = None
+    for line in response.iter_lines():
+        if line.startswith("event:"):
+            current_event_type = line[len("event:"):].strip()
+        elif line.startswith("data:") and current_event_type is not None:
+            events.append((current_event_type, json.loads(line[len("data:"):].strip())))
+            current_event_type = None
+            if len(events) >= stop_after:
+                break
+    return events
+
+
+# ---------------------------------------------------------------------------
+# SSE endpoint tests
+# ---------------------------------------------------------------------------
+
+class TestGetInterviewQuestionStream:
+    """Tests for GET /api/interview/question/stream (uses live uvicorn server)."""
+
+    def test_stream_returns_200_with_event_stream_content_type(self, live_server):
+        """The SSE endpoint returns 200 with text/event-stream Content-Type."""
+        base_url, _ = live_server
+        with httpx.Client() as client:
+            with client.stream("GET", f"{base_url}/api/interview/question/stream") as response:
+                assert response.status_code == 200
+                assert "text/event-stream" in response.headers["content-type"]
+                # Exiting closes the TCP connection; server detects disconnect
+
+    def test_stream_sends_existing_question_immediately_on_connect(self, live_server):
+        """
+        When a question is already active, it is sent to the browser immediately
+        upon connection — without waiting for the next POST.
+        """
+        base_url, _ = live_server
+        with httpx.Client() as client:
+            client.post(f"{base_url}/api/interview/question", json={
+                "text": "Pre-existing question",
+                "options": ["Option A", "Option B"],
+            })
+
+            with client.stream("GET", f"{base_url}/api/interview/question/stream") as response:
+                events = _read_sse_events(response, stop_after=1)
+
+        assert len(events) == 1
+        event_type, data = events[0]
+        assert event_type == "question"
+        assert data["text"] == "Pre-existing question"
+        assert data["options"] == ["Option A", "Option B"]
+
+    def test_stream_no_immediate_event_when_no_active_question(self):
+        """
+        The subscriber queue is empty at subscription time when no question is
+        active — the stream does not emit a spurious initial event.
+        """
+        session = state_module.get_interview_session()
+        assert session.active_question is None
+
+        q = session.subscribe()
+        assert q.empty()
+        session.unsubscribe(q)
+
+    def test_stream_broadcasts_new_question_to_subscriber(self, live_server):
+        """
+        A question posted after the browser subscribes is broadcast and received
+        by the SSE stream within a few seconds.
+        """
+        base_url, _ = live_server
+        received: list[tuple[str, dict]] = []
+        ready = threading.Event()
+        done = threading.Event()
+
+        def read_stream():
+            with httpx.Client(timeout=10.0) as client:
+                with client.stream("GET", f"{base_url}/api/interview/question/stream") as resp:
+                    ready.set()  # headers received → subscriber registered server-side
+                    events = _read_sse_events(resp, stop_after=1)
+                    received.extend(events)
+            done.set()
+
+        t = threading.Thread(target=read_stream, daemon=True)
+        t.start()
+
+        assert ready.wait(timeout=5.0), "SSE stream did not connect in time"
+
+        with httpx.Client() as client:
+            client.post(f"{base_url}/api/interview/question", json={
+                "text": "Live broadcast question",
+                "options": ["X", "Y", "Z"],
+            })
+
+        assert done.wait(timeout=5.0), "SSE stream did not receive event in time"
+        t.join(timeout=2.0)
+
+        assert len(received) == 1
+        event_type, data = received[0]
+        assert event_type == "question"
+        assert data["text"] == "Live broadcast question"
+        assert data["options"] == ["X", "Y", "Z"]
+
+    def test_stream_sends_end_event_on_session_reset(self, live_server):
+        """
+        Resetting the interview session broadcasts an 'end' event to all
+        active SSE subscribers.
+        """
+        base_url, server_loop = live_server
+        received: list[tuple[str, dict]] = []
+        ready = threading.Event()
+        done = threading.Event()
+
+        def read_stream():
+            with httpx.Client(timeout=10.0) as client:
+                with client.stream("GET", f"{base_url}/api/interview/question/stream") as resp:
+                    ready.set()
+                    events = _read_sse_events(resp, stop_after=1)
+                    received.extend(events)
+            done.set()
+
+        t = threading.Thread(target=read_stream, daemon=True)
+        t.start()
+
+        assert ready.wait(timeout=5.0)
+
+        # Schedule reset() on the server's own event loop so that the
+        # asyncio.Queue.put() inside broadcast() runs in the correct loop.
+        future = asyncio.run_coroutine_threadsafe(
+            state_module.get_interview_session().reset(),
+            server_loop,
+        )
+        future.result(timeout=2.0)
+
+        assert done.wait(timeout=5.0), "SSE stream did not receive 'end' event"
+        t.join(timeout=2.0)
+
+        assert len(received) == 1
+        assert received[0][0] == "end"
+
+    def test_stream_unsubscribes_on_disconnect(self, live_server):
+        """
+        The subscriber queue is removed from the session when the TCP connection
+        closes, preventing memory leaks.
+        """
+        import backend.main as main_module
+        base_url, _ = live_server
+        main_module._SSE_HEARTBEAT_SECONDS = 0.05  # fire heartbeat quickly
+
+        try:
+            session = state_module.get_interview_session()
+            initial_count = len(session._subscribers)
+
+            with httpx.Client() as client:
+                with client.stream("GET", f"{base_url}/api/interview/question/stream") as resp:
+                    # Read one heartbeat so the generator has actually started
+                    _read_sse_events(resp, stop_after=1)
+                # TCP connection closes here
+
+            # Give the server a moment to detect disconnect and run the finally block
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                if len(session._subscribers) == initial_count:
+                    break
+                time.sleep(0.05)
+
+            assert len(session._subscribers) == initial_count
+        finally:
+            main_module._SSE_HEARTBEAT_SECONDS = 15.0
+
+    def test_stream_heartbeat_sent_when_queue_idle(self, live_server):
+        """
+        A heartbeat event is emitted when no events arrive within the timeout,
+        keeping long-lived connections alive through proxies.
+        """
+        import backend.main as main_module
+        base_url, _ = live_server
+        main_module._SSE_HEARTBEAT_SECONDS = 0.05  # very short for testing
+
+        try:
+            with httpx.Client(timeout=5.0) as client:
+                with client.stream("GET", f"{base_url}/api/interview/question/stream") as resp:
+                    events = _read_sse_events(resp, stop_after=1)
+
+            assert len(events) == 1
+            assert events[0][0] == "heartbeat"
+        finally:
+            main_module._SSE_HEARTBEAT_SECONDS = 15.0
