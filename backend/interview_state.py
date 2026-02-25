@@ -8,6 +8,7 @@ interviews are short, real-time sessions, not long-lived persisted data.
 """
 
 import asyncio
+from datetime import datetime
 from typing import Optional
 
 
@@ -24,8 +25,9 @@ class InterviewSession:
     """
 
     def __init__(self) -> None:
-        self.active_question: Optional[dict] = None  # {text, options}
-        self.pending_answer: Optional[str] = None    # set by browser, consumed by Claude
+        self.active_question: Optional[dict] = None   # {text, options}
+        self.pending_answer: Optional[str] = None     # set by browser, consumed by Claude
+        self.started_at: Optional[datetime] = None    # set on first question, cleared on reset
         self._answer_ready: asyncio.Event = asyncio.Event()
         self._lock: asyncio.Lock = asyncio.Lock()
         self._subscribers: list[asyncio.Queue] = []
@@ -42,6 +44,8 @@ class InterviewSession:
         raise 409 if True — this method does NOT enforce that guard itself.
         """
         async with self._lock:
+            if self.started_at is None:
+                self.started_at = datetime.utcnow()
             self.active_question = {"text": text, "options": options}
             self.pending_answer = None
             self._answer_ready.clear()
@@ -91,6 +95,7 @@ class InterviewSession:
         async with self._lock:
             self.active_question = None
             self.pending_answer = None
+            self.started_at = None
             self._answer_ready.clear()
 
         await self.broadcast({"type": "session_ended"})
