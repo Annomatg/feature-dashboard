@@ -49,22 +49,27 @@ function InterviewPage() {
     return () => { document.title = previous }
   }, [])
 
+  // Start a 3 s idle timer whenever we enter 'waiting' state.
+  // This covers both the initial load and post-reconnect transitions so the
+  // user always sees the idle instructions if no question arrives quickly.
   useEffect(() => {
-    const src = new EventSource('/api/interview/question/stream')
-
-    // After 3 s with no question, transition waiting → idle so the user
-    // sees instructions instead of a plain spinner.
+    if (status !== 'waiting') return
     const idleTimer = setTimeout(() => {
       setStatus((prev) => (prev === 'waiting' ? 'idle' : prev))
     }, 3000)
+    return () => clearTimeout(idleTimer)
+  }, [status])
+
+  useEffect(() => {
+    const src = new EventSource('/api/interview/question/stream')
 
     src.onopen = () => {
-      // On (re)open: if we were reconnecting, return to waiting state
+      // On (re)open: if we were reconnecting, return to waiting state.
+      // The idle timer effect above will then start a fresh 3 s countdown.
       setStatus((prev) => (prev === 'reconnecting' ? 'waiting' : prev))
     }
 
     src.addEventListener('question', (e) => {
-      clearTimeout(idleTimer)
       try {
         const data = JSON.parse(e.data)
         setQuestion({ text: data.text, options: data.options })
@@ -76,7 +81,6 @@ function InterviewPage() {
     })
 
     src.addEventListener('session-timeout', () => {
-      clearTimeout(idleTimer)
       setStatus('timedout')
       src.close()
     })
@@ -106,7 +110,6 @@ function InterviewPage() {
     }
 
     return () => {
-      clearTimeout(idleTimer)
       src.close()
     }
   }, [sessionKey])
