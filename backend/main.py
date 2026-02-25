@@ -1911,6 +1911,22 @@ async def post_interview_answer(request: InterviewAnswerRequest):
     return {"status": "received", "value": request.value}
 
 
+@app.delete("/api/interview/session", status_code=200)
+async def delete_interview_session():
+    """
+    End the current interview session and notify all connected browsers.
+
+    Clears all session state (active question, pending answer) and broadcasts
+    a session_ended event to every SSE subscriber so the browser can close
+    the interview UI.
+
+    Idempotent: safe to call even when no session is active.
+    """
+    session = get_interview_session()
+    await session.reset()
+    return {"message": "Session ended"}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

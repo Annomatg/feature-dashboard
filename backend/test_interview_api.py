@@ -753,3 +753,93 @@ class TestGetInterviewAnswer:
             assert resp.status_code == 408
         finally:
             main_module._ANSWER_POLL_TIMEOUT_SECONDS = 300.0
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/interview/session tests
+# ---------------------------------------------------------------------------
+
+class TestDeleteInterviewSession:
+    """Tests for DELETE /api/interview/session."""
+
+    def test_delete_returns_200_with_message(self, client):
+        """DELETE returns 200 with { message: 'Session ended' }."""
+        response = client.delete("/api/interview/session")
+
+        assert response.status_code == 200
+        assert response.json() == {"message": "Session ended"}
+
+    def test_delete_clears_active_question(self, client):
+        """Active question is cleared after DELETE."""
+        session = state_module.get_interview_session()
+        session.active_question = {"text": "Q?", "options": ["A", "B"]}
+
+        client.delete("/api/interview/session")
+
+        assert session.active_question is None
+
+    def test_delete_clears_pending_answer(self, client):
+        """Pending answer is cleared after DELETE."""
+        session = state_module.get_interview_session()
+        session.active_question = {"text": "Q?", "options": ["A"]}
+        session.pending_answer = "A"
+
+        client.delete("/api/interview/session")
+
+        assert session.pending_answer is None
+
+    def test_delete_clears_answer_ready_event(self, client):
+        """The answer-ready event is cleared after DELETE."""
+        session = state_module.get_interview_session()
+        session._answer_ready.set()
+
+        client.delete("/api/interview/session")
+
+        assert not session._answer_ready.is_set()
+
+    def test_delete_is_idempotent_when_no_active_session(self, client):
+        """DELETE returns 200 even when no session is active."""
+        # Default state: active_question and pending_answer are both None
+        response = client.delete("/api/interview/session")
+
+        assert response.status_code == 200
+        assert response.json() == {"message": "Session ended"}
+
+    def test_delete_idempotent_on_repeated_calls(self, client):
+        """Calling DELETE multiple times always returns 200."""
+        for _ in range(3):
+            response = client.delete("/api/interview/session")
+            assert response.status_code == 200
+
+    def test_delete_broadcasts_end_event_to_sse_subscribers(self, live_server):
+        """
+        DELETE broadcasts a session_ended event, which the SSE stream
+        forwards as an 'end' event so the browser can close the UI.
+        """
+        base_url, _ = live_server
+        received: list[tuple[str, dict]] = []
+        ready = threading.Event()
+        done = threading.Event()
+
+        def read_stream():
+            with httpx.Client(timeout=10.0) as c:
+                with c.stream("GET", f"{base_url}/api/interview/question/stream") as resp:
+                    ready.set()
+                    events = _read_sse_events(resp, stop_after=1)
+                    received.extend(events)
+            done.set()
+
+        t = threading.Thread(target=read_stream, daemon=True)
+        t.start()
+
+        assert ready.wait(timeout=5.0), "SSE stream did not connect"
+        time.sleep(0.1)
+
+        with httpx.Client() as c:
+            c.delete(f"{base_url}/api/interview/session")
+
+        assert done.wait(timeout=5.0), "SSE stream did not receive end event"
+        t.join(timeout=2.0)
+
+        assert len(received) == 1
+        assert received[0][0] == "end"
