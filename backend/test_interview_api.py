@@ -628,3 +628,128 @@ class TestPostInterviewAnswer:
 
         event_types = [e[0] for e in received]
         assert "answer_received" in event_types
+
+
+# ---------------------------------------------------------------------------
+# GET /api/interview/answer tests
+# ---------------------------------------------------------------------------
+
+class TestGetInterviewAnswer:
+    """Tests for GET /api/interview/answer (long-polling)."""
+
+    def test_get_answer_returns_immediately_when_answer_already_pending(self, client):
+        """If an answer is already in state, the endpoint returns it immediately."""
+        session = state_module.get_interview_session()
+        session.active_question = {"text": "Pick one", "options": ["A", "B"]}
+        session.pending_answer = "A"
+        session._answer_ready.set()
+
+        response = client.get("/api/interview/answer")
+
+        assert response.status_code == 200
+        assert response.json() == {"value": "A"}
+
+    def test_get_answer_clears_pending_answer_after_return(self, client):
+        """The answer is removed from session state after being returned (consume-once)."""
+        session = state_module.get_interview_session()
+        session.active_question = {"text": "Pick one", "options": ["A", "B"]}
+        session.pending_answer = "B"
+        session._answer_ready.set()
+
+        client.get("/api/interview/answer")
+
+        assert session.pending_answer is None
+        assert not session._answer_ready.is_set()
+
+    def test_get_answer_second_call_blocks_not_returns_same_value(self, client):
+        """A second GET call after consuming the answer does not return stale data."""
+        session = state_module.get_interview_session()
+        session.active_question = {"text": "Pick one", "options": ["A", "B"]}
+        session.pending_answer = "A"
+        session._answer_ready.set()
+
+        client.get("/api/interview/answer")  # consumes it
+
+        # A second call should time out (not return "A" again).
+        # Override timeout to 0.05 s so the test finishes quickly.
+        import backend.main as main_module
+        original = main_module._ANSWER_POLL_TIMEOUT_SECONDS
+        main_module._ANSWER_POLL_TIMEOUT_SECONDS = 0.05
+        try:
+            response = client.get("/api/interview/answer")
+            assert response.status_code == 408
+        finally:
+            main_module._ANSWER_POLL_TIMEOUT_SECONDS = original
+
+    def test_get_answer_returns_408_on_timeout(self, client):
+        """Returns 408 when no answer arrives within the timeout."""
+        import backend.main as main_module
+        original = main_module._ANSWER_POLL_TIMEOUT_SECONDS
+        main_module._ANSWER_POLL_TIMEOUT_SECONDS = 0.05
+        try:
+            response = client.get("/api/interview/answer")
+            assert response.status_code == 408
+            assert "timeout" in response.json()["detail"].lower()
+        finally:
+            main_module._ANSWER_POLL_TIMEOUT_SECONDS = original
+
+    def test_get_answer_blocks_until_browser_posts_answer(self, live_server):
+        """
+        GET /api/interview/answer blocks and only returns once the browser POSTs
+        an answer via POST /api/interview/answer.
+        """
+        import backend.main as main_module
+        base_url, _ = live_server
+        main_module._ANSWER_POLL_TIMEOUT_SECONDS = 10.0
+
+        # Set up an active question
+        with httpx.Client() as c:
+            c.post(f"{base_url}/api/interview/question", json={
+                "text": "Blocking test",
+                "options": ["Yes", "No"],
+            })
+
+        result: list = []
+        poll_started = threading.Event()
+        poll_done = threading.Event()
+
+        def do_poll():
+            with httpx.Client(timeout=15.0) as c:
+                poll_started.set()
+                resp = c.get(f"{base_url}/api/interview/answer")
+                result.append(resp)
+            poll_done.set()
+
+        t = threading.Thread(target=do_poll, daemon=True)
+        t.start()
+
+        assert poll_started.wait(timeout=3.0), "Poll thread did not start"
+        time.sleep(0.15)  # give the request time to reach the server
+
+        # Now post the answer — the GET should unblock
+        with httpx.Client() as c:
+            c.post(f"{base_url}/api/interview/answer", json={"value": "Yes"})
+
+        assert poll_done.wait(timeout=5.0), "GET /answer did not return after answer posted"
+        t.join(timeout=2.0)
+
+        assert len(result) == 1
+        assert result[0].status_code == 200
+        assert result[0].json() == {"value": "Yes"}
+
+    def test_get_answer_returns_408_on_live_server_timeout(self, live_server):
+        """
+        GET /api/interview/answer returns 408 when no answer is posted within
+        the configured timeout (tested with a very short timeout).
+        """
+        import backend.main as main_module
+        base_url, _ = live_server
+        main_module._ANSWER_POLL_TIMEOUT_SECONDS = 0.1
+
+        try:
+            with httpx.Client(timeout=5.0) as c:
+                resp = c.get(f"{base_url}/api/interview/answer")
+
+            assert resp.status_code == 408
+        finally:
+            main_module._ANSWER_POLL_TIMEOUT_SECONDS = 300.0

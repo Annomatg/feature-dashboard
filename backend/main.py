@@ -1844,6 +1844,35 @@ async def interview_question_stream():
     )
 
 
+# Timeout for GET /api/interview/answer long-poll (seconds).
+# Override in tests to avoid multi-minute waits.
+_ANSWER_POLL_TIMEOUT_SECONDS: float = 300.0
+
+
+@app.get("/api/interview/answer")
+async def get_interview_answer():
+    """
+    Long-polling endpoint that blocks until the user submits an answer.
+
+    Called by Claude Code immediately after posting a question. Waits up to
+    _ANSWER_POLL_TIMEOUT_SECONDS for the browser to submit an answer via
+    POST /api/interview/answer, then returns the value and clears it from
+    session state (consume-once semantics).
+
+    Returns 408 Request Timeout if no answer arrives within the timeout period.
+    """
+    session = get_interview_session()
+    answer = await session.wait_for_answer(timeout=_ANSWER_POLL_TIMEOUT_SECONDS)
+
+    if answer is None:
+        raise HTTPException(
+            status_code=408,
+            detail="No answer received within the timeout period.",
+        )
+
+    return {"value": answer}
+
+
 class InterviewAnswerRequest(BaseModel):
     value: str
 
