@@ -20,6 +20,7 @@ Conduct an interactive feature-planning interview through the browser UI. Each q
 |--------|---------|
 | Post question | `curl -s -X POST http://localhost:8000/api/interview/question -H "Content-Type: application/json" -d '{"text":"...","options":[...]}'` |
 | Poll for answer | `curl -s --max-time 310 http://localhost:8000/api/interview/answer` |
+| Notify board | `curl -s -X POST "http://localhost:8000/api/features/notify?feature_id=<ID>&name=<NAME>"` |
 | End session | `curl -s -X DELETE http://localhost:8000/api/interview/session` |
 
 **Note:** Always use `--max-time 310` on the answer poll — the server long-polls up to 300 s.
@@ -57,16 +58,16 @@ curl -s --max-time 310 http://localhost:8000/api/interview/answer
 ```
 Store as `DESCRIPTION`.
 
-**Step 4 — Steps (loop)**
+**Step 4 — Steps (multi-line)**
 
-Repeat for N = 1, 2, 3 … until the answer is exactly `done`:
+Ask for all steps in a single question. User types each step on a separate line:
 ```bash
 curl -s -X POST http://localhost:8000/api/interview/question \
   -H "Content-Type: application/json" \
-  -d '{"text":"Enter step N (or type \"done\" to finish):","options":["done"]}'
+  -d '{"text":"Enter the implementation steps (one per line):","options":["(type steps, one per line)"]}'
 curl -s --max-time 310 http://localhost:8000/api/interview/answer
 ```
-Collect non-`done` answers into `STEPS` list.
+Split the returned value on newlines. Trim whitespace. Filter out blank lines. Store non-empty lines as `STEPS` list. `STEPS` must contain at least one item.
 
 ### Phase 2: Summarize
 
@@ -84,7 +85,7 @@ Feature to create:
 
 ### Phase 3: Create
 
-Call the MCP tool:
+Call the MCP tool immediately — no confirmation prompt:
 ```
 feature_create(
   category=CATEGORY,
@@ -92,6 +93,16 @@ feature_create(
   description=DESCRIPTION,
   steps=STEPS
 )
+```
+
+After the tool returns, print to the terminal:
+```
+Created feature #<id>: <name>
+```
+
+Then notify the board for immediate refresh (URL-encode the name):
+```bash
+curl -s -X POST "http://localhost:8000/api/features/notify?feature_id=<id>&name=<URL-encoded-name>"
 ```
 
 ### Phase 4: Continue?
@@ -125,6 +136,7 @@ curl -s -X DELETE http://localhost:8000/api/interview/session
 ## Critical Rules
 
 1. Never post the next question before the previous answer is consumed.
-2. Never call `feature_create` until all steps are collected (`done` received).
+2. Never call `feature_create` until all 4 fields are collected.
 3. Always DELETE `/api/interview/session` on completion **or** on error.
-4. `STEPS` must contain at least one item.
+4. `STEPS` must contain at least one item after filtering blank lines.
+5. Call `POST /api/features/notify` after every successful `feature_create`.

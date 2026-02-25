@@ -948,6 +948,81 @@ async def get_stats():
         session.close()
 
 
+# ---------------------------------------------------------------------------
+# Feature stream — SSE endpoint for immediate board refresh
+# ---------------------------------------------------------------------------
+
+# Module-level subscriber list for feature events.
+# Each subscriber is an asyncio.Queue; broadcast() puts events onto every queue.
+_feature_subscribers: list[asyncio.Queue] = []
+
+# Heartbeat interval for the feature SSE stream (seconds).
+# Override in tests to avoid long waits.
+_FEATURE_SSE_HEARTBEAT_SECONDS: float = 15.0
+
+
+async def _broadcast_feature_event(event: dict) -> None:
+    """Push an event dict to every connected /api/features/stream subscriber."""
+    for q in list(_feature_subscribers):
+        await q.put(event)
+
+
+@app.get("/api/features/stream")
+async def feature_stream():
+    """
+    SSE endpoint for real-time board refresh notifications.
+
+    The browser subscribes here once on page load.  Events pushed:
+      - feature_created: when a new feature is created (e.g. via the interview skill)
+      - heartbeat:       every 15 s to keep the connection alive through proxies
+
+    On disconnect the subscriber queue is automatically removed.
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+    _feature_subscribers.append(queue)
+
+    async def event_generator():
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=_FEATURE_SSE_HEARTBEAT_SECONDS)
+                except asyncio.TimeoutError:
+                    yield "event: heartbeat\ndata: {}\n\n"
+                    continue
+
+                if event["type"] == "feature_created":
+                    yield (
+                        f"event: feature_created\n"
+                        f"data: {json.dumps({'id': event.get('id'), 'name': event.get('name')})}\n\n"
+                    )
+        finally:
+            try:
+                _feature_subscribers.remove(queue)
+            except ValueError:
+                pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.post("/api/features/notify", status_code=200)
+async def notify_feature_created(feature_id: int, name: str):
+    """
+    Broadcast a feature_created event to all /api/features/stream subscribers.
+
+    Called by the interview skill after feature_create MCP tool succeeds,
+    so the board refreshes immediately without waiting for the 5-second poll.
+    """
+    await _broadcast_feature_event({"type": "feature_created", "id": feature_id, "name": name})
+    return {"status": "notified", "subscribers": len(_feature_subscribers)}
+
+
 @app.get("/api/debug/features/{feature_id}")
 async def get_feature_raw(feature_id: int):
     """Get raw feature dict for debugging."""
@@ -1930,6 +2005,7 @@ async def delete_interview_session():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
 
  
 

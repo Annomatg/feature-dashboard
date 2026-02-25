@@ -228,6 +228,16 @@ function KanbanBoard() {
     setInfoDismissed(false)
   }, [activeDbPath])
 
+  // Subscribe to feature stream for immediate board refresh on feature_created events
+  useEffect(() => {
+    const es = new EventSource('/api/features/stream')
+    es.addEventListener('feature_created', () => {
+      queryClient.invalidateQueries({ queryKey: ['features'] })
+      queryClient.invalidateQueries({ queryKey: ['features', 'done'] })
+    })
+    return () => es.close()
+  }, [queryClient])
+
   if (isLoading) {
     return (
       <div className="h-screen bg-background flex items-center justify-center">
