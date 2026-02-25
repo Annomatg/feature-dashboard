@@ -204,6 +204,46 @@ class TestWaitForAnswer:
 
 
 # ---------------------------------------------------------------------------
+# timeout
+# ---------------------------------------------------------------------------
+
+class TestSessionTimeout:
+    def test_clears_active_question(self, session):
+        session.active_question = {"text": "Q?", "options": ["A"]}
+        run(session.timeout())
+        assert session.active_question is None
+
+    def test_clears_pending_answer(self, session):
+        session.pending_answer = "A"
+        run(session.timeout())
+        assert session.pending_answer is None
+
+    def test_clears_started_at(self, session):
+        from datetime import datetime
+        session.started_at = datetime.utcnow()
+        run(session.timeout())
+        assert session.started_at is None
+
+    def test_clears_answer_ready_event(self, session):
+        session._answer_ready.set()
+        run(session.timeout())
+        assert not session._answer_ready.is_set()
+
+    def test_broadcasts_session_timeout_event(self, session):
+        q = session.subscribe()
+        run(session.timeout())
+
+        assert not q.empty()
+        event = q.get_nowait()
+        assert event == {"type": "session_timeout"}
+
+    def test_idempotent_when_no_active_session(self, session):
+        run(session.timeout())  # nothing set — should not raise
+        assert session.active_question is None
+        assert session.pending_answer is None
+
+
+# ---------------------------------------------------------------------------
 # reset
 # ---------------------------------------------------------------------------
 

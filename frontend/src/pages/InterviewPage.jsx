@@ -75,6 +75,12 @@ function InterviewPage() {
       }
     })
 
+    src.addEventListener('session-timeout', () => {
+      clearTimeout(idleTimer)
+      setStatus('timedout')
+      src.close()
+    })
+
     src.addEventListener('end', (e) => {
       try {
         const data = JSON.parse(e.data || '{}')
@@ -191,6 +197,35 @@ function InterviewPage() {
               <p className="text-warning text-base font-medium">
                 Reconnecting…
               </p>
+            </div>
+          )}
+
+          {/* Session timed out */}
+          {status === 'timedout' && (
+            <div
+              className="flex flex-col items-center gap-6 text-center"
+              data-testid="interview-timedout"
+            >
+              <div>
+                <h2 className="text-xl font-bold text-text-primary mb-2">
+                  Session timed out
+                </h2>
+                <p className="text-text-secondary text-base">
+                  No answer received — the session has expired.
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setStatus('waiting')
+                  setQuestion(null)
+                  setFeaturesCreated(0)
+                  setSessionKey((k) => k + 1)
+                }}
+                className="px-6 py-3 rounded-lg border border-border text-text-secondary text-sm font-mono font-semibold hover:border-text-secondary hover:text-text-primary transition-colors"
+                data-testid="interview-new-session-btn"
+              >
+                Start New Interview
+              </button>
             </div>
           )}
 

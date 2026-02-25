@@ -1903,6 +1903,9 @@ async def interview_question_stream():
                     )
                 elif event["type"] == "answer_received":
                     yield "event: answer_received\ndata: {}\n\n"
+                elif event["type"] == "session_timeout":
+                    yield "event: session-timeout\ndata: {}\n\n"
+                    break
                 elif event["type"] == "session_ended":
                     features_created = event.get("features_created", 0)
                     yield f"event: end\ndata: {json.dumps({'features_created': features_created})}\n\n"
@@ -1941,6 +1944,8 @@ async def get_interview_answer():
     answer = await session.wait_for_answer(timeout=_ANSWER_POLL_TIMEOUT_SECONDS)
 
     if answer is None:
+        # Broadcast session-timeout to SSE subscribers and clear state
+        await session.timeout()
         raise HTTPException(
             status_code=408,
             detail="No answer received within the timeout period.",

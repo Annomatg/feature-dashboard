@@ -693,6 +693,58 @@ class TestGetInterviewAnswer:
         finally:
             main_module._ANSWER_POLL_TIMEOUT_SECONDS = original
 
+    def test_get_answer_timeout_clears_session_state(self, client):
+        """When GET /answer times out, session state is cleared."""
+        import backend.main as main_module
+        session = state_module.get_interview_session()
+        session.active_question = {"text": "Q?", "options": ["A"]}
+        original = main_module._ANSWER_POLL_TIMEOUT_SECONDS
+        main_module._ANSWER_POLL_TIMEOUT_SECONDS = 0.05
+        try:
+            client.get("/api/interview/answer")
+        finally:
+            main_module._ANSWER_POLL_TIMEOUT_SECONDS = original
+
+        assert session.active_question is None
+        assert session.pending_answer is None
+
+    def test_get_answer_timeout_broadcasts_session_timeout_sse_event(self, live_server):
+        """
+        When GET /api/interview/answer times out, the backend broadcasts a
+        session_timeout event which the SSE stream forwards as 'session-timeout'.
+        """
+        import backend.main as main_module
+        base_url, _ = live_server
+        main_module._ANSWER_POLL_TIMEOUT_SECONDS = 0.1
+
+        received: list[tuple[str, dict]] = []
+        sse_ready = threading.Event()
+        sse_done = threading.Event()
+
+        def read_stream():
+            with httpx.Client(timeout=10.0) as c:
+                with c.stream("GET", f"{base_url}/api/interview/question/stream") as resp:
+                    sse_ready.set()
+                    events = _read_sse_events(resp, stop_after=1)
+                    received.extend(events)
+            sse_done.set()
+
+        t = threading.Thread(target=read_stream, daemon=True)
+        t.start()
+        assert sse_ready.wait(timeout=5.0), "SSE stream did not connect"
+        time.sleep(0.05)
+
+        # Trigger timeout by calling GET /answer with the short timeout
+        with httpx.Client(timeout=5.0) as c:
+            resp = c.get(f"{base_url}/api/interview/answer")
+            assert resp.status_code == 408
+
+        assert sse_done.wait(timeout=5.0), "SSE stream did not receive session-timeout"
+        t.join(timeout=2.0)
+
+        assert len(received) == 1
+        assert received[0][0] == "session-timeout"
+
     def test_get_answer_blocks_until_browser_posts_answer(self, live_server):
         """
         GET /api/interview/answer blocks and only returns once the browser POSTs

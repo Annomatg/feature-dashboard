@@ -90,6 +90,16 @@ class InterviewSession:
     # Session lifecycle
     # ------------------------------------------------------------------
 
+    async def timeout(self) -> None:
+        """Called when the answer wait times out. Clears state and notifies SSE subscribers."""
+        async with self._lock:
+            self.active_question = None
+            self.pending_answer = None
+            self.started_at = None
+            self._answer_ready.clear()
+
+        await self.broadcast({"type": "session_timeout"})
+
     async def reset(self, features_created: int = 0) -> None:
         """Clear all session state and notify SSE subscribers that the session ended."""
         async with self._lock:
