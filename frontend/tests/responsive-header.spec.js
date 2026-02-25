@@ -119,4 +119,41 @@ test.describe('Responsive Header', () => {
       await expect(page.getByTestId('settings-panel')).toBeVisible();
     });
   });
+
+  test.describe('Interview nav link', () => {
+    test('interview link is visible on desktop', async ({ page }) => {
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await expect(page.getByTestId('interview-nav-link')).toBeVisible();
+    });
+
+    test('interview link is visible on mobile 390px', async ({ page }) => {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect(page.getByTestId('interview-nav-link')).toBeVisible();
+    });
+
+    test('interview link navigates to /interview', async ({ page }) => {
+      // Stall the SSE stream so InterviewPage mounts cleanly
+      await page.route('**/api/interview/question/stream', () => {});
+      await page.getByTestId('interview-nav-link').click();
+      await expect(page).toHaveURL('/interview', { timeout: 5000 });
+    });
+
+    test('interview link has MessageSquare icon (svg inside link)', async ({ page }) => {
+      const link = page.getByTestId('interview-nav-link');
+      await expect(link.locator('svg')).toBeVisible();
+    });
+
+    test('interview link uses accent (primary) color to mark it as special', async ({ page }) => {
+      const link = page.getByTestId('interview-nav-link');
+      // The link should carry a class that references "primary" for visual distinction
+      const cls = await link.getAttribute('class');
+      expect(cls).toMatch(/primary/);
+    });
+
+    test('no horizontal scroll at 390px with interview link present', async ({ page }) => {
+      await page.setViewportSize({ width: 390, height: 844 });
+      const scrollWidth = await page.evaluate(() => document.body.scrollWidth);
+      expect(scrollWidth).toBeLessThanOrEqual(390);
+    });
+  });
 });

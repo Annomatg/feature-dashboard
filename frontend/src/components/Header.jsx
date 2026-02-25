@@ -1,4 +1,5 @@
-import { Settings, Sparkles } from 'lucide-react'
+import { Settings, Sparkles, MessageSquare } from 'lucide-react'
+import { Link, useLocation } from 'react-router-dom'
 import DatabaseSelector from './DatabaseSelector'
 import AutoPilotToggle from './AutoPilotToggle'
 
@@ -16,6 +17,9 @@ function StatPill({ label, value, color }) {
 }
 
 function Header({ totalFeatures, inProgressCount, doneCount, onSettingsClick, onPlanTasksClick }) {
+  const location = useLocation()
+  const isInterviewActive = location.pathname === '/interview'
+
   const donePercentage = totalFeatures > 0
     ? Math.round((doneCount / totalFeatures) * 100)
     : 0
@@ -52,6 +56,21 @@ function Header({ totalFeatures, inProgressCount, doneCount, onSettingsClick, on
           <div className="hidden md:block">
             <DatabaseSelector />
           </div>
+
+          {/* Interview link */}
+          <Link
+            to="/interview"
+            data-testid="interview-nav-link"
+            className={`p-1.5 md:p-2 rounded transition-colors ${
+              isInterviewActive
+                ? 'bg-primary/15 text-primary'
+                : 'text-primary/70 hover:bg-primary/10 hover:text-primary'
+            }`}
+            aria-label="Interview mode"
+            title="Interview"
+          >
+            <MessageSquare size={18} />
+          </Link>
 
           {/* Auto-Pilot toggle */}
           <AutoPilotToggle />
