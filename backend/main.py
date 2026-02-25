@@ -7,6 +7,7 @@ FastAPI server exposing feature data from SQLite database.
 
 import asyncio
 import json
+import secrets
 import sqlite3
 import subprocess
 import sys
@@ -16,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -1828,14 +1829,24 @@ class InterviewQuestionRequest(BaseModel):
 
 
 @app.post("/api/interview/question", status_code=200)
-async def post_interview_question(request: InterviewQuestionRequest):
+async def post_interview_question(
+    request: InterviewQuestionRequest,
+    x_interview_token: Optional[str] = Header(None),
+):
     """
     Push a new question into the interview session.
 
     Called by Claude Code to send the next question to the browser.
     Overwrites any previously active question and resets answer state.
 
-    Returns 409 if the browser has already submitted an answer that Claude
+    Session token guard (duplicate-instance prevention):
+      - First call (no active session): generates a session token, stores it,
+        and returns it as ``session_token`` in the response body.
+      - Subsequent calls: must supply the token in the ``X-Interview-Token``
+        request header.  Returns 409 Conflict if the token is missing or
+        does not match the stored owner token.
+
+    Also returns 409 if the browser has already submitted an answer that Claude
     has not yet consumed via GET /api/interview/answer.
     """
     if not request.text.strip():
@@ -1844,6 +1855,20 @@ async def post_interview_question(request: InterviewQuestionRequest):
         raise HTTPException(status_code=422, detail="At least one option is required")
 
     session = get_interview_session()
+
+    # --- Duplicate-session guard ---
+    if session.owner_token is None:
+        # No active session — this caller becomes the owner.
+        new_token = session.claim_session()
+    else:
+        # A session is already in progress — validate the caller's token.
+        if x_interview_token != session.owner_token:
+            raise HTTPException(
+                status_code=409,
+                detail="An interview session is already active. "
+                       "Only the session owner may post questions.",
+            )
+        new_token = None  # token already known by caller, no need to return it
 
     if session.has_unconsumed_answer():
         raise HTTPException(
@@ -1854,10 +1879,13 @@ async def post_interview_question(request: InterviewQuestionRequest):
 
     await session.set_question(request.text, request.options)
 
-    return {
+    response: dict = {
         "text": session.active_question["text"],
         "options": session.active_question["options"],
     }
+    if new_token is not None:
+        response["session_token"] = new_token
+    return response
 
 
 # Heartbeat interval for the SSE stream (seconds).

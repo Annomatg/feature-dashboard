@@ -8,6 +8,7 @@ interviews are short, real-time sessions, not long-lived persisted data.
 """
 
 import asyncio
+import secrets
 from datetime import datetime
 from typing import Optional
 
@@ -28,9 +29,26 @@ class InterviewSession:
         self.active_question: Optional[dict] = None   # {text, options}
         self.pending_answer: Optional[str] = None     # set by browser, consumed by Claude
         self.started_at: Optional[datetime] = None    # set on first question, cleared on reset
+        self.owner_token: Optional[str] = None        # set on first question, cleared on reset
         self._answer_ready: asyncio.Event = asyncio.Event()
         self._lock: asyncio.Lock = asyncio.Lock()
         self._subscribers: list[asyncio.Queue] = []
+
+    # ------------------------------------------------------------------
+    # Session token (duplicate-session guard)
+    # ------------------------------------------------------------------
+
+    def claim_session(self) -> str:
+        """
+        Claim ownership of this session and return a new token.
+
+        Called when the first question is posted with no existing owner.
+        Generates a random token, stores it, and returns it to the caller
+        so it can be included in the API response.
+        """
+        token = secrets.token_urlsafe(32)
+        self.owner_token = token
+        return token
 
     # ------------------------------------------------------------------
     # Question management
@@ -96,6 +114,7 @@ class InterviewSession:
             self.active_question = None
             self.pending_answer = None
             self.started_at = None
+            self.owner_token = None
             self._answer_ready.clear()
 
         await self.broadcast({"type": "session_timeout"})
@@ -106,6 +125,7 @@ class InterviewSession:
             self.active_question = None
             self.pending_answer = None
             self.started_at = None
+            self.owner_token = None
             self._answer_ready.clear()
 
         await self.broadcast({"type": "session_ended", "features_created": features_created})

@@ -44,6 +44,8 @@ def reset_interview_state():
     session = state_module.get_interview_session()
     session.active_question = None
     session.pending_answer = None
+    session.owner_token = None
+    session.started_at = None
     # Re-create the event to ensure clean state
     session._answer_ready = asyncio.Event()
     session._subscribers = []
@@ -51,6 +53,8 @@ def reset_interview_state():
     # Reset again after test to avoid leaking state to subsequent tests
     session.active_question = None
     session.pending_answer = None
+    session.owner_token = None
+    session.started_at = None
     session._answer_ready = asyncio.Event()
     session._subscribers = []
 
@@ -89,14 +93,17 @@ class TestPostInterviewQuestion:
 
     def test_post_question_overwrites_previous_question(self, client):
         """Posting a second question replaces the first when no answer is pending."""
-        client.post("/api/interview/question", json={
+        first = client.post("/api/interview/question", json={
             "text": "First question",
             "options": ["A", "B"],
         })
-        response = client.post("/api/interview/question", json={
-            "text": "Second question",
-            "options": ["X", "Y", "Z"],
-        })
+        token = first.json()["session_token"]
+
+        response = client.post(
+            "/api/interview/question",
+            json={"text": "Second question", "options": ["X", "Y", "Z"]},
+            headers={"X-Interview-Token": token},
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -142,38 +149,42 @@ class TestPostInterviewQuestion:
         Claude has not yet consumed via GET /api/interview/answer.
         """
         # Post an initial question
-        client.post("/api/interview/question", json={
+        first = client.post("/api/interview/question", json={
             "text": "Initial question",
             "options": ["A", "B"],
         })
+        token = first.json()["session_token"]
 
         # Simulate browser submitting an answer (set pending_answer directly)
         session = state_module.get_interview_session()
         session.pending_answer = "A"
 
         # Now try to post another question — should be blocked
-        response = client.post("/api/interview/question", json={
-            "text": "Next question",
-            "options": ["C", "D"],
-        })
+        response = client.post(
+            "/api/interview/question",
+            json={"text": "Next question", "options": ["C", "D"]},
+            headers={"X-Interview-Token": token},
+        )
 
         assert response.status_code == 409
         assert "pending" in response.json()["detail"].lower()
 
     def test_post_question_409_does_not_overwrite_existing_question(self, client):
         """The active question is unchanged when a 409 is returned."""
-        client.post("/api/interview/question", json={
+        first = client.post("/api/interview/question", json={
             "text": "Original question",
             "options": ["A", "B"],
         })
+        token = first.json()["session_token"]
 
         session = state_module.get_interview_session()
         session.pending_answer = "A"
 
-        client.post("/api/interview/question", json={
-            "text": "Should not be stored",
-            "options": ["C"],
-        })
+        client.post(
+            "/api/interview/question",
+            json={"text": "Should not be stored", "options": ["C"]},
+            headers={"X-Interview-Token": token},
+        )
 
         assert session.active_question["text"] == "Original question"
 
@@ -229,6 +240,169 @@ class TestPostInterviewQuestion:
         })
 
         assert response.json()["options"] == options
+
+
+class TestSessionTokenGuard:
+    """Tests for the duplicate-session token guard on POST /api/interview/question."""
+
+    def test_first_post_returns_session_token(self, client):
+        """The first POST to an empty session includes session_token in the response."""
+        response = client.post("/api/interview/question", json={
+            "text": "First question",
+            "options": ["A", "B"],
+        })
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "session_token" in data
+        assert len(data["session_token"]) > 10  # non-empty token
+
+    def test_first_post_stores_token_in_session(self, client):
+        """The generated token is persisted in the interview session."""
+        response = client.post("/api/interview/question", json={
+            "text": "First question",
+            "options": ["A"],
+        })
+
+        token = response.json()["session_token"]
+        session = state_module.get_interview_session()
+        assert session.owner_token == token
+
+    def test_second_post_with_correct_token_returns_200(self, client):
+        """A subsequent POST that supplies the correct token succeeds."""
+        first = client.post("/api/interview/question", json={
+            "text": "Q1",
+            "options": ["A"],
+        })
+        token = first.json()["session_token"]
+
+        response = client.post(
+            "/api/interview/question",
+            json={"text": "Q2", "options": ["B"]},
+            headers={"X-Interview-Token": token},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["text"] == "Q2"
+
+    def test_second_post_without_token_returns_409(self, client):
+        """A POST while a session is active and no token header provided returns 409."""
+        client.post("/api/interview/question", json={
+            "text": "Q1",
+            "options": ["A"],
+        })
+
+        response = client.post("/api/interview/question", json={
+            "text": "Q2",
+            "options": ["B"],
+        })
+
+        assert response.status_code == 409
+        detail = response.json()["detail"].lower()
+        assert "session" in detail or "active" in detail
+
+    def test_second_post_with_wrong_token_returns_409(self, client):
+        """A POST with an incorrect token while a session is active returns 409."""
+        client.post("/api/interview/question", json={
+            "text": "Q1",
+            "options": ["A"],
+        })
+
+        response = client.post(
+            "/api/interview/question",
+            json={"text": "Q2", "options": ["B"]},
+            headers={"X-Interview-Token": "wrong-token-abc123"},
+        )
+
+        assert response.status_code == 409
+
+    def test_second_post_does_not_return_session_token(self, client):
+        """Subsequent POSTs with a valid token do not re-issue a session_token."""
+        first = client.post("/api/interview/question", json={
+            "text": "Q1",
+            "options": ["A"],
+        })
+        token = first.json()["session_token"]
+
+        second = client.post(
+            "/api/interview/question",
+            json={"text": "Q2", "options": ["B"]},
+            headers={"X-Interview-Token": token},
+        )
+
+        assert second.status_code == 200
+        assert "session_token" not in second.json()
+
+    def test_token_cleared_after_delete(self, client):
+        """DELETE /api/interview/session clears the owner token."""
+        client.post("/api/interview/question", json={
+            "text": "Q1",
+            "options": ["A"],
+        })
+
+        session = state_module.get_interview_session()
+        assert session.owner_token is not None
+
+        client.delete("/api/interview/session")
+
+        assert session.owner_token is None
+
+    def test_new_session_after_delete_generates_new_token(self, client):
+        """After a session is deleted, the next POST starts a fresh session."""
+        first = client.post("/api/interview/question", json={
+            "text": "Q1",
+            "options": ["A"],
+        })
+        old_token = first.json()["session_token"]
+
+        client.delete("/api/interview/session")
+
+        second = client.post("/api/interview/question", json={
+            "text": "New session Q1",
+            "options": ["X"],
+        })
+
+        assert second.status_code == 200
+        new_token = second.json()["session_token"]
+        assert new_token != old_token
+
+    def test_token_cleared_on_answer_timeout(self, client):
+        """When GET /answer times out the owner token is cleared."""
+        import backend.main as main_module
+        client.post("/api/interview/question", json={
+            "text": "Q1",
+            "options": ["A"],
+        })
+
+        session = state_module.get_interview_session()
+        assert session.owner_token is not None
+
+        original = main_module._ANSWER_POLL_TIMEOUT_SECONDS
+        main_module._ANSWER_POLL_TIMEOUT_SECONDS = 0.05
+        try:
+            client.get("/api/interview/answer")  # triggers timeout
+        finally:
+            main_module._ANSWER_POLL_TIMEOUT_SECONDS = original
+
+        assert session.owner_token is None
+
+    def test_each_token_is_unique(self, client):
+        """Two separate sessions receive different tokens."""
+        first = client.post("/api/interview/question", json={
+            "text": "Q1",
+            "options": ["A"],
+        })
+        token_a = first.json()["session_token"]
+
+        client.delete("/api/interview/session")
+
+        second = client.post("/api/interview/question", json={
+            "text": "Q2",
+            "options": ["B"],
+        })
+        token_b = second.json()["session_token"]
+
+        assert token_a != token_b
 
 
 # ---------------------------------------------------------------------------
