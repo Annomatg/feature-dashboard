@@ -52,12 +52,19 @@ function InterviewPage() {
   useEffect(() => {
     const src = new EventSource('/api/interview/question/stream')
 
+    // After 3 s with no question, transition waiting → idle so the user
+    // sees instructions instead of a plain spinner.
+    const idleTimer = setTimeout(() => {
+      setStatus((prev) => (prev === 'waiting' ? 'idle' : prev))
+    }, 3000)
+
     src.onopen = () => {
       // On (re)open: if we were reconnecting, return to waiting state
       setStatus((prev) => (prev === 'reconnecting' ? 'waiting' : prev))
     }
 
     src.addEventListener('question', (e) => {
+      clearTimeout(idleTimer)
       try {
         const data = JSON.parse(e.data)
         setQuestion({ text: data.text, options: data.options })
@@ -92,7 +99,10 @@ function InterviewPage() {
       })
     }
 
-    return () => src.close()
+    return () => {
+      clearTimeout(idleTimer)
+      src.close()
+    }
   }, [sessionKey])
 
   const handleAnswer = async (answer) => {
@@ -130,6 +140,21 @@ function InterviewPage() {
               <Spinner testId="interview-spinner" />
               <p className="text-text-secondary text-base">
                 Waiting for next question…
+              </p>
+            </div>
+          )}
+
+          {/* No active session — waiting for Claude to start */}
+          {status === 'idle' && (
+            <div
+              className="flex flex-col items-center gap-4 text-center px-2"
+              data-testid="interview-idle"
+            >
+              <p className="text-text-primary text-base font-semibold">
+                Waiting for Claude to start an interview...
+              </p>
+              <p className="text-text-secondary text-sm leading-relaxed">
+                Run the <span className="font-mono text-primary">/interview-feature</span> skill in Claude Code on your PC to begin
               </p>
             </div>
           )}
