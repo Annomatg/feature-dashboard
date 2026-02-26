@@ -5,12 +5,13 @@ import Toast from './Toast'
 import DetailPanel from './DetailPanel'
 import SettingsPanel from './SettingsPanel'
 import PlanTasksModal from './PlanTasksModal'
-import MobileMoveSheet from './MobileMoveSheet'
+import MobileDragOverlay from './MobileDragOverlay'
 import Header from './Header'
 import InfoBar from './InfoBar'
 import AutoPilotStatusBar from './AutoPilotStatusBar'
 import AutoPilotErrorBanner from './AutoPilotErrorBanner'
 import AutoPilotLog from './AutoPilotLog'
+import { useMobileDrag } from '../hooks/useMobileDrag'
 
 const LANE_CONFIG = {
   todo: {
@@ -134,8 +135,6 @@ function KanbanBoard() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [planTasksOpen, setPlanTasksOpen] = useState(false)
   const [activeMobileLane, setActiveMobileLane] = useState('todo')
-  // { feature, fromLane } — set when a card is long-pressed on mobile
-  const [mobileMoveTarget, setMobileMoveTarget] = useState(null)
 
   const queryClient = useQueryClient()
   const dragState = useRef(null)
@@ -241,6 +240,26 @@ function KanbanBoard() {
     return () => es.close()
   }, [queryClient])
 
+  const handleMoveToLane = (feature, toLane) => {
+    moveToLaneMutation.mutate({
+      featureId: feature.id,
+      stateData: getLaneState(toLane),
+      toLane
+    })
+  }
+
+  const handleReorder = (feature, targetId, insertBefore) => {
+    reorderMutation.mutate({ featureId: feature.id, targetId, insertBefore })
+  }
+
+  // ── Mobile touch drag ──────────────────────────────────────────────────────
+  const mobileDrag = useMobileDrag({
+    onMoveToLane: handleMoveToLane,
+    onReorder:    handleReorder,
+    activeMobileLane,
+    setActiveMobileLane,
+  })
+
   if (isLoading) {
     return (
       <div className="h-screen bg-background flex items-center justify-center">
@@ -312,18 +331,6 @@ function KanbanBoard() {
     setAddingToLane(null)
   }
 
-  const handleMoveToLane = (feature, toLane) => {
-    moveToLaneMutation.mutate({
-      featureId: feature.id,
-      stateData: getLaneState(toLane),
-      toLane
-    })
-  }
-
-  const handleReorder = (feature, targetId, insertBefore) => {
-    reorderMutation.mutate({ featureId: feature.id, targetId, insertBefore })
-  }
-
   const handleCardClick = (feature) => {
     setSelectedFeatureId(feature.id)
     setPanelFeature(feature)
@@ -353,16 +360,6 @@ function KanbanBoard() {
     setIsDragging(false)
   }
 
-  const handleCardLongPress = (feature, fromLane) => {
-    setMobileMoveTarget({ feature, fromLane })
-  }
-
-  const handleMobileMoveSheetMove = (toLane) => {
-    if (!mobileMoveTarget) return
-    handleMoveToLane(mobileMoveTarget.feature, toLane)
-    setMobileMoveTarget(null)
-  }
-
   const totalFeatures = features.length + doneTotalCount
   const inProgressCount = inProgressFeatures.length
 
@@ -371,6 +368,13 @@ function KanbanBoard() {
   const defaultDb = databases[0]
   const showInfoBar = !infoDismissed && databases.length > 1 && activeDb && activeDbPath !== defaultDb?.path
   const infoBarMessage = showInfoBar ? `Active database: ${activeDb.name}` : null
+
+  // Helper: mobile drag insert position for a specific lane
+  // (Only pass insert indicator to the currently active mobile lane)
+  const mobileInsertFor = (laneKey) =>
+    mobileDrag.isDragging && activeMobileLane === laneKey
+      ? mobileDrag.insertBeforeId
+      : undefined
 
   return (
     <div className="h-screen bg-background flex flex-col">
@@ -444,7 +448,9 @@ function KanbanBoard() {
               dragState={dragState}
               onDragStart={handleDragStart}
               onDragEnd={handleDragEnd}
-              onLongPress={(feature) => handleCardLongPress(feature, 'todo')}
+              onMobileDragStart={(feature, tx, ty) => mobileDrag.startDrag(feature, 'todo', tx, ty)}
+              mobileDragInsertBeforeId={mobileInsertFor('todo')}
+              mobileDragFeatureId={mobileDrag.dragFeature?.id}
               onPlanClick={() => setPlanTasksOpen(true)}
             />
           </div>
@@ -467,7 +473,9 @@ function KanbanBoard() {
               dragState={dragState}
               onDragStart={handleDragStart}
               onDragEnd={handleDragEnd}
-              onLongPress={(feature) => handleCardLongPress(feature, 'inProgress')}
+              onMobileDragStart={(feature, tx, ty) => mobileDrag.startDrag(feature, 'inProgress', tx, ty)}
+              mobileDragInsertBeforeId={mobileInsertFor('inProgress')}
+              mobileDragFeatureId={mobileDrag.dragFeature?.id}
             />
           </div>
 
@@ -489,7 +497,9 @@ function KanbanBoard() {
               dragState={dragState}
               onDragStart={handleDragStart}
               onDragEnd={handleDragEnd}
-              onLongPress={(feature) => handleCardLongPress(feature, 'done')}
+              onMobileDragStart={(feature, tx, ty) => mobileDrag.startDrag(feature, 'done', tx, ty)}
+              mobileDragInsertBeforeId={mobileInsertFor('done')}
+              mobileDragFeatureId={mobileDrag.dragFeature?.id}
               isDoneLane={true}
               hasMore={doneFeatures.length < doneTotalCount}
               onShowMore={handleShowMoreDone}
@@ -539,13 +549,15 @@ function KanbanBoard() {
         />
       )}
 
-      {/* Mobile move sheet — shown after long-pressing a card on touch devices */}
-      {mobileMoveTarget && (
-        <MobileMoveSheet
-          feature={mobileMoveTarget.feature}
-          fromLane={mobileMoveTarget.fromLane}
-          onMove={handleMobileMoveSheetMove}
-          onClose={() => setMobileMoveTarget(null)}
+      {/* Mobile drag overlay — ghost card + edge indicators */}
+      {mobileDrag.isDragging && (
+        <MobileDragOverlay
+          feature={mobileDrag.dragFeature}
+          ghostPos={mobileDrag.ghostPos}
+          accentColor={LANE_CONFIG[activeMobileLane]?.accentColor || '#3b82f6'}
+          edgeSide={mobileDrag.edgeSide}
+          edgeProgress={mobileDrag.edgeProgress}
+          activeMobileLane={activeMobileLane}
         />
       )}
     </div>

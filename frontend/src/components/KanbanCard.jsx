@@ -8,7 +8,7 @@ const isTouchDevice =
   typeof window !== 'undefined' &&
   (navigator.maxTouchPoints > 0 || 'ontouchstart' in window)
 
-// Long press duration (ms) before the move sheet opens
+// Long press duration (ms) before mobile drag activates
 const LONG_PRESS_MS = 500
 // Max pixels of movement before a press is no longer considered a long press
 const LONG_PRESS_MOVE_THRESHOLD = 10
@@ -23,14 +23,21 @@ function KanbanCard({
   dragState,
   onDragStart,
   onDragEnd,
-  onLongPress,
+  /**
+   * Mobile drag-and-drop callback.
+   * Called after a long-press: (feature, touchX, touchY) => void
+   * When provided, replaces the old bottom-sheet long-press behaviour.
+   */
+  onMobileDragStart,
+  /** True while this specific card is being touch-dragged (dims the card in-place) */
+  isMobileDragging = false,
 }) {
   const hasDescription = feature.description && feature.description.trim().length > 0
 
   // Long-press state (refs to avoid re-renders)
-  const longPressTimer = useRef(null)
-  const touchStartPos = useRef(null)
-  const longPressFired = useRef(false)
+  const longPressTimer   = useRef(null)
+  const touchStartPos    = useRef(null)
+  const longPressFired   = useRef(false)
 
   const handleDragStart = (e) => {
     e.stopPropagation()
@@ -50,7 +57,7 @@ function KanbanCard({
     onDragEnd?.()
   }
 
-  // Touch handlers for long-press detection on mobile
+  // Touch handlers for long-press → mobile drag
   const handleTouchStart = (e) => {
     const touch = e.touches[0]
     touchStartPos.current = { x: touch.clientX, y: touch.clientY }
@@ -60,7 +67,7 @@ function KanbanCard({
       longPressTimer.current = null
       // Optional haptic feedback on devices that support it
       navigator.vibrate?.(10)
-      onLongPress?.(feature)
+      onMobileDragStart?.(feature, touchStartPos.current.x, touchStartPos.current.y)
     }, LONG_PRESS_MS)
   }
 
@@ -96,9 +103,9 @@ function KanbanCard({
       draggable={!isTouchDevice}
       onDragStart={!isTouchDevice ? handleDragStart : undefined}
       onDragEnd={!isTouchDevice ? handleDragEnd : undefined}
-      onTouchStart={onLongPress ? handleTouchStart : undefined}
-      onTouchMove={onLongPress ? handleTouchMove : undefined}
-      onTouchEnd={onLongPress ? handleTouchEnd : undefined}
+      onTouchStart={onMobileDragStart ? handleTouchStart : undefined}
+      onTouchMove={onMobileDragStart ? handleTouchMove : undefined}
+      onTouchEnd={onMobileDragStart ? handleTouchEnd : undefined}
       onClick={handleClick}
       data-testid="kanban-card"
       data-feature-id={feature.id}
@@ -113,7 +120,9 @@ function KanbanCard({
           ? `0 0 0 2px ${accentColor}40, 0 4px 12px rgba(0,0,0,0.3)`
           : 'none',
         animationDelay: `${index * 50}ms`,
-        transform: isSelected ? 'translateY(-2px)' : 'none'
+        transform: isSelected ? 'translateY(-2px)' : 'none',
+        opacity: isMobileDragging ? 0.3 : 1,
+        transition: isMobileDragging ? 'opacity 0.15s ease' : undefined,
       }}
       onMouseEnter={(e) => {
         if (!isSelected) {

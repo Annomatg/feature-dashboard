@@ -66,7 +66,12 @@ function KanbanLane({
   dragState,
   onDragStart,
   onDragEnd,
-  onLongPress,
+  /** (feature, touchX, touchY) => void — passed down to KanbanCard for mobile drag */
+  onMobileDragStart,
+  /** undefined = hidden; null = after last card; number = before that featureId */
+  mobileDragInsertBeforeId,
+  /** The feature id currently being touch-dragged (used to dim that card) */
+  mobileDragFeatureId,
   isDoneLane = false,
   hasMore = false,
   onShowMore,
@@ -149,9 +154,17 @@ function KanbanLane({
 
   const dateGroups = isDoneLane ? groupByDate(features) : null
 
+  // Whether a mobile drag indicator should be rendered for a given feature id
+  const showMobileInsertBefore = (featureId) =>
+    mobileDragInsertBeforeId !== undefined && mobileDragInsertBeforeId === featureId
+
+  const showMobileInsertAtEnd =
+    mobileDragInsertBeforeId === null // null means "after last card"
+
   return (
     <div
       className="flex flex-col h-full min-w-0 animate-slide-in"
+      data-lane-key={lane}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -226,6 +239,7 @@ function KanbanLane({
       {/* Scrollable Feature List */}
       <div
         className="flex-1 overflow-y-auto custom-scrollbar pr-2 rounded-lg transition-all duration-150"
+        data-scroll
         style={{
           outline: isDragOver ? `1px dashed ${accentColor}60` : 'none',
           outlineOffset: '-4px'
@@ -282,10 +296,19 @@ function KanbanLane({
                         onDragEnter={(e) => updateDropTarget(e, feature.id)}
                         onDragOver={(e) => updateDropTarget(e, feature.id)}
                       >
+                        {/* Desktop drop indicator (before) */}
                         {dropTargetId === feature.id && dropPosition === 'before' && (
                           <div
                             className="h-0.5 rounded-full mb-1"
                             style={{ backgroundColor: accentColor }}
+                          />
+                        )}
+                        {/* Mobile drag insert indicator (before) */}
+                        {showMobileInsertBefore(feature.id) && (
+                          <div
+                            data-testid="mobile-drag-insert"
+                            className="h-1 rounded-full mb-1"
+                            style={{ backgroundColor: accentColor, opacity: 0.8 }}
                           />
                         )}
                         <KanbanCard
@@ -298,8 +321,10 @@ function KanbanLane({
                           dragState={dragState}
                           onDragStart={onDragStart}
                           onDragEnd={onDragEnd}
-                          onLongPress={onLongPress}
+                          onMobileDragStart={onMobileDragStart}
+                          isMobileDragging={mobileDragFeatureId === feature.id}
                         />
+                        {/* Desktop drop indicator (after) */}
                         {dropTargetId === feature.id && dropPosition === 'after' && (
                           <div
                             className="h-0.5 rounded-full mt-1"
@@ -311,6 +336,15 @@ function KanbanLane({
                   </div>
                 </div>
               ))}
+
+              {/* Mobile insert-at-end indicator */}
+              {showMobileInsertAtEnd && (
+                <div
+                  data-testid="mobile-drag-insert"
+                  className="h-1 rounded-full"
+                  style={{ backgroundColor: accentColor, opacity: 0.8 }}
+                />
+              )}
 
               {/* Show more button */}
               {hasMore && (
@@ -353,11 +387,19 @@ function KanbanLane({
                   onDragEnter={(e) => updateDropTarget(e, feature.id)}
                   onDragOver={(e) => updateDropTarget(e, feature.id)}
                 >
-                  {/* Drop indicator above */}
+                  {/* Desktop drop indicator (before) */}
                   {dropTargetId === feature.id && dropPosition === 'before' && (
                     <div
                       className="h-0.5 rounded-full mb-1"
                       style={{ backgroundColor: accentColor }}
+                    />
+                  )}
+                  {/* Mobile drag insert indicator (before) */}
+                  {showMobileInsertBefore(feature.id) && (
+                    <div
+                      data-testid="mobile-drag-insert"
+                      className="h-1 rounded-full mb-1"
+                      style={{ backgroundColor: accentColor, opacity: 0.8 }}
                     />
                   )}
                   <KanbanCard
@@ -370,9 +412,10 @@ function KanbanLane({
                     dragState={dragState}
                     onDragStart={onDragStart}
                     onDragEnd={onDragEnd}
-                    onLongPress={onLongPress}
+                    onMobileDragStart={onMobileDragStart}
+                    isMobileDragging={mobileDragFeatureId === feature.id}
                   />
-                  {/* Drop indicator below */}
+                  {/* Desktop drop indicator (after) */}
                   {dropTargetId === feature.id && dropPosition === 'after' && (
                     <div
                       className="h-0.5 rounded-full mt-1"
@@ -381,6 +424,15 @@ function KanbanLane({
                   )}
                 </div>
               ))}
+
+              {/* Mobile insert-at-end indicator */}
+              {showMobileInsertAtEnd && (
+                <div
+                  data-testid="mobile-drag-insert"
+                  className="h-1 rounded-full"
+                  style={{ backgroundColor: accentColor, opacity: 0.8 }}
+                />
+              )}
             </div>
           )
         )}
