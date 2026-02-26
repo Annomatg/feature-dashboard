@@ -32,11 +32,18 @@ function AutoPilotStatusBar() {
   const { data: status } = useQuery({
     queryKey: ['autopilot-status'],
     queryFn: fetchAutoPilotStatus,
-    refetchInterval: (query) => (query.state.data?.enabled ? 2000 : 10000),
+    refetchInterval: (query) => {
+      const data = query.state.data
+      // Poll frequently while running or while waiting for the process to exit.
+      if (data?.enabled || data?.stopping) return 2000
+      return 10000
+    },
   })
 
-  if (!status?.enabled) return null
+  // Hide the bar only when neither running nor stopping.
+  if (!status?.enabled && !status?.stopping) return null
 
+  const isStopping = !status.enabled && !!status.stopping
   const featureId = status.current_feature_id
   const featureName = status.current_feature_name
   const model = status.current_feature_model
@@ -47,16 +54,21 @@ function AutoPilotStatusBar() {
       className="flex-shrink-0 bg-surface border-b border-border px-6 py-2"
     >
       <div className="max-w-[1800px] mx-auto flex items-center gap-3">
-        {/* Spinning loader */}
+        {/* Spinning loader — amber when stopping, blue when running */}
         <Loader2
           size={14}
-          className="text-primary animate-spin flex-shrink-0"
+          className={`${isStopping ? 'text-amber-400' : 'text-primary'} animate-spin flex-shrink-0`}
           data-testid="autopilot-status-spinner"
         />
 
         {/* Label */}
-        <span className="font-mono text-xs text-text-secondary uppercase tracking-wider flex-shrink-0">
-          Auto-Pilot
+        <span
+          className={`font-mono text-xs uppercase tracking-wider flex-shrink-0 ${
+            isStopping ? 'text-amber-400' : 'text-text-secondary'
+          }`}
+          data-testid="autopilot-status-label"
+        >
+          {isStopping ? 'Stopping\u2026' : 'Auto-Pilot'}
         </span>
 
         {/* Separator */}
@@ -70,7 +82,9 @@ function AutoPilotStatusBar() {
           >
             <span className="text-text-secondary">#{featureId}</span>
             {featureName && (
-              <span className="text-primary ml-2">{featureName}</span>
+              <span className={`${isStopping ? 'text-amber-400/80' : 'text-primary'} ml-2`}>
+                {featureName}
+              </span>
             )}
           </span>
         ) : (
@@ -85,7 +99,10 @@ function AutoPilotStatusBar() {
             data-testid="autopilot-status-model"
             className={`
               ml-auto flex-shrink-0 font-mono text-xs px-2 py-0.5 rounded border
-              ${modelBadgeClass(model)}
+              ${isStopping
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                : modelBadgeClass(model)
+              }
             `}
           >
             {modelLabel(model)}

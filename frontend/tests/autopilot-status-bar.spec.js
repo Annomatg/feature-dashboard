@@ -156,3 +156,123 @@ test.describe('Auto-Pilot Status Bar', () => {
     expect(cls).toContain('text-success');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Stopping state — process still alive after manual disable
+// ---------------------------------------------------------------------------
+
+const STOPPING_STATUS = {
+  enabled: false,
+  stopping: true,
+  current_feature_id: 42,
+  current_feature_name: 'Build the rocket',
+  current_feature_model: 'sonnet',
+  last_error: null,
+  log: [],
+};
+
+test.describe('Auto-Pilot Status Bar — stopping state', () => {
+  test('status bar is visible when stopping=true and enabled=false', async ({ page }) => {
+    await page.route('**/api/autopilot/status', route => {
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(STOPPING_STATUS) });
+    });
+
+    await page.goto('/');
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    await expect(page.getByTestId('autopilot-status-bar')).toBeVisible();
+  });
+
+  test('status bar shows "Stopping" label when stopping', async ({ page }) => {
+    await page.route('**/api/autopilot/status', route => {
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(STOPPING_STATUS) });
+    });
+
+    await page.goto('/');
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const label = page.getByTestId('autopilot-status-label');
+    await expect(label).toBeVisible();
+    await expect(label).toContainText('Stopping');
+  });
+
+  test('status bar shows feature ID and name when stopping', async ({ page }) => {
+    await page.route('**/api/autopilot/status', route => {
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(STOPPING_STATUS) });
+    });
+
+    await page.goto('/');
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const featureEl = page.getByTestId('autopilot-status-feature');
+    await expect(featureEl).toBeVisible();
+    await expect(featureEl).toContainText('#42');
+    await expect(featureEl).toContainText('Build the rocket');
+  });
+
+  test('status bar uses amber colour for spinner when stopping', async ({ page }) => {
+    await page.route('**/api/autopilot/status', route => {
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(STOPPING_STATUS) });
+    });
+
+    await page.goto('/');
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const spinner = page.getByTestId('autopilot-status-spinner');
+    await expect(spinner).toBeVisible();
+    const cls = await spinner.getAttribute('class');
+    expect(cls).toContain('text-amber-400');
+  });
+
+  test('status bar uses amber colour for model badge when stopping', async ({ page }) => {
+    await page.route('**/api/autopilot/status', route => {
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(STOPPING_STATUS) });
+    });
+
+    await page.goto('/');
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const badge = page.getByTestId('autopilot-status-model');
+    await expect(badge).toBeVisible();
+    const cls = await badge.getAttribute('class');
+    expect(cls).toContain('text-amber-300');
+  });
+
+  test('status bar disappears when both enabled=false and stopping=false', async ({ page }) => {
+    const statusBody = { enabled: false, stopping: false, current_feature_id: null,
+      current_feature_name: null, current_feature_model: null, last_error: null, log: [] };
+
+    await page.route('**/api/autopilot/status', route => {
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(statusBody) });
+    });
+
+    await page.goto('/');
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    await expect(page.getByTestId('autopilot-status-bar')).not.toBeVisible();
+  });
+
+  test('status bar transitions from stopping to hidden when process finishes', async ({ page }) => {
+    let isStopping = true;
+
+    await page.route('**/api/autopilot/status', route => {
+      const body = isStopping
+        ? STOPPING_STATUS
+        : { enabled: false, stopping: false, current_feature_id: null,
+            current_feature_name: null, current_feature_model: null, last_error: null, log: [] };
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    });
+
+    await page.goto('/');
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    // Bar visible in stopping state
+    await expect(page.getByTestId('autopilot-status-bar')).toBeVisible();
+
+    // Simulate process finishing
+    isStopping = false;
+
+    // Bar should disappear within polling interval (2 s when stopping)
+    await expect(page.getByTestId('autopilot-status-bar')).not.toBeVisible({ timeout: 8000 });
+  });
+});

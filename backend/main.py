@@ -126,6 +126,7 @@ class _AutoPilotState:
     """Tracks auto-pilot mode for a single database."""
     def __init__(self):
         self.enabled: bool = False
+        self.stopping: bool = False  # True when disabled but Claude process still running
         self.current_feature_id: Optional[int] = None
         self.current_feature_name: Optional[str] = None
         self.current_feature_model: Optional[str] = None
@@ -747,6 +748,7 @@ class CreateCommentRequest(BaseModel):
 class AutoPilotStatusResponse(BaseModel):
     """Response for auto-pilot enable/status."""
     enabled: bool
+    stopping: bool = False  # True when disabled but Claude process still running
     current_feature_id: Optional[int] = None
     current_feature_name: Optional[str] = None
     current_feature_model: Optional[str] = None
@@ -1593,6 +1595,12 @@ async def enable_autopilot():
     if state.enabled:
         raise HTTPException(status_code=409, detail="Auto-pilot is already enabled")
 
+    # Clear any lingering stopping state (e.g. user re-enables before process exits).
+    if state.stopping and state.monitor_task is not None:
+        state.monitor_task.cancel()
+        state.monitor_task = None
+    state.stopping = False
+
     session = get_session()
     try:
         feature = get_next_autopilot_feature(session)
@@ -1661,6 +1669,28 @@ async def enable_autopilot():
         session.close()
 
 
+async def _wait_for_stopping_process(proc: "subprocess.Popen", state: "_AutoPilotState") -> None:
+    """Wait for a Claude process to exit after autopilot was manually disabled.
+
+    Called when terminate() was sent but the process (or a child it spawned on
+    Windows) is still alive.  Once the process exits, the stopping flag and
+    feature fields are cleared so the status bar disappears from the UI.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, proc.wait)
+    except Exception:
+        pass
+    finally:
+        state.stopping = False
+        state.current_feature_id = None
+        state.current_feature_name = None
+        state.current_feature_model = None
+        state.active_process = None
+        state.monitor_task = None
+        _append_log(state, 'info', "Claude process finished — auto-pilot fully stopped")
+
+
 @app.post("/api/autopilot/disable", response_model=AutoPilotStatusResponse)
 async def disable_autopilot():
     """
@@ -1673,18 +1703,57 @@ async def disable_autopilot():
     """
     state = get_autopilot_state()
 
+    # Cancel the async monitor task so it no longer drives the autopilot loop.
     if state.monitor_task is not None:
         state.monitor_task.cancel()
         state.monitor_task = None
 
-    if state.active_process is not None:
+    # Attempt to terminate the Claude process.
+    proc = state.active_process
+    if proc is not None:
         try:
-            state.active_process.terminate()
+            proc.terminate()
         except Exception:
             pass  # Process may have already exited
-        state.active_process = None
 
+        # On Windows, terminate() kills the PowerShell wrapper but not the
+        # Claude child process it spawned.  Poll the process to check whether
+        # it is still alive.  We guard with try-except so that test mocks
+        # without a poll() method do not break existing behaviour.
+        try:
+            still_running = proc.poll() is None
+        except Exception:
+            still_running = False
+
+        if still_running:
+            # Process is still running — enter stopping state so the status bar
+            # remains visible until Claude actually finishes.
+            state.enabled = False
+            state.stopping = True
+            state.last_error = None
+            # Keep current_feature_id / name / model for display purposes.
+            _append_log(state, 'info', "Auto-pilot manually disabled — waiting for Claude process to finish")
+            _write_autopilot_to_config(False)
+            # Spawn a task that waits for the process and clears stopping state.
+            state.monitor_task = asyncio.create_task(
+                _wait_for_stopping_process(proc, state)
+            )
+            return AutoPilotStatusResponse(
+                enabled=False,
+                stopping=True,
+                current_feature_id=state.current_feature_id,
+                current_feature_name=state.current_feature_name,
+                current_feature_model=state.current_feature_model,
+                last_error=None,
+                log=list(state.log),
+            )
+        else:
+            # Process already exited — clear the handle.
+            state.active_process = None
+
+    # No running process — clean up immediately.
     state.enabled = False
+    state.stopping = False
     state.current_feature_id = None
     state.current_feature_name = None
     state.current_feature_model = None
@@ -1694,6 +1763,7 @@ async def disable_autopilot():
 
     return AutoPilotStatusResponse(
         enabled=False,
+        stopping=False,
         current_feature_id=None,
         current_feature_name=None,
         current_feature_model=None,
@@ -1741,6 +1811,7 @@ async def get_autopilot_status():
     state = get_autopilot_state()
     return AutoPilotStatusResponse(
         enabled=state.enabled,
+        stopping=state.stopping,
         current_feature_id=state.current_feature_id,
         current_feature_name=state.current_feature_name,
         current_feature_model=state.current_feature_model,

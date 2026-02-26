@@ -3328,5 +3328,188 @@ class TestAutoPilotPersistence:
         assert result[0].get("autopilot") is None
 
 
+class TestAutoPilotStoppingState:
+    """Tests for the 'stopping' state introduced so the status bar remains
+    visible when autopilot is disabled but the Claude process is still alive."""
+
+    def _reset_autopilot_state(self, monkeypatch):
+        import backend.main as main_module
+        monkeypatch.setattr(main_module, '_autopilot_states', {})
+
+    # ------------------------------------------------------------------
+    # disable_autopilot — process still running after terminate()
+    # ------------------------------------------------------------------
+
+    def test_disable_returns_stopping_true_when_process_still_alive(self, client, monkeypatch):
+        """disable returns stopping=True when poll() returns None (process alive)."""
+        self._reset_autopilot_state(monkeypatch)
+
+        class StillRunningProcess:
+            pid = 42
+            def terminate(self): pass
+            def poll(self): return None   # still alive
+            def wait(self): return 0
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: StillRunningProcess())
+        client.post("/api/autopilot/enable")
+
+        resp = client.post("/api/autopilot/disable")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["enabled"] is False
+        assert data["stopping"] is True
+
+    def test_disable_stopping_preserves_feature_info(self, client, monkeypatch):
+        """When stopping=True, feature id/name/model remain in the response."""
+        self._reset_autopilot_state(monkeypatch)
+
+        class StillRunningProcess:
+            pid = 42
+            def terminate(self): pass
+            def poll(self): return None
+            def wait(self): return 0
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: StillRunningProcess())
+        enable_resp = client.post("/api/autopilot/enable")
+        fid = enable_resp.json()["current_feature_id"]
+        fname = enable_resp.json()["current_feature_name"]
+
+        disable_resp = client.post("/api/autopilot/disable")
+        data = disable_resp.json()
+        assert data["current_feature_id"] == fid
+        assert data["current_feature_name"] == fname
+
+    def test_disable_stopping_log_message(self, client, monkeypatch):
+        """When entering stopping state the log mentions 'waiting for Claude process'."""
+        self._reset_autopilot_state(monkeypatch)
+
+        class StillRunningProcess:
+            pid = 42
+            def terminate(self): pass
+            def poll(self): return None
+            def wait(self): return 0
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: StillRunningProcess())
+        client.post("/api/autopilot/enable")
+
+        resp = client.post("/api/autopilot/disable")
+        log_messages = [e["message"] for e in resp.json()["log"]]
+        assert any("waiting for Claude process" in m for m in log_messages)
+
+    # ------------------------------------------------------------------
+    # disable_autopilot — process already exited after terminate()
+    # ------------------------------------------------------------------
+
+    def test_disable_returns_stopping_false_when_process_already_exited(self, client, monkeypatch):
+        """disable returns stopping=False when poll() returns exit code (process gone)."""
+        self._reset_autopilot_state(monkeypatch)
+
+        class ExitedProcess:
+            pid = 42
+            def terminate(self): pass
+            def poll(self): return 0   # already exited
+            def wait(self): return 0
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: ExitedProcess())
+        client.post("/api/autopilot/enable")
+
+        resp = client.post("/api/autopilot/disable")
+        data = resp.json()
+        assert data["enabled"] is False
+        assert data["stopping"] is False
+        assert data["current_feature_id"] is None
+
+    def test_disable_no_process_returns_stopping_false(self, client, monkeypatch):
+        """Disabling with no active process always returns stopping=False."""
+        self._reset_autopilot_state(monkeypatch)
+
+        resp = client.post("/api/autopilot/disable")
+        data = resp.json()
+        assert data["enabled"] is False
+        assert data["stopping"] is False
+
+    # ------------------------------------------------------------------
+    # get_autopilot_status reflects stopping field from state
+    # ------------------------------------------------------------------
+
+    def test_status_endpoint_includes_stopping_field(self, client, monkeypatch):
+        """GET /api/autopilot/status always includes the stopping field."""
+        self._reset_autopilot_state(monkeypatch)
+
+        resp = client.get("/api/autopilot/status")
+        assert resp.status_code == 200
+        assert "stopping" in resp.json()
+
+    def test_status_returns_stopping_true_when_state_is_stopping(self, client, monkeypatch):
+        """Status endpoint reflects stopping=True while waiting for process to exit."""
+        self._reset_autopilot_state(monkeypatch)
+        import backend.main as main_module
+
+        class StillRunningProcess:
+            pid = 42
+            def terminate(self): pass
+            def poll(self): return None
+            def wait(self): return 0
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: StillRunningProcess())
+        client.post("/api/autopilot/enable")
+        client.post("/api/autopilot/disable")
+
+        # Manually verify state reflects stopping (asyncio.create_task is suppressed)
+        state = main_module.get_autopilot_state()
+        assert state.stopping is True
+
+        resp = client.get("/api/autopilot/status")
+        data = resp.json()
+        assert data["enabled"] is False
+        assert data["stopping"] is True
+        assert data["current_feature_id"] is not None
+
+    def test_status_returns_stopping_false_when_not_stopping(self, client, monkeypatch):
+        """Status endpoint returns stopping=False when autopilot is cleanly disabled."""
+        self._reset_autopilot_state(monkeypatch)
+
+        resp = client.get("/api/autopilot/status")
+        assert resp.json()["stopping"] is False
+
+    # ------------------------------------------------------------------
+    # enable_autopilot clears stopping state
+    # ------------------------------------------------------------------
+
+    def test_enable_clears_stopping_state(self, client, monkeypatch):
+        """Re-enabling autopilot while stopping clears the stopping flag."""
+        self._reset_autopilot_state(monkeypatch)
+        import backend.main as main_module
+
+        class StillRunningProcess:
+            pid = 42
+            def terminate(self): pass
+            def poll(self): return None
+            def wait(self): return 0
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: StillRunningProcess())
+        client.post("/api/autopilot/enable")
+        client.post("/api/autopilot/disable")
+
+        # Force state back to not-enabled so enable is accepted (stopping=True, enabled=False)
+        state = main_module.get_autopilot_state()
+        assert state.stopping is True
+
+        # Re-enable — now use a process that looks exited so disable later is clean
+        class ExitedProcess:
+            pid = 99
+            def terminate(self): pass
+            def poll(self): return 0
+            def wait(self): return 0
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: ExitedProcess())
+        enable_resp = client.post("/api/autopilot/enable")
+        assert enable_resp.status_code == 200
+
+        state2 = main_module.get_autopilot_state()
+        assert state2.stopping is False
+        assert state2.enabled is True
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
