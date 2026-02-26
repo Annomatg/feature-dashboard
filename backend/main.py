@@ -58,9 +58,10 @@ DEFAULT_PROMPT_TEMPLATE = (
 )
 
 # Maximum time a single Claude process may run before it is forcibly killed.
-# This guards against Claude getting stuck after a terminal API error
-# (e.g. max_output_tokens) where the process never exits on its own.
-AUTOPILOT_PROCESS_TIMEOUT_SECS = 7200  # 2 hours
+# Tasks are expected to be small; this guards against Claude getting stuck
+# after a terminal API error (e.g. max_output_tokens) where the process
+# never exits on its own.
+AUTOPILOT_PROCESS_TIMEOUT_SECS = 1800  # 30 minutes
 
 PLAN_TASKS_PROMPT_TEMPLATE = """\
 You are a Project Expansion Assistant for the Feature Dashboard project.
@@ -408,9 +409,9 @@ async def monitor_claude_process(
             exit_code = await wait_future
 
         if timed_out:
-            hours = AUTOPILOT_PROCESS_TIMEOUT_SECS // 3600
+            mins = AUTOPILOT_PROCESS_TIMEOUT_SECS // 60
             msg = (
-                f"Feature #{feature_id} timed out after {hours}h"
+                f"Feature #{feature_id} timed out after {mins}min"
                 " — process killed, auto-pilot disabled"
             )
             state.last_error = msg
