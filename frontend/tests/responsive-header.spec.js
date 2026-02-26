@@ -40,8 +40,25 @@ test.describe('Responsive Header', () => {
       await expect(page.getByTestId('plan-tasks-btn')).toBeVisible();
     });
 
+    test('plan tasks button is within the viewport (not clipped off-screen)', async ({ page }) => {
+      const btn = page.getByTestId('plan-tasks-btn');
+      const box = await btn.boundingBox();
+      expect(box).not.toBeNull();
+      // Right edge of button must not exceed viewport width
+      expect(box.x + box.width).toBeLessThanOrEqual(375);
+      // Left edge must be non-negative (not off left side)
+      expect(box.x).toBeGreaterThanOrEqual(0);
+    });
+
     test('auto-pilot toggle is visible and accessible', async ({ page }) => {
       await expect(page.getByTestId('autopilot-toggle')).toBeVisible();
+    });
+
+    test('auto-pilot toggle shows icon-only on mobile (no "Auto-Pilot" text visible)', async ({ page }) => {
+      const toggle = page.getByTestId('autopilot-toggle');
+      // The text span should be hidden on mobile via hidden md:inline
+      const textSpan = toggle.locator('span').filter({ hasText: 'Auto-Pilot' });
+      await expect(textSpan).toBeHidden();
     });
 
     test('mobile stats row is visible', async ({ page }) => {
@@ -61,6 +78,17 @@ test.describe('Responsive Header', () => {
       const viewportWidth = 375;
       expect(bodyScrollWidth).toBeLessThanOrEqual(viewportWidth);
     });
+
+    test('all action buttons are within the viewport horizontally', async ({ page }) => {
+      const viewportWidth = 375;
+      for (const testId of ['plan-tasks-btn', 'settings-btn', 'autopilot-toggle', 'interview-nav-link']) {
+        const el = page.getByTestId(testId);
+        const box = await el.boundingBox();
+        expect(box, `${testId} should have a bounding box`).not.toBeNull();
+        expect(box.x + box.width, `${testId} right edge should be within viewport`).toBeLessThanOrEqual(viewportWidth);
+        expect(box.x, `${testId} left edge should be non-negative`).toBeGreaterThanOrEqual(0);
+      }
+    });
   });
 
   test.describe('Mobile portrait (430px — iPhone Pro Max)', () => {
@@ -76,6 +104,20 @@ test.describe('Responsive Header', () => {
       await expect(page.getByTestId('settings-btn')).toBeVisible();
       await expect(page.getByTestId('plan-tasks-btn')).toBeVisible();
       await expect(page.getByTestId('autopilot-toggle')).toBeVisible();
+    });
+
+    test('plan tasks button is within the viewport at 430px', async ({ page }) => {
+      const btn = page.getByTestId('plan-tasks-btn');
+      const box = await btn.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box.x + box.width).toBeLessThanOrEqual(430);
+      expect(box.x).toBeGreaterThanOrEqual(0);
+    });
+
+    test('auto-pilot toggle shows icon-only on mobile 430px', async ({ page }) => {
+      const toggle = page.getByTestId('autopilot-toggle');
+      const textSpan = toggle.locator('span').filter({ hasText: 'Auto-Pilot' });
+      await expect(textSpan).toBeHidden();
     });
 
     test('no horizontal scroll / overflow at 430px', async ({ page }) => {
@@ -106,6 +148,13 @@ test.describe('Responsive Header', () => {
       await expect(page.getByTestId('settings-btn')).toBeVisible();
       await expect(page.getByTestId('plan-tasks-btn')).toBeVisible();
       await expect(page.getByTestId('autopilot-toggle')).toBeVisible();
+    });
+
+    test('auto-pilot toggle shows full text on desktop', async ({ page }) => {
+      const toggle = page.getByTestId('autopilot-toggle');
+      // The text span should be visible on desktop (md:inline)
+      const textSpan = toggle.locator('span').filter({ hasText: 'Auto-Pilot' });
+      await expect(textSpan).toBeVisible();
     });
   });
 

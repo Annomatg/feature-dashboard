@@ -83,7 +83,7 @@ function AutoPilotToggle() {
         :            'Enable Auto-Pilot'
       }
       className={`
-        flex items-center gap-2 px-2.5 py-1.5 rounded transition-colors font-mono text-xs
+        flex-shrink-0 flex items-center gap-2 px-2 md:px-2.5 py-1.5 rounded transition-colors font-mono text-xs
         disabled:opacity-60 disabled:cursor-not-allowed
         ${enabled
           ? 'bg-success/15 border border-success/40 text-success hover:bg-success/25'
@@ -99,7 +99,7 @@ function AutoPilotToggle() {
             data-testid="autopilot-pulse-dot"
             className="w-2 h-2 rounded-full bg-success animate-pulse flex-shrink-0"
           />
-          <span>Auto-Pilot ON</span>
+          <span className="hidden md:inline">Auto-Pilot ON</span>
         </>
       ) : stopping ? (
         <>
@@ -107,12 +107,12 @@ function AutoPilotToggle() {
             data-testid="autopilot-stopping-dot"
             className="w-2 h-2 rounded-full bg-amber-400 animate-pulse flex-shrink-0"
           />
-          <span>Stopping\u2026</span>
+          <span className="hidden md:inline">Stopping\u2026</span>
         </>
       ) : (
         <>
           <Bot size={16} className="flex-shrink-0" />
-          <span>Auto-Pilot</span>
+          <span className="hidden md:inline">Auto-Pilot</span>
         </>
       )}
     </button>

@@ -57,8 +57,24 @@ test.describe('Header at 390px portrait', () => {
     await expect(page.getByTestId('plan-tasks-btn')).toBeVisible();
   });
 
+  test('plan tasks button is within viewport bounds (not clipped off-screen)', async ({ page }) => {
+    const btn = page.getByTestId('plan-tasks-btn');
+    const box = await btn.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box.x + box.width).toBeLessThanOrEqual(390);
+    expect(box.x).toBeGreaterThanOrEqual(0);
+  });
+
   test('autopilot toggle is visible', async ({ page }) => {
     await expect(page.getByTestId('autopilot-toggle')).toBeVisible();
+  });
+
+  test('autopilot toggle shows icon-only on mobile (text label hidden)', async ({ page }) => {
+    const toggle = page.getByTestId('autopilot-toggle');
+    // On mobile, the text span is hidden via CSS (hidden md:inline).
+    // Use the span locator + toBeHidden() since toContainText checks textContent (includes hidden text).
+    const textSpan = toggle.locator('span').filter({ hasText: 'Auto-Pilot' });
+    await expect(textSpan).toBeHidden();
   });
 
   test('mobile stats row is shown, desktop stats row is hidden', async ({ page }) => {

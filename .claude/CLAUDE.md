@@ -118,6 +118,16 @@ Query parameters for `/api/features`:
 - Use JetBrains Mono for code/numbers
 - Follow existing component patterns from rl-dashboard
 
+## Mobile Layout Rules (MANDATORY)
+
+**Every frontend change must consider portrait mobile (375–430px wide) layout:**
+
+1. **Text labels in compact header controls must be hidden on mobile.** Use `hidden md:inline` for text inside icon-buttons (AutoPilotToggle, etc.) so the icon-only variant fits on narrow screens.
+2. **Action buttons must never overflow the viewport.** Add `flex-shrink-0` to header action buttons so flex does not squeeze them into invisibility.
+3. **After adding any new header control**, verify it is visible at 375px: check `boundingBox().x + width <= 375` in a Playwright test.
+4. **When adding new navigation items or toolbar buttons**, run the responsive-header tests at 375px and 430px before merging.
+5. **Prefer icon-only at `< md` (< 768px)** for controls that combine icon + text label. Show full label only at `md:` and above.
+
 ## Data Source
 
 All feature data comes from `features.db`, a SQLite database with the following schema:

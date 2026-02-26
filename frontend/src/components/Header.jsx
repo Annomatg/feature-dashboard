@@ -61,7 +61,7 @@ function Header({ totalFeatures, inProgressCount, doneCount, onSettingsClick, on
           <Link
             to="/interview"
             data-testid="interview-nav-link"
-            className={`p-1.5 md:p-2 rounded transition-colors ${
+            className={`flex-shrink-0 p-1.5 md:p-2 rounded transition-colors ${
               isInterviewActive
                 ? 'bg-primary/15 text-primary'
                 : 'text-primary/70 hover:bg-primary/10 hover:text-primary'
@@ -79,7 +79,7 @@ function Header({ totalFeatures, inProgressCount, doneCount, onSettingsClick, on
           <button
             onClick={onPlanTasksClick}
             data-testid="plan-tasks-btn"
-            className="p-2 rounded hover:bg-surface-light transition-colors"
+            className="flex-shrink-0 p-2 rounded hover:bg-surface-light transition-colors"
             aria-label="Plan tasks with Claude"
             title="Plan Tasks"
           >
@@ -90,7 +90,7 @@ function Header({ totalFeatures, inProgressCount, doneCount, onSettingsClick, on
           <button
             onClick={onSettingsClick}
             data-testid="settings-btn"
-            className="p-2 rounded hover:bg-surface-light transition-colors"
+            className="flex-shrink-0 p-2 rounded hover:bg-surface-light transition-colors"
             aria-label="Open settings"
             title="Settings"
           >
