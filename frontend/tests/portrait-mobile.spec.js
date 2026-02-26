@@ -653,3 +653,131 @@ test.describe('Mobile touch drag-and-drop', () => {
     await deleteTestFeature(request, feature.id);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 8. Auto-pilot stopping state on mobile
+// ---------------------------------------------------------------------------
+
+const STOPPING_STATUS = {
+  enabled: false,
+  stopping: true,
+  current_feature_id: 42,
+  current_feature_name: 'Build the rocket',
+  current_feature_model: 'sonnet',
+  last_error: null,
+  log: [],
+};
+
+test.describe('Auto-pilot stopping state at 390px portrait', () => {
+  test('status bar is visible when stopping', async ({ page }) => {
+    // Override the global beforeEach route with stopping state
+    await page.route('**/api/autopilot/status', route => {
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(STOPPING_STATUS),
+      });
+    });
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    await expect(page.getByTestId('autopilot-status-bar')).toBeVisible();
+  });
+
+  test('stopping status bar shows "Stopping" label on mobile', async ({ page }) => {
+    await page.route('**/api/autopilot/status', route => {
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(STOPPING_STATUS),
+      });
+    });
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const label = page.getByTestId('autopilot-status-label');
+    await expect(label).toBeVisible();
+    await expect(label).toContainText('Stopping');
+  });
+
+  test('no horizontal overflow when stopping status bar is shown on mobile', async ({ page }) => {
+    await page.route('**/api/autopilot/status', route => {
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(STOPPING_STATUS),
+      });
+    });
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    await expect(page.getByTestId('autopilot-status-bar')).toBeVisible();
+    const scrollWidth = await page.evaluate(() => document.body.scrollWidth);
+    expect(scrollWidth).toBeLessThanOrEqual(390);
+  });
+
+  test('stopping status bar fits within 390px viewport', async ({ page }) => {
+    await page.route('**/api/autopilot/status', route => {
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(STOPPING_STATUS),
+      });
+    });
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const bar = page.getByTestId('autopilot-status-bar');
+    await expect(bar).toBeVisible();
+    const box = await bar.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box.x + box.width).toBeLessThanOrEqual(390);
+  });
+
+  test('stopping toggle dot is visible on mobile (amber indicator)', async ({ page }) => {
+    await page.route('**/api/autopilot/status', route => {
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(STOPPING_STATUS),
+      });
+    });
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    await expect(page.getByTestId('autopilot-stopping-dot')).toBeVisible();
+  });
+
+  test('stopping state disappears on mobile when process finishes', async ({ page }) => {
+    let isStopping = true;
+
+    await page.route('**/api/autopilot/status', route => {
+      const body = isStopping
+        ? STOPPING_STATUS
+        : { enabled: false, stopping: false, current_feature_id: null,
+            current_feature_name: null, current_feature_model: null, last_error: null, log: [] };
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(body),
+      });
+    });
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    // Status bar visible in stopping state
+    await expect(page.getByTestId('autopilot-status-bar')).toBeVisible();
+
+    // Simulate process finishing
+    isStopping = false;
+
+    // Bar should disappear within polling interval (2s when stopping)
+    await expect(page.getByTestId('autopilot-status-bar')).not.toBeVisible({ timeout: 8000 });
+  });
+});

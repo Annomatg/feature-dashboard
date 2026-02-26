@@ -3743,9 +3743,12 @@ class TestAutoPilotStoppingState:
                 # Block until the test tells us to unblock (after cancel).
                 wait_gate.wait(timeout=10)
 
+        # Pass a dummy db_path — the cancel path returns before touching the DB.
+        dummy_db_path = Path("/nonexistent/dummy.db")
+
         async def run():
             task = asyncio.create_task(
-                main_module._wait_for_stopping_process(BlockingProcess(), state)
+                main_module._wait_for_stopping_process(BlockingProcess(), state, dummy_db_path)
             )
             # Yield so the task starts and enters run_in_executor
             await asyncio.sleep(0)
@@ -3764,6 +3767,174 @@ class TestAutoPilotStoppingState:
         assert state.current_feature_id == 77
         assert state.current_feature_name == "New Feature"
         assert state.stopping is True  # still stopping (caller is responsible)
+
+    def test_wait_for_stopping_process_clears_in_progress_when_feature_interrupted(self):
+        """When the process exits normally and feature is still in_progress (not passing),
+        _wait_for_stopping_process clears the in_progress flag in the DB."""
+        import asyncio
+        import backend.main as main_module
+
+        # Set up an isolated test DB with an in-progress feature.
+        temp_dir = tempfile.mkdtemp()
+        temp_db_path = Path(temp_dir) / "features.db"
+        engine, session_maker = create_database(Path(temp_dir))
+
+        session = session_maker()
+        try:
+            feat = Feature(
+                id=10, priority=100, category="Test", name="Interrupted Feature",
+                description="Was in progress when autopilot stopped",
+                steps=[], passes=False, in_progress=True,
+            )
+            session.add(feat)
+            session.commit()
+        finally:
+            session.close()
+
+        state = main_module._AutoPilotState()
+        state.stopping = True
+        state.current_feature_id = 10
+        state.current_feature_name = "Interrupted Feature"
+
+        class ImmediatelyExitingProcess:
+            def wait(self):
+                pass  # Returns immediately — process has exited
+
+        async def run():
+            await main_module._wait_for_stopping_process(
+                ImmediatelyExitingProcess(), state, temp_db_path
+            )
+
+        asyncio.run(run())
+
+        # Verify DB: in_progress must be cleared
+        check_session = session_maker()
+        try:
+            updated = check_session.query(Feature).filter(Feature.id == 10).first()
+            assert updated.in_progress is False
+            assert updated.passes is False  # Should NOT have been marked as passing
+        finally:
+            check_session.close()
+
+        # State should be cleared
+        assert state.stopping is False
+        assert state.current_feature_id is None
+
+        engine.dispose()
+        try:
+            shutil.rmtree(temp_dir)
+        except PermissionError:
+            pass
+
+    def test_wait_for_stopping_process_does_not_clear_passing_feature(self):
+        """When the process exits after Claude successfully called feature_mark_passing,
+        _wait_for_stopping_process must NOT reset passes=True back to in_progress."""
+        import asyncio
+        import backend.main as main_module
+
+        temp_dir = tempfile.mkdtemp()
+        temp_db_path = Path(temp_dir) / "features.db"
+        engine, session_maker = create_database(Path(temp_dir))
+
+        session = session_maker()
+        try:
+            # Feature was already marked as passing by Claude before process exited
+            feat = Feature(
+                id=20, priority=100, category="Test", name="Completed Feature",
+                description="Marked passing before stop was detected",
+                steps=[], passes=True, in_progress=False,
+            )
+            session.add(feat)
+            session.commit()
+        finally:
+            session.close()
+
+        state = main_module._AutoPilotState()
+        state.stopping = True
+        state.current_feature_id = 20
+
+        class ImmediatelyExitingProcess:
+            def wait(self):
+                pass
+
+        async def run():
+            await main_module._wait_for_stopping_process(
+                ImmediatelyExitingProcess(), state, temp_db_path
+            )
+
+        asyncio.run(run())
+
+        check_session = session_maker()
+        try:
+            feat = check_session.query(Feature).filter(Feature.id == 20).first()
+            assert feat.passes is True
+            assert feat.in_progress is False  # unchanged
+        finally:
+            check_session.close()
+
+        engine.dispose()
+        try:
+            shutil.rmtree(temp_dir)
+        except PermissionError:
+            pass
+
+    def test_wait_for_stopping_process_no_feature_id_is_a_noop_for_db(self):
+        """When current_feature_id is None (no feature was running), no DB access occurs."""
+        import asyncio
+        import backend.main as main_module
+
+        state = main_module._AutoPilotState()
+        state.stopping = True
+        state.current_feature_id = None  # No feature was being tracked
+
+        class ImmediatelyExitingProcess:
+            def wait(self):
+                pass
+
+        # Pass a non-existent path — if the code tried to open it, it would error
+        dummy_db_path = Path("/nonexistent/ghost.db")
+
+        async def run():
+            await main_module._wait_for_stopping_process(
+                ImmediatelyExitingProcess(), state, dummy_db_path
+            )
+
+        # Should complete without error even with an invalid db_path
+        asyncio.run(run())
+
+        assert state.stopping is False
+        assert state.current_feature_id is None
+
+    def test_clear_interrupted_feature_in_progress_logs_success(self):
+        """_clear_interrupted_feature_in_progress logs an info entry on success."""
+        import backend.main as main_module
+
+        temp_dir = tempfile.mkdtemp()
+        temp_db_path = Path(temp_dir) / "features.db"
+        engine, session_maker = create_database(Path(temp_dir))
+
+        session = session_maker()
+        try:
+            feat = Feature(
+                id=30, priority=100, category="Test", name="Log Test Feature",
+                description="desc", steps=[], passes=False, in_progress=True,
+            )
+            session.add(feat)
+            session.commit()
+        finally:
+            session.close()
+
+        state = main_module._AutoPilotState()
+        main_module._clear_interrupted_feature_in_progress(30, state, temp_db_path)
+
+        log_messages = [entry.message for entry in state.log]
+        assert any("cleared in-progress" in msg.lower() for msg in log_messages)
+
+        engine.dispose()
+        try:
+            shutil.rmtree(temp_dir)
+        except PermissionError:
+            pass
 
 
 if __name__ == "__main__":

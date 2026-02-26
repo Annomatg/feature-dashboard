@@ -45,7 +45,11 @@ function AutoPilotLog() {
   const { data: status } = useQuery({
     queryKey: ['autopilot-status'],
     queryFn: fetchAutoPilotStatus,
-    refetchInterval: (query) => (query.state.data?.enabled ? 2000 : 10000),
+    refetchInterval: (query) => {
+      const data = query.state.data
+      if (data?.enabled || data?.stopping) return 2000
+      return 10000
+    },
   })
 
   const entries = status?.log ?? []
