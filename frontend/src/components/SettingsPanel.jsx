@@ -4,6 +4,9 @@ import { X, RotateCcw, Save } from 'lucide-react'
 const DEFAULT_PROMPT_TEMPLATE =
   'Please work on the following feature:\n\nFeature #{feature_id} [{category}]: {name}\n\nDescription:\n{description}\n\nSteps:\n{steps}'
 
+const DEFAULT_PLAN_TASKS_TEMPLATE =
+  'You are a Project Expansion Assistant for the Feature Dashboard project.\n\n## Project Context\n\nFeature Dashboard is a web application for visualizing and managing project features stored in a SQLite database. It uses React 18 + Vite on the frontend and FastAPI + SQLite on the backend. Features are tracked in a kanban board with TODO, In Progress, and Done lanes.\n\n**Available MCP tools:** feature_create_bulk, feature_create, feature_get_stats, feature_get_next, feature_mark_passing, feature_skip\n\n## User Request\n\nThe user wants to expand the project with the following:\n\n{description}\n\n## Your Role\n\nFollow the expand-project process:\n\n**Phase 1: Clarify Requirements**\nAsk focused questions to fully understand what the user wants:\n- What the user sees (UI/UX flows)\n- What actions they can take\n- What happens as a result\n- Error states and edge cases\n\n**Phase 2: Present Feature Breakdown**\nCount testable behaviors and present a breakdown by category for approval before creating anything:\n- `functional` - Core functionality, CRUD operations, workflows\n- `style` - Visual design, layout, responsive behavior\n- `navigation` - Routing, links, breadcrumbs\n- `error-handling` - Error states, validation, edge cases\n- `data` - Data integrity, persistence\n\n**Phase 3: Create Features**\nOnce the user approves the breakdown, call `feature_create_bulk` with ALL features at once.\n\nStart by greeting the user, summarizing what they want to add, and asking clarifying questions.'
+
 async function fetchSettings() {
   const response = await fetch('/api/settings')
   if (!response.ok) throw new Error('Failed to load settings')
@@ -26,6 +29,8 @@ async function saveSettings(settings) {
 function SettingsPanel({ onClose }) {
   const [promptTemplate, setPromptTemplate] = useState('')
   const [savedTemplate, setSavedTemplate] = useState('')
+  const [planTemplate, setPlanTemplate] = useState('')
+  const [savedPlanTemplate, setSavedPlanTemplate] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [saveMessage, setSaveMessage] = useState(null)
@@ -37,10 +42,14 @@ function SettingsPanel({ onClose }) {
       .then(data => {
         setPromptTemplate(data.claude_prompt_template)
         setSavedTemplate(data.claude_prompt_template)
+        setPlanTemplate(data.plan_tasks_prompt_template ?? DEFAULT_PLAN_TASKS_TEMPLATE)
+        setSavedPlanTemplate(data.plan_tasks_prompt_template ?? DEFAULT_PLAN_TASKS_TEMPLATE)
       })
       .catch(() => {
         setPromptTemplate(DEFAULT_PROMPT_TEMPLATE)
         setSavedTemplate(DEFAULT_PROMPT_TEMPLATE)
+        setPlanTemplate(DEFAULT_PLAN_TASKS_TEMPLATE)
+        setSavedPlanTemplate(DEFAULT_PLAN_TASKS_TEMPLATE)
       })
       .finally(() => setIsLoading(false))
   }, [])
@@ -54,14 +63,18 @@ function SettingsPanel({ onClose }) {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
 
-  const isDirty = promptTemplate !== savedTemplate
+  const isDirty = promptTemplate !== savedTemplate || planTemplate !== savedPlanTemplate
 
   const handleSave = async () => {
     setIsSaving(true)
     setSaveMessage(null)
     try {
-      await saveSettings({ claude_prompt_template: promptTemplate })
+      await saveSettings({
+        claude_prompt_template: promptTemplate,
+        plan_tasks_prompt_template: planTemplate,
+      })
       setSavedTemplate(promptTemplate)
+      setSavedPlanTemplate(planTemplate)
       setSaveMessage({ type: 'success', text: 'Settings saved!' })
     } catch (err) {
       setSaveMessage({ type: 'error', text: err.message || 'Failed to save' })
@@ -69,10 +82,6 @@ function SettingsPanel({ onClose }) {
       setIsSaving(false)
       setTimeout(() => setSaveMessage(null), 3000)
     }
-  }
-
-  const handleReset = () => {
-    setPromptTemplate(DEFAULT_PROMPT_TEMPLATE)
   }
 
   return (
@@ -114,34 +123,77 @@ function SettingsPanel({ onClose }) {
         </div>
 
         {/* Scrollable content */}
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-6 custom-scrollbar">
           {isLoading ? (
             <div className="flex items-center justify-center py-8">
               <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
             </div>
           ) : (
-            <div>
-              <label className="block text-xs font-mono text-text-secondary mb-2 uppercase tracking-wide">
-                Claude Prompt Template
-              </label>
-              <p className="text-xs text-text-secondary mb-3 leading-relaxed">
-                Template used when launching Claude for a feature.
-                Available variables: <code className="font-mono text-primary">{'{feature_id}'}</code>,{' '}
-                <code className="font-mono text-primary">{'{category}'}</code>,{' '}
-                <code className="font-mono text-primary">{'{name}'}</code>,{' '}
-                <code className="font-mono text-primary">{'{description}'}</code>,{' '}
-                <code className="font-mono text-primary">{'{steps}'}</code>
-              </p>
-              <textarea
-                data-testid="prompt-template-input"
-                value={promptTemplate}
-                onChange={(e) => setPromptTemplate(e.target.value)}
-                className="w-full bg-background border border-border rounded px-3 py-2.5 text-sm text-text-primary font-mono focus:outline-none focus:border-primary transition-colors resize-none custom-scrollbar"
-                rows={14}
-                placeholder="Enter prompt template..."
-                spellCheck={false}
-              />
-            </div>
+            <>
+              {/* Autopilot prompt template */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-xs font-mono text-text-secondary uppercase tracking-wide">
+                    Claude Prompt Template
+                  </label>
+                  <button
+                    onClick={() => setPromptTemplate(DEFAULT_PROMPT_TEMPLATE)}
+                    data-testid="settings-reset-btn"
+                    title="Reset to default"
+                    className="p-1 rounded text-text-secondary hover:text-text-primary hover:bg-surface-light transition-colors"
+                  >
+                    <RotateCcw size={12} />
+                  </button>
+                </div>
+                <p className="text-xs text-text-secondary mb-3 leading-relaxed">
+                  Template used when launching Claude for a feature.
+                  Available variables: <code className="font-mono text-primary">{'{feature_id}'}</code>,{' '}
+                  <code className="font-mono text-primary">{'{category}'}</code>,{' '}
+                  <code className="font-mono text-primary">{'{name}'}</code>,{' '}
+                  <code className="font-mono text-primary">{'{description}'}</code>,{' '}
+                  <code className="font-mono text-primary">{'{steps}'}</code>
+                </p>
+                <textarea
+                  data-testid="prompt-template-input"
+                  value={promptTemplate}
+                  onChange={(e) => setPromptTemplate(e.target.value)}
+                  className="w-full bg-background border border-border rounded px-3 py-2.5 text-sm text-text-primary font-mono focus:outline-none focus:border-primary transition-colors resize-none custom-scrollbar"
+                  rows={10}
+                  placeholder="Enter prompt template..."
+                  spellCheck={false}
+                />
+              </div>
+
+              {/* Plan tasks prompt template */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-xs font-mono text-text-secondary uppercase tracking-wide">
+                    Plan Tasks Prompt Template
+                  </label>
+                  <button
+                    onClick={() => setPlanTemplate(DEFAULT_PLAN_TASKS_TEMPLATE)}
+                    data-testid="plan-prompt-reset-btn"
+                    title="Reset to default"
+                    className="p-1 rounded text-text-secondary hover:text-text-primary hover:bg-surface-light transition-colors"
+                  >
+                    <RotateCcw size={12} />
+                  </button>
+                </div>
+                <p className="text-xs text-text-secondary mb-3 leading-relaxed">
+                  Template used when launching an interactive planning session.
+                  Available variable: <code className="font-mono text-primary">{'{description}'}</code>
+                </p>
+                <textarea
+                  data-testid="plan-prompt-template-input"
+                  value={planTemplate}
+                  onChange={(e) => setPlanTemplate(e.target.value)}
+                  className="w-full bg-background border border-border rounded px-3 py-2.5 text-sm text-text-primary font-mono focus:outline-none focus:border-primary transition-colors resize-none custom-scrollbar"
+                  rows={14}
+                  placeholder="Enter plan tasks prompt template..."
+                  spellCheck={false}
+                />
+              </div>
+            </>
           )}
         </div>
 
@@ -155,25 +207,15 @@ function SettingsPanel({ onClose }) {
               {saveMessage.text}
             </p>
           )}
-          <div className="flex gap-2">
-            <button
-              onClick={handleReset}
-              data-testid="settings-reset-btn"
-              title="Reset to default"
-              className="p-2 rounded border border-border text-text-secondary hover:text-text-primary hover:bg-surface-light transition-colors"
-            >
-              <RotateCcw size={14} />
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={isSaving || !isDirty}
-              data-testid="settings-save-btn"
-              className="flex-1 py-2 rounded font-mono text-sm font-semibold border border-primary text-primary hover:bg-primary hover:text-black transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Save size={14} />
-              {isSaving ? 'Saving...' : 'Save Settings'}
-            </button>
-          </div>
+          <button
+            onClick={handleSave}
+            disabled={isSaving || !isDirty}
+            data-testid="settings-save-btn"
+            className="w-full py-2 rounded font-mono text-sm font-semibold border border-primary text-primary hover:bg-primary hover:text-black transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Save size={14} />
+            {isSaving ? 'Saving...' : 'Save Settings'}
+          </button>
         </div>
       </div>
     </>

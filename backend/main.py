@@ -536,16 +536,21 @@ def feature_to_response(feature, comment_counts: dict[int, int]) -> "FeatureResp
 
 def load_settings() -> dict:
     """Load settings from settings.json, returning defaults if not found."""
+    defaults = {
+        "claude_prompt_template": DEFAULT_PROMPT_TEMPLATE,
+        "plan_tasks_prompt_template": PLAN_TASKS_PROMPT_TEMPLATE,
+    }
     if not SETTINGS_FILE.exists():
-        return {"claude_prompt_template": DEFAULT_PROMPT_TEMPLATE}
+        return defaults
     try:
         with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        if "claude_prompt_template" not in data:
-            data["claude_prompt_template"] = DEFAULT_PROMPT_TEMPLATE
+        for key, default in defaults.items():
+            if key not in data:
+                data[key] = default
         return data
     except Exception:
-        return {"claude_prompt_template": DEFAULT_PROMPT_TEMPLATE}
+        return defaults
 
 
 def save_settings(settings: dict) -> None:
@@ -725,11 +730,13 @@ class PlanTasksResponse(BaseModel):
 class SettingsResponse(BaseModel):
     """Application settings response."""
     claude_prompt_template: str
+    plan_tasks_prompt_template: str
 
 
 class UpdateSettingsRequest(BaseModel):
     """Request to update application settings."""
     claude_prompt_template: str
+    plan_tasks_prompt_template: Optional[str] = None
 
 
 class CommentResponse(BaseModel):
@@ -1389,7 +1396,15 @@ async def get_settings():
 async def update_settings(request: UpdateSettingsRequest):
     """Update application settings."""
     try:
-        settings = {"claude_prompt_template": request.claude_prompt_template}
+        current = load_settings()
+        settings = {
+            "claude_prompt_template": request.claude_prompt_template,
+            "plan_tasks_prompt_template": (
+                request.plan_tasks_prompt_template
+                if request.plan_tasks_prompt_template is not None
+                else current.get("plan_tasks_prompt_template", PLAN_TASKS_PROMPT_TEMPLATE)
+            ),
+        }
         save_settings(settings)
         return SettingsResponse(**settings)
     except Exception as e:
@@ -1523,7 +1538,9 @@ async def plan_tasks(request: PlanTasksRequest):
     if not request.description.strip():
         raise HTTPException(status_code=400, detail="Description cannot be empty")
 
-    prompt = PLAN_TASKS_PROMPT_TEMPLATE.format(description=request.description.strip())
+    settings = load_settings()
+    template = settings.get("plan_tasks_prompt_template", PLAN_TASKS_PROMPT_TEMPLATE)
+    prompt = template.format(description=request.description.strip())
     working_dir = str(_current_db_path.parent)
 
     try:

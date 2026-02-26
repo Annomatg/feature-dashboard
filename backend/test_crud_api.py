@@ -931,7 +931,7 @@ class TestLaunchClaudeHiddenExecution:
 # ==============================================================================
 
 def test_get_settings_returns_defaults(client, tmp_path, monkeypatch):
-    """GET /api/settings returns default template when no settings.json exists."""
+    """GET /api/settings returns default templates when no settings.json exists."""
     import backend.main as main_module
     # Point SETTINGS_FILE to a non-existent file in tmp_path
     monkeypatch.setattr(main_module, 'SETTINGS_FILE', tmp_path / "settings_nonexistent.json")
@@ -941,6 +941,8 @@ def test_get_settings_returns_defaults(client, tmp_path, monkeypatch):
     data = response.json()
     assert "claude_prompt_template" in data
     assert len(data["claude_prompt_template"]) > 0
+    assert "plan_tasks_prompt_template" in data
+    assert len(data["plan_tasks_prompt_template"]) > 0
 
 
 def test_put_settings_saves_and_returns(client, tmp_path, monkeypatch):
@@ -950,16 +952,43 @@ def test_put_settings_saves_and_returns(client, tmp_path, monkeypatch):
     monkeypatch.setattr(main_module, 'SETTINGS_FILE', settings_file)
 
     new_template = "Custom prompt: {name} - {description}"
-    response = client.put("/api/settings", json={"claude_prompt_template": new_template})
+    new_plan_template = "Custom plan: {description}"
+    response = client.put("/api/settings", json={
+        "claude_prompt_template": new_template,
+        "plan_tasks_prompt_template": new_plan_template,
+    })
     assert response.status_code == 200
     data = response.json()
     assert data["claude_prompt_template"] == new_template
+    assert data["plan_tasks_prompt_template"] == new_plan_template
 
     # Verify it was saved to disk
     assert settings_file.exists()
     import json
     saved = json.loads(settings_file.read_text())
     assert saved["claude_prompt_template"] == new_template
+    assert saved["plan_tasks_prompt_template"] == new_plan_template
+
+
+def test_put_settings_preserves_plan_template_when_omitted(client, tmp_path, monkeypatch):
+    """PUT /api/settings preserves plan_tasks_prompt_template when not provided."""
+    import backend.main as main_module
+    settings_file = tmp_path / "test_settings.json"
+    monkeypatch.setattr(main_module, 'SETTINGS_FILE', settings_file)
+
+    # Save a custom plan template first
+    custom_plan = "My custom plan: {description}"
+    client.put("/api/settings", json={
+        "claude_prompt_template": "original",
+        "plan_tasks_prompt_template": custom_plan,
+    })
+
+    # Update only the autopilot template (omit plan_tasks_prompt_template)
+    response = client.put("/api/settings", json={"claude_prompt_template": "updated"})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["claude_prompt_template"] == "updated"
+    assert data["plan_tasks_prompt_template"] == custom_plan
 
 
 def test_get_settings_after_save(client, tmp_path, monkeypatch):
@@ -970,13 +999,51 @@ def test_get_settings_after_save(client, tmp_path, monkeypatch):
 
     # Save a custom template
     custom_template = "My custom template {feature_id}"
-    client.put("/api/settings", json={"claude_prompt_template": custom_template})
+    custom_plan = "My plan template {description}"
+    client.put("/api/settings", json={
+        "claude_prompt_template": custom_template,
+        "plan_tasks_prompt_template": custom_plan,
+    })
 
     # Now get and verify
     response = client.get("/api/settings")
     assert response.status_code == 200
     data = response.json()
     assert data["claude_prompt_template"] == custom_template
+    assert data["plan_tasks_prompt_template"] == custom_plan
+
+
+def test_plan_tasks_uses_settings_template(client, tmp_path, monkeypatch):
+    """POST /api/plan-tasks uses the plan_tasks_prompt_template from settings."""
+    import backend.main as main_module
+
+    # Point settings file to temp dir
+    settings_file = tmp_path / "test_settings.json"
+    monkeypatch.setattr(main_module, 'SETTINGS_FILE', settings_file)
+
+    # Save a custom plan template
+    custom_plan = "Custom plan for: {description}"
+    client.put("/api/settings", json={
+        "claude_prompt_template": "some autopilot template",
+        "plan_tasks_prompt_template": custom_plan,
+    })
+
+    # Mock subprocess.Popen to avoid actually launching Claude
+    import subprocess
+    mock_calls = []
+
+    class MockPopen:
+        def __init__(self, *args, **kwargs):
+            mock_calls.append(kwargs)
+
+    monkeypatch.setattr(subprocess, 'Popen', MockPopen)
+
+    response = client.post("/api/plan-tasks", json={"description": "Add login page"})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["launched"] is True
+    assert "Custom plan for:" in data["prompt"]
+    assert "Add login page" in data["prompt"]
 
 
 # ==============================================================================
