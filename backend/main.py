@@ -1745,9 +1745,7 @@ async def enable_autopilot():
         session.close()
 
 
-async def _wait_for_stopping_process(
-    proc: "subprocess.Popen", state: "_AutoPilotState", db_path: Path
-) -> None:
+async def _wait_for_stopping_process(proc: "subprocess.Popen", state: "_AutoPilotState") -> None:
     """Wait for a Claude process to exit after autopilot was manually disabled.
 
     Called when terminate() was sent but the process (or a child it spawned on
@@ -1758,9 +1756,9 @@ async def _wait_for_stopping_process(
     the process finished) we return immediately WITHOUT touching state, because
     enable_autopilot() has already taken ownership of the state fields.
 
-    After the process exits, if the feature was not marked as passing (i.e.
-    Claude was interrupted before finishing), its in_progress flag is cleared
-    so the feature returns to the TODO lane instead of being stuck in In Progress.
+    Note: DB state (in_progress, passes) is exclusively managed by the Claude
+    instance via MCP tools. The backend only manages process lifecycle and
+    in-memory autopilot state.
     """
     try:
         loop = asyncio.get_event_loop()
@@ -1771,8 +1769,6 @@ async def _wait_for_stopping_process(
         return
     except Exception:
         pass
-    # Capture feature_id before clearing state so we can clean up the DB.
-    interrupted_feature_id = state.current_feature_id
     # Normal completion: process has exited, clear stopping state.
     state.stopping = False
     state.current_feature_id = None
@@ -1781,47 +1777,6 @@ async def _wait_for_stopping_process(
     state.active_process = None
     state.monitor_task = None
     _append_log(state, 'info', "Claude process finished — auto-pilot fully stopped")
-    # If the feature was not marked as passing before the process exited
-    # (Claude was interrupted mid-task), clear its in_progress flag so it
-    # returns to the TODO lane rather than remaining stuck in In Progress.
-    if interrupted_feature_id is not None:
-        _clear_interrupted_feature_in_progress(interrupted_feature_id, state, db_path)
-
-
-def _clear_interrupted_feature_in_progress(
-    feature_id: int, state: "_AutoPilotState", db_path: Path
-) -> None:
-    """Clear the in_progress flag for a feature that was interrupted by manual stop.
-
-    Opens a fresh DB session, checks whether the feature is still in_progress
-    but not yet passing (i.e. Claude was killed before calling feature_mark_passing),
-    and if so resets in_progress to False so the card returns to the TODO lane.
-    """
-    from sqlalchemy import create_engine as _create_engine
-    from sqlalchemy.orm import sessionmaker as _sessionmaker
-    from api.database import Feature as _Feature
-    from datetime import datetime as _datetime
-
-    try:
-        db_url = f"sqlite:///{db_path.as_posix()}"
-        engine = _create_engine(db_url, connect_args={"check_same_thread": False})
-        sm = _sessionmaker(autocommit=False, autoflush=False, bind=engine)
-        session = sm()
-        try:
-            feat = session.query(_Feature).filter(_Feature.id == feature_id).first()
-            if feat is not None and feat.in_progress and not feat.passes:
-                feat.in_progress = False
-                feat.modified_at = _datetime.now()
-                session.commit()
-                _append_log(
-                    state, 'info',
-                    f"Feature #{feature_id} — cleared in-progress flag after manual stop"
-                )
-        finally:
-            session.close()
-            engine.dispose()
-    except Exception as err:
-        _append_log(state, 'error', f"Failed to clear in-progress for #{feature_id}: {err}")
 
 
 @app.post("/api/autopilot/disable", response_model=AutoPilotStatusResponse)
@@ -1869,7 +1824,7 @@ async def disable_autopilot():
             _write_autopilot_to_config(False)
             # Spawn a task that waits for the process and clears stopping state.
             state.monitor_task = asyncio.create_task(
-                _wait_for_stopping_process(proc, state, _current_db_path)
+                _wait_for_stopping_process(proc, state)
             )
             return AutoPilotStatusResponse(
                 enabled=False,
