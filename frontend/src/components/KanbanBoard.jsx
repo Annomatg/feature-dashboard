@@ -12,6 +12,7 @@ import AutoPilotStatusBar from './AutoPilotStatusBar'
 import AutoPilotErrorBanner from './AutoPilotErrorBanner'
 import AutoPilotLog from './AutoPilotLog'
 import { useMobileDrag } from '../hooks/useMobileDrag'
+import { useSwipeLane } from '../hooks/useSwipeLane'
 
 const LANE_CONFIG = {
   todo: {
@@ -260,6 +261,13 @@ function KanbanBoard() {
     setActiveMobileLane,
   })
 
+  // ── Mobile swipe left/right to switch lanes ────────────────────────────────
+  const swipeLane = useSwipeLane({
+    activeMobileLane,
+    setActiveMobileLane,
+    isDragging: mobileDrag.isDragging,
+  })
+
   if (isLoading) {
     return (
       <div className="h-screen bg-background flex items-center justify-center">
@@ -426,7 +434,12 @@ function KanbanBoard() {
         })}
       </div>
 
-      <div className="flex-1 overflow-hidden px-4 pb-4 pt-3 md:px-6 md:pb-6 md:pt-6">
+      <div
+        className="flex-1 overflow-hidden px-4 pb-4 pt-3 md:px-6 md:pb-6 md:pt-6"
+        data-testid="kanban-lanes"
+        onTouchStart={swipeLane.onTouchStart}
+        onTouchEnd={swipeLane.onTouchEnd}
+      >
         {/* Kanban Board — 1 column on mobile (tab-switched), 3 columns on desktop */}
         <div className="max-w-[1800px] mx-auto grid grid-cols-1 md:grid-cols-3 grid-rows-1 gap-6 h-full">
 
