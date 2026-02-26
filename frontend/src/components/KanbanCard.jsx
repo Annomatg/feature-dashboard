@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { FileText, MessageSquare } from 'lucide-react'
 
 // Detect touch-only devices once at module load time.
@@ -6,6 +7,11 @@ import { FileText, MessageSquare } from 'lucide-react'
 const isTouchDevice =
   typeof window !== 'undefined' &&
   (navigator.maxTouchPoints > 0 || 'ontouchstart' in window)
+
+// Long press duration (ms) before the move sheet opens
+const LONG_PRESS_MS = 500
+// Max pixels of movement before a press is no longer considered a long press
+const LONG_PRESS_MOVE_THRESHOLD = 10
 
 function KanbanCard({
   feature,
@@ -17,8 +23,14 @@ function KanbanCard({
   dragState,
   onDragStart,
   onDragEnd,
+  onLongPress,
 }) {
   const hasDescription = feature.description && feature.description.trim().length > 0
+
+  // Long-press state (refs to avoid re-renders)
+  const longPressTimer = useRef(null)
+  const touchStartPos = useRef(null)
+  const longPressFired = useRef(false)
 
   const handleDragStart = (e) => {
     e.stopPropagation()
@@ -38,12 +50,56 @@ function KanbanCard({
     onDragEnd?.()
   }
 
+  // Touch handlers for long-press detection on mobile
+  const handleTouchStart = (e) => {
+    const touch = e.touches[0]
+    touchStartPos.current = { x: touch.clientX, y: touch.clientY }
+    longPressFired.current = false
+    longPressTimer.current = setTimeout(() => {
+      longPressFired.current = true
+      longPressTimer.current = null
+      // Optional haptic feedback on devices that support it
+      navigator.vibrate?.(10)
+      onLongPress?.(feature)
+    }, LONG_PRESS_MS)
+  }
+
+  const handleTouchMove = (e) => {
+    if (!longPressTimer.current || !touchStartPos.current) return
+    const touch = e.touches[0]
+    const dx = Math.abs(touch.clientX - touchStartPos.current.x)
+    const dy = Math.abs(touch.clientY - touchStartPos.current.y)
+    if (dx > LONG_PRESS_MOVE_THRESHOLD || dy > LONG_PRESS_MOVE_THRESHOLD) {
+      clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+    }
+  }
+
+  const handleTouchEnd = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+    }
+  }
+
+  // Prevent click from opening detail panel when a long press just fired
+  const handleClick = () => {
+    if (longPressFired.current) {
+      longPressFired.current = false
+      return
+    }
+    onClick?.(feature)
+  }
+
   return (
     <div
       draggable={!isTouchDevice}
       onDragStart={!isTouchDevice ? handleDragStart : undefined}
       onDragEnd={!isTouchDevice ? handleDragEnd : undefined}
-      onClick={() => onClick?.(feature)}
+      onTouchStart={onLongPress ? handleTouchStart : undefined}
+      onTouchMove={onLongPress ? handleTouchMove : undefined}
+      onTouchEnd={onLongPress ? handleTouchEnd : undefined}
+      onClick={handleClick}
       data-testid="kanban-card"
       data-feature-id={feature.id}
       className={`bg-surface border rounded-lg p-3 md:p-4 transition-all duration-200 group relative select-none ${

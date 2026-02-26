@@ -66,6 +66,7 @@ function KanbanLane({
   dragState,
   onDragStart,
   onDragEnd,
+  onLongPress,
   isDoneLane = false,
   hasMore = false,
   onShowMore,
@@ -297,6 +298,7 @@ function KanbanLane({
                           dragState={dragState}
                           onDragStart={onDragStart}
                           onDragEnd={onDragEnd}
+                          onLongPress={onLongPress}
                         />
                         {dropTargetId === feature.id && dropPosition === 'after' && (
                           <div
@@ -368,6 +370,7 @@ function KanbanLane({
                     dragState={dragState}
                     onDragStart={onDragStart}
                     onDragEnd={onDragEnd}
+                    onLongPress={onLongPress}
                   />
                   {/* Drop indicator below */}
                   {dropTargetId === feature.id && dropPosition === 'after' && (

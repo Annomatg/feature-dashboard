@@ -332,3 +332,266 @@ test.describe('Settings panel scrolling at 390px portrait', () => {
     await expect(saveBtn).toBeVisible();
   });
 });
+
+// ---------------------------------------------------------------------------
+// 7. Mobile card move via long press (touch drag-and-drop alternative)
+// ---------------------------------------------------------------------------
+
+const API = 'http://localhost:8001';
+
+async function createTestFeature(request, overrides = {}) {
+  const response = await request.post(`${API}/api/features`, {
+    data: {
+      category: 'Test',
+      name: 'Mobile Move Test Card',
+      description: 'Created for mobile long-press move test',
+      steps: [],
+      ...overrides,
+    },
+  });
+  expect(response.ok()).toBeTruthy();
+  return response.json();
+}
+
+async function deleteTestFeature(request, id) {
+  await request.delete(`${API}/api/features/${id}`);
+}
+
+async function getTestFeature(request, id) {
+  const res = await request.get(`${API}/api/features/${id}`);
+  return res.json();
+}
+
+/**
+ * Simulate a long press on a kanban card by dispatching TouchEvent sequences.
+ * Waits 600ms (past the 500ms LONG_PRESS_MS threshold) before lifting the finger.
+ */
+async function simulateLongPress(page, featureId) {
+  await page.evaluate((id) => {
+    const card = document.querySelector(`[data-feature-id="${id}"]`);
+    if (!card) return;
+    const rect = card.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const touch = new Touch({ identifier: 1, target: card, clientX: x, clientY: y, pageX: x, pageY: y });
+    card.dispatchEvent(new TouchEvent('touchstart', {
+      bubbles: true,
+      cancelable: true,
+      touches: [touch],
+      changedTouches: [touch],
+    }));
+  }, featureId);
+
+  // Hold for longer than LONG_PRESS_MS (500ms) to trigger the timer
+  await page.waitForTimeout(650);
+
+  await page.evaluate((id) => {
+    const card = document.querySelector(`[data-feature-id="${id}"]`);
+    if (!card) return;
+    card.dispatchEvent(new TouchEvent('touchend', {
+      bubbles: true,
+      cancelable: true,
+      touches: [],
+      changedTouches: [],
+    }));
+  }, featureId);
+}
+
+test.describe('Mobile card move via long press', () => {
+  test('long press on a card opens the move sheet', async ({ page, request }) => {
+    const feature = await createTestFeature(request, { name: 'Long Press Opens Sheet' });
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const card = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Long Press Opens Sheet' });
+    await card.waitFor({ state: 'visible' });
+
+    await simulateLongPress(page, feature.id);
+
+    await expect(page.getByTestId('mobile-move-sheet')).toBeVisible({ timeout: 3000 });
+
+    await deleteTestFeature(request, feature.id);
+  });
+
+  test('move sheet shows the feature name', async ({ page, request }) => {
+    const feature = await createTestFeature(request, { name: 'Sheet Shows Feature Name' });
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const card = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Sheet Shows Feature Name' });
+    await card.waitFor({ state: 'visible' });
+
+    await simulateLongPress(page, feature.id);
+
+    const sheet = page.getByTestId('mobile-move-sheet');
+    await expect(sheet).toBeVisible({ timeout: 3000 });
+    await expect(sheet).toContainText('Sheet Shows Feature Name');
+
+    await deleteTestFeature(request, feature.id);
+  });
+
+  test('move sheet has buttons for all three lanes', async ({ page, request }) => {
+    const feature = await createTestFeature(request, { name: 'Sheet Has Lane Buttons' });
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const card = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Sheet Has Lane Buttons' });
+    await card.waitFor({ state: 'visible' });
+
+    await simulateLongPress(page, feature.id);
+
+    await expect(page.getByTestId('mobile-move-sheet')).toBeVisible({ timeout: 3000 });
+    await expect(page.getByTestId('move-to-todo')).toBeVisible();
+    await expect(page.getByTestId('move-to-inProgress')).toBeVisible();
+    await expect(page.getByTestId('move-to-done')).toBeVisible();
+
+    await deleteTestFeature(request, feature.id);
+  });
+
+  test('TODO lane button is marked as current for a TODO card', async ({ page, request }) => {
+    const feature = await createTestFeature(request, { name: 'TODO Current Lane Test' });
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const card = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'TODO Current Lane Test' });
+    await card.waitFor({ state: 'visible' });
+
+    await simulateLongPress(page, feature.id);
+
+    await expect(page.getByTestId('mobile-move-sheet')).toBeVisible({ timeout: 3000 });
+
+    const todoBtn = page.getByTestId('move-to-todo');
+    await expect(todoBtn).toContainText('current');
+    await expect(todoBtn).toBeDisabled();
+
+    await deleteTestFeature(request, feature.id);
+  });
+
+  test('tapping IN PROGRESS in sheet moves card and closes sheet', async ({ page, request }) => {
+    const feature = await createTestFeature(request, { name: 'Mobile Move To InProgress' });
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const card = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Mobile Move To InProgress' });
+    await card.waitFor({ state: 'visible' });
+
+    await simulateLongPress(page, feature.id);
+
+    await expect(page.getByTestId('mobile-move-sheet')).toBeVisible({ timeout: 3000 });
+    await page.getByTestId('move-to-inProgress').click();
+
+    // Sheet should close
+    await expect(page.getByTestId('mobile-move-sheet')).not.toBeVisible({ timeout: 3000 });
+
+    // Toast notification appears
+    await expect(page.getByText('Moved to In Progress', { exact: true })).toBeVisible({ timeout: 8000 });
+
+    // Verify API state updated
+    await page.waitForTimeout(500);
+    const updated = await getTestFeature(request, feature.id);
+    expect(updated.in_progress).toBe(true);
+    expect(updated.passes).toBe(false);
+
+    await deleteTestFeature(request, feature.id);
+  });
+
+  test('tapping DONE in sheet moves card to done lane', async ({ page, request }) => {
+    const feature = await createTestFeature(request, { name: 'Mobile Move To Done' });
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const card = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Mobile Move To Done' });
+    await card.waitFor({ state: 'visible' });
+
+    await simulateLongPress(page, feature.id);
+
+    await expect(page.getByTestId('mobile-move-sheet')).toBeVisible({ timeout: 3000 });
+    await page.getByTestId('move-to-done').click();
+
+    await expect(page.getByTestId('mobile-move-sheet')).not.toBeVisible({ timeout: 3000 });
+    await expect(page.getByText('Moved to Done', { exact: true })).toBeVisible({ timeout: 8000 });
+
+    await page.waitForTimeout(500);
+    const updated = await getTestFeature(request, feature.id);
+    expect(updated.passes).toBe(true);
+    expect(updated.in_progress).toBe(false);
+
+    await deleteTestFeature(request, feature.id);
+  });
+
+  test('closing sheet via backdrop keeps card in original state', async ({ page, request }) => {
+    const feature = await createTestFeature(request, { name: 'Mobile Sheet Dismiss Test' });
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const card = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Mobile Sheet Dismiss Test' });
+    await card.waitFor({ state: 'visible' });
+
+    await simulateLongPress(page, feature.id);
+
+    await expect(page.getByTestId('mobile-move-sheet')).toBeVisible({ timeout: 3000 });
+    await page.getByTestId('mobile-move-sheet-backdrop').click();
+
+    await expect(page.getByTestId('mobile-move-sheet')).not.toBeVisible({ timeout: 2000 });
+
+    // Feature should remain in TODO
+    const current = await getTestFeature(request, feature.id);
+    expect(current.in_progress).toBe(false);
+    expect(current.passes).toBe(false);
+
+    await deleteTestFeature(request, feature.id);
+  });
+
+  test('closing sheet via X button keeps card in original state', async ({ page, request }) => {
+    const feature = await createTestFeature(request, { name: 'Mobile Sheet Close Btn Test' });
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const card = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Mobile Sheet Close Btn Test' });
+    await card.waitFor({ state: 'visible' });
+
+    await simulateLongPress(page, feature.id);
+
+    await expect(page.getByTestId('mobile-move-sheet')).toBeVisible({ timeout: 3000 });
+    await page.getByTestId('mobile-move-sheet-close').click();
+
+    await expect(page.getByTestId('mobile-move-sheet')).not.toBeVisible({ timeout: 2000 });
+
+    const current = await getTestFeature(request, feature.id);
+    expect(current.in_progress).toBe(false);
+    expect(current.passes).toBe(false);
+
+    await deleteTestFeature(request, feature.id);
+  });
+
+  test('move sheet fits within 390px viewport (no overflow)', async ({ page, request }) => {
+    const feature = await createTestFeature(request, { name: 'Sheet Fits Viewport Test' });
+
+    await page.reload();
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const card = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Sheet Fits Viewport Test' });
+    await card.waitFor({ state: 'visible' });
+
+    await simulateLongPress(page, feature.id);
+
+    await expect(page.getByTestId('mobile-move-sheet')).toBeVisible({ timeout: 3000 });
+
+    const box = await page.getByTestId('mobile-move-sheet').boundingBox();
+    expect(box).not.toBeNull();
+    expect(box.width).toBeLessThanOrEqual(390);
+    expect(box.x).toBeGreaterThanOrEqual(0);
+
+    // Dismiss
+    await page.getByTestId('mobile-move-sheet-close').click();
+    await deleteTestFeature(request, feature.id);
+  });
+});

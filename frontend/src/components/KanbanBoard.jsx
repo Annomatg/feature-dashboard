@@ -5,6 +5,7 @@ import Toast from './Toast'
 import DetailPanel from './DetailPanel'
 import SettingsPanel from './SettingsPanel'
 import PlanTasksModal from './PlanTasksModal'
+import MobileMoveSheet from './MobileMoveSheet'
 import Header from './Header'
 import InfoBar from './InfoBar'
 import AutoPilotStatusBar from './AutoPilotStatusBar'
@@ -133,6 +134,8 @@ function KanbanBoard() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [planTasksOpen, setPlanTasksOpen] = useState(false)
   const [activeMobileLane, setActiveMobileLane] = useState('todo')
+  // { feature, fromLane } — set when a card is long-pressed on mobile
+  const [mobileMoveTarget, setMobileMoveTarget] = useState(null)
 
   const queryClient = useQueryClient()
   const dragState = useRef(null)
@@ -350,6 +353,16 @@ function KanbanBoard() {
     setIsDragging(false)
   }
 
+  const handleCardLongPress = (feature, fromLane) => {
+    setMobileMoveTarget({ feature, fromLane })
+  }
+
+  const handleMobileMoveSheetMove = (toLane) => {
+    if (!mobileMoveTarget) return
+    handleMoveToLane(mobileMoveTarget.feature, toLane)
+    setMobileMoveTarget(null)
+  }
+
   const totalFeatures = features.length + doneTotalCount
   const inProgressCount = inProgressFeatures.length
 
@@ -431,6 +444,7 @@ function KanbanBoard() {
               dragState={dragState}
               onDragStart={handleDragStart}
               onDragEnd={handleDragEnd}
+              onLongPress={(feature) => handleCardLongPress(feature, 'todo')}
               onPlanClick={() => setPlanTasksOpen(true)}
             />
           </div>
@@ -453,6 +467,7 @@ function KanbanBoard() {
               dragState={dragState}
               onDragStart={handleDragStart}
               onDragEnd={handleDragEnd}
+              onLongPress={(feature) => handleCardLongPress(feature, 'inProgress')}
             />
           </div>
 
@@ -474,6 +489,7 @@ function KanbanBoard() {
               dragState={dragState}
               onDragStart={handleDragStart}
               onDragEnd={handleDragEnd}
+              onLongPress={(feature) => handleCardLongPress(feature, 'done')}
               isDoneLane={true}
               hasMore={doneFeatures.length < doneTotalCount}
               onShowMore={handleShowMoreDone}
@@ -520,6 +536,16 @@ function KanbanBoard() {
         <PlanTasksModal
           onClose={() => setPlanTasksOpen(false)}
           onToast={(type, message) => setToast({ type, message })}
+        />
+      )}
+
+      {/* Mobile move sheet — shown after long-pressing a card on touch devices */}
+      {mobileMoveTarget && (
+        <MobileMoveSheet
+          feature={mobileMoveTarget.feature}
+          fromLane={mobileMoveTarget.fromLane}
+          onMove={handleMobileMoveSheetMove}
+          onClose={() => setMobileMoveTarget(null)}
         />
       )}
     </div>
