@@ -3510,6 +3510,113 @@ class TestAutoPilotStoppingState:
         assert state2.stopping is False
         assert state2.enabled is True
 
+    def test_enable_during_stopping_terminates_old_process(self, client, monkeypatch):
+        """Re-enabling while stopping calls terminate() on the old orphaned process."""
+        self._reset_autopilot_state(monkeypatch)
+        import backend.main as main_module
+
+        terminate_calls = []
+
+        class StillRunningProcess:
+            pid = 42
+            def terminate(self): terminate_calls.append('old')
+            def poll(self): return None
+            def wait(self): return 0
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: StillRunningProcess())
+        client.post("/api/autopilot/enable")
+        client.post("/api/autopilot/disable")
+
+        assert monkeypatch  # state.stopping should be True at this point
+        state = main_module.get_autopilot_state()
+        assert state.stopping is True
+
+        # Re-enable — new process
+        class ExitedProcess:
+            pid = 99
+            def terminate(self): terminate_calls.append('new')
+            def poll(self): return 0
+            def wait(self): return 0
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: ExitedProcess())
+        client.post("/api/autopilot/enable")
+
+        # The old process must have been terminated during re-enable
+        assert 'old' in terminate_calls
+
+    def test_enable_during_stopping_clears_old_active_process(self, client, monkeypatch):
+        """After re-enabling while stopping, active_process points to the NEW process."""
+        self._reset_autopilot_state(monkeypatch)
+        import backend.main as main_module
+
+        class StillRunningProcess:
+            pid = 42
+            def terminate(self): pass
+            def poll(self): return None
+            def wait(self): return 0
+
+        class ExitedProcess:
+            pid = 99
+            def terminate(self): pass
+            def poll(self): return 0
+            def wait(self): return 0
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: StillRunningProcess())
+        client.post("/api/autopilot/enable")
+        client.post("/api/autopilot/disable")
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: ExitedProcess())
+        client.post("/api/autopilot/enable")
+
+        state = main_module.get_autopilot_state()
+        assert state.active_process is not None
+        assert state.active_process.pid == 99  # New process, not old orphan
+
+    def test_wait_for_stopping_process_does_not_clear_state_when_cancelled(self, monkeypatch):
+        """_wait_for_stopping_process leaves state untouched when the task is cancelled."""
+        import asyncio
+        import threading
+        import backend.main as main_module
+
+        # Build a minimal state object mimicking the stopping scenario
+        state = main_module._AutoPilotState()
+        state.stopping = True
+        state.enabled = True  # simulates new enable that ran AFTER cancel
+        state.current_feature_id = 77
+        state.current_feature_name = "New Feature"
+        state.current_feature_model = "sonnet"
+
+        # Use a threading.Event so the executor thread can be unblocked cleanly
+        # after the task is cancelled, allowing asyncio.run() to shut down.
+        wait_gate = threading.Event()
+
+        class BlockingProcess:
+            def wait(self):
+                # Block until the test tells us to unblock (after cancel).
+                wait_gate.wait(timeout=10)
+
+        async def run():
+            task = asyncio.create_task(
+                main_module._wait_for_stopping_process(BlockingProcess(), state)
+            )
+            # Yield so the task starts and enters run_in_executor
+            await asyncio.sleep(0)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            # Unblock the executor thread so asyncio.run() can shut down cleanly
+            wait_gate.set()
+
+        asyncio.run(run())
+
+        # State should be unchanged — the cancel path must not wipe anything
+        assert state.enabled is True
+        assert state.current_feature_id == 77
+        assert state.current_feature_name == "New Feature"
+        assert state.stopping is True  # still stopping (caller is responsible)
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

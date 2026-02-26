@@ -35,18 +35,28 @@ function AutoPilotToggle() {
   const { data: status } = useQuery({
     queryKey: ['autopilot-status'],
     queryFn: fetchAutoPilotStatus,
-    refetchInterval: (query) => (query.state.data?.enabled ? 2000 : 10000),
+    // Poll frequently while running or while waiting for the process to exit.
+    refetchInterval: (query) => {
+      const data = query.state.data
+      if (data?.enabled || data?.stopping) return 2000
+      return 10000
+    },
   })
 
   const enabled = status?.enabled ?? false
+  const stopping = status?.stopping ?? false
 
   async function handleClick() {
     if (loading) return
     setLoading(true)
     try {
       if (enabled) {
+        // Running → stop
         await disableAutoPilot()
       } else {
+        // Disabled or stopping → (re-)enable.
+        // When stopping=true the backend cancels the old monitoring task,
+        // terminates the orphaned process, and starts a fresh run.
         await enableAutoPilot()
       }
       queryClient.invalidateQueries(['autopilot-status'])
@@ -62,14 +72,24 @@ function AutoPilotToggle() {
       onClick={handleClick}
       disabled={loading}
       data-testid="autopilot-toggle"
-      aria-label={enabled ? 'Disable Auto-Pilot' : 'Enable Auto-Pilot'}
-      title={enabled ? 'Auto-Pilot ON — click to disable' : 'Enable Auto-Pilot'}
+      aria-label={
+        enabled   ? 'Disable Auto-Pilot'
+        : stopping ? 'Re-enable Auto-Pilot'
+        :            'Enable Auto-Pilot'
+      }
+      title={
+        enabled   ? 'Auto-Pilot ON — click to disable'
+        : stopping ? 'Claude process still finishing — click to restart Auto-Pilot'
+        :            'Enable Auto-Pilot'
+      }
       className={`
         flex items-center gap-2 px-2.5 py-1.5 rounded transition-colors font-mono text-xs
         disabled:opacity-60 disabled:cursor-not-allowed
         ${enabled
           ? 'bg-success/15 border border-success/40 text-success hover:bg-success/25'
-          : 'text-text-secondary hover:bg-surface-light hover:text-text-primary'
+          : stopping
+            ? 'bg-amber-500/10 border border-amber-500/40 text-amber-400 hover:bg-amber-500/20'
+            : 'text-text-secondary hover:bg-surface-light hover:text-text-primary'
         }
       `}
     >
@@ -80,6 +100,14 @@ function AutoPilotToggle() {
             className="w-2 h-2 rounded-full bg-success animate-pulse flex-shrink-0"
           />
           <span>Auto-Pilot ON</span>
+        </>
+      ) : stopping ? (
+        <>
+          <span
+            data-testid="autopilot-stopping-dot"
+            className="w-2 h-2 rounded-full bg-amber-400 animate-pulse flex-shrink-0"
+          />
+          <span>Stopping\u2026</span>
         </>
       ) : (
         <>

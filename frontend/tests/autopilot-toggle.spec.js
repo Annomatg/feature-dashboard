@@ -160,3 +160,104 @@ test.describe('Auto-Pilot Toggle', () => {
     await expect(page.getByText('Claude not found', { exact: true })).toBeVisible({ timeout: 5000 });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Stopping state — process still alive after manual disable
+// ---------------------------------------------------------------------------
+
+const STOPPING_STATUS = {
+  enabled: false,
+  stopping: true,
+  current_feature_id: 42,
+  current_feature_name: 'Build the rocket',
+  current_feature_model: 'sonnet',
+  last_error: null,
+  log: [],
+};
+
+test.describe('Auto-Pilot Toggle — stopping state', () => {
+  test('shows amber "Stopping…" button when stopping=true', async ({ page }) => {
+    await page.route('**/api/autopilot/status', route => {
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(STOPPING_STATUS) });
+    });
+
+    await page.goto('/');
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    const toggle = page.getByTestId('autopilot-toggle');
+    await expect(toggle).toBeVisible();
+    await expect(toggle).toContainText('Stopping');
+    // Should not show enabled styles
+    const cls = await toggle.getAttribute('class');
+    expect(cls).not.toContain('border-success');
+    // Should show amber styles
+    expect(cls).toContain('border-amber-500');
+  });
+
+  test('stopping dot is visible when stopping=true', async ({ page }) => {
+    await page.route('**/api/autopilot/status', route => {
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(STOPPING_STATUS) });
+    });
+
+    await page.goto('/');
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    await expect(page.getByTestId('autopilot-stopping-dot')).toBeVisible();
+    await expect(page.getByTestId('autopilot-pulse-dot')).not.toBeVisible();
+  });
+
+  test('clicking toggle while stopping calls enable endpoint', async ({ page }) => {
+    let enableCalled = false;
+    let currentStatus = { ...STOPPING_STATUS };
+
+    await page.route('**/api/autopilot/status', route => {
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(currentStatus) });
+    });
+
+    await page.route('**/api/autopilot/enable', route => {
+      enableCalled = true;
+      currentStatus = {
+        enabled: true, stopping: false,
+        current_feature_id: 7, current_feature_name: 'Next Feature',
+        current_feature_model: 'sonnet', last_error: null, log: [],
+      };
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(currentStatus) });
+    });
+
+    await page.goto('/');
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    await expect(page.getByTestId('autopilot-toggle')).toContainText('Stopping');
+
+    // Click to re-enable
+    await page.getByTestId('autopilot-toggle').click();
+
+    expect(enableCalled).toBe(true);
+    // Toggle transitions to enabled (green) state
+    await expect(page.getByTestId('autopilot-toggle')).toContainText('Auto-Pilot ON', { timeout: 5000 });
+  });
+
+  test('toggle transitions from stopping to normal disabled when process finishes', async ({ page }) => {
+    let isStopping = true;
+
+    await page.route('**/api/autopilot/status', route => {
+      const body = isStopping
+        ? STOPPING_STATUS
+        : { enabled: false, stopping: false, current_feature_id: null,
+            current_feature_name: null, current_feature_model: null, last_error: null, log: [] };
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    });
+
+    await page.goto('/');
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    await expect(page.getByTestId('autopilot-toggle')).toContainText('Stopping');
+
+    // Simulate process finishing (poll will pick it up within 2 s)
+    isStopping = false;
+
+    await expect(page.getByTestId('autopilot-toggle')).toContainText('Auto-Pilot', { timeout: 8000 });
+    // Should no longer show stopping dot
+    await expect(page.getByTestId('autopilot-stopping-dot')).not.toBeVisible();
+  });
+});

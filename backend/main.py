@@ -1595,11 +1595,26 @@ async def enable_autopilot():
     if state.enabled:
         raise HTTPException(status_code=409, detail="Auto-pilot is already enabled")
 
-    # Clear any lingering stopping state (e.g. user re-enables before process exits).
-    if state.stopping and state.monitor_task is not None:
-        state.monitor_task.cancel()
-        state.monitor_task = None
-    state.stopping = False
+    # Clear any lingering stopping state (user re-enabled before old process exited).
+    if state.stopping:
+        # Cancel the waiting task first so its completion callback does NOT race
+        # against the state we are about to set for the new run.
+        if state.monitor_task is not None:
+            state.monitor_task.cancel()
+            state.monitor_task = None
+        # Attempt to kill the old orphaned process so it does not interfere with
+        # the new Claude run (especially on Windows where the child may outlive
+        # the PowerShell wrapper).
+        if state.active_process is not None:
+            try:
+                state.active_process.terminate()
+            except Exception:
+                pass
+            state.active_process = None
+        state.stopping = False
+        state.current_feature_id = None
+        state.current_feature_name = None
+        state.current_feature_model = None
 
     session = get_session()
     try:
@@ -1675,20 +1690,28 @@ async def _wait_for_stopping_process(proc: "subprocess.Popen", state: "_AutoPilo
     Called when terminate() was sent but the process (or a child it spawned on
     Windows) is still alive.  Once the process exits, the stopping flag and
     feature fields are cleared so the status bar disappears from the UI.
+
+    If the task is cancelled (e.g. because the user re-enabled autopilot before
+    the process finished) we return immediately WITHOUT touching state, because
+    enable_autopilot() has already taken ownership of the state fields.
     """
     try:
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, proc.wait)
+    except asyncio.CancelledError:
+        # Caller (enable_autopilot) cancelled this task and is responsible for
+        # resetting state — do not touch anything here.
+        return
     except Exception:
         pass
-    finally:
-        state.stopping = False
-        state.current_feature_id = None
-        state.current_feature_name = None
-        state.current_feature_model = None
-        state.active_process = None
-        state.monitor_task = None
-        _append_log(state, 'info', "Claude process finished — auto-pilot fully stopped")
+    # Normal completion: process has exited, clear stopping state.
+    state.stopping = False
+    state.current_feature_id = None
+    state.current_feature_name = None
+    state.current_feature_model = None
+    state.active_process = None
+    state.monitor_task = None
+    _append_log(state, 'info', "Claude process finished — auto-pilot fully stopped")
 
 
 @app.post("/api/autopilot/disable", response_model=AutoPilotStatusResponse)
