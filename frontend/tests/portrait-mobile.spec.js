@@ -281,3 +281,54 @@ test.describe('Settings panel at 390px portrait', () => {
     await expect(page.getByTestId('settings-panel')).not.toBeVisible();
   });
 });
+
+// ---------------------------------------------------------------------------
+// 6. Settings panel content scrolling — plan prompt visible on mobile
+// ---------------------------------------------------------------------------
+
+test.describe('Settings panel scrolling at 390px portrait', () => {
+  test('plan tasks prompt textarea is reachable by scrolling within the panel', async ({ page }) => {
+    await page.getByTestId('settings-btn').click();
+    await expect(page.getByTestId('settings-panel')).toBeVisible({ timeout: 5000 });
+
+    // Wait for content to load (first textarea becomes visible)
+    await page.getByTestId('prompt-template-input').waitFor({ state: 'visible' });
+
+    // The plan tasks textarea requires scrolling within the panel on mobile
+    const planTextarea = page.getByTestId('plan-prompt-template-input');
+    await planTextarea.scrollIntoViewIfNeeded();
+
+    // After scrolling within the panel, the textarea must be in the viewport
+    await expect(planTextarea).toBeInViewport();
+  });
+
+  test('plan tasks prompt textarea is interactable after scrolling on mobile', async ({ page }) => {
+    await page.getByTestId('settings-btn').click();
+    await expect(page.getByTestId('settings-panel')).toBeVisible({ timeout: 5000 });
+
+    await page.getByTestId('prompt-template-input').waitFor({ state: 'visible' });
+
+    const planTextarea = page.getByTestId('plan-prompt-template-input');
+    await planTextarea.scrollIntoViewIfNeeded();
+    await expect(planTextarea).toBeInViewport();
+
+    // Should be clickable and focusable
+    await planTextarea.click();
+    await expect(planTextarea).toBeFocused();
+  });
+
+  test('save button remains accessible after scrolling to plan template', async ({ page }) => {
+    await page.getByTestId('settings-btn').click();
+    await expect(page.getByTestId('settings-panel')).toBeVisible({ timeout: 5000 });
+
+    await page.getByTestId('prompt-template-input').waitFor({ state: 'visible' });
+
+    // Scroll to the bottom of the settings panel to reach the plan template
+    const planTextarea = page.getByTestId('plan-prompt-template-input');
+    await planTextarea.scrollIntoViewIfNeeded();
+
+    // The save button is in the footer (sticky), so it should remain visible
+    const saveBtn = page.getByTestId('settings-save-btn');
+    await expect(saveBtn).toBeVisible();
+  });
+});

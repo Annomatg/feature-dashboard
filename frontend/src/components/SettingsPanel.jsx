@@ -97,7 +97,7 @@ function SettingsPanel({ onClose }) {
       <div
         ref={panelRef}
         data-testid="settings-panel"
-        className="fixed top-0 right-0 h-full w-full md:w-[480px] bg-surface border-l border-border z-50 flex flex-col shadow-2xl animate-slide-in-right"
+        className="fixed top-0 right-0 h-dvh w-full md:w-[480px] bg-surface border-l border-border z-50 flex flex-col shadow-2xl animate-slide-in-right"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -123,7 +123,7 @@ function SettingsPanel({ onClose }) {
         </div>
 
         {/* Scrollable content */}
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-6 custom-scrollbar">
+        <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-6 custom-scrollbar">
           {isLoading ? (
             <div className="flex items-center justify-center py-8">
               <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
