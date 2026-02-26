@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, Plus, Trash2 } from 'lucide-react'
+import { X } from 'lucide-react'
+import EditableSteps from './EditableSteps'
 
 const MODEL_OPTIONS = [
   { value: 'haiku', label: 'Haiku', title: 'Fastest, most efficient' },
@@ -12,7 +13,6 @@ function NewFeatureCard({ lane, onSave, onCancel, accentColor }) {
   const [description, setDescription] = useState('')
   const [category, setCategory] = useState('')
   const [steps, setSteps] = useState([])
-  const [currentStep, setCurrentStep] = useState('')
   const [model, setModel] = useState('sonnet')
   const [addToTop, setAddToTop] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
@@ -23,24 +23,6 @@ function NewFeatureCard({ lane, onSave, onCancel, accentColor }) {
   useEffect(() => {
     titleInputRef.current?.focus()
   }, [])
-
-  const handleAddStep = () => {
-    if (currentStep.trim()) {
-      setSteps([...steps, currentStep.trim()])
-      setCurrentStep('')
-    }
-  }
-
-  const handleRemoveStep = (index) => {
-    setSteps(steps.filter((_, i) => i !== index))
-  }
-
-  const handleKeyPress = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleAddStep()
-    }
-  }
 
   const handleSave = async () => {
     if (!title.trim()) return
@@ -139,52 +121,7 @@ function NewFeatureCard({ lane, onSave, onCancel, accentColor }) {
         <label className="block text-xs font-mono text-text-secondary mb-1">
           Steps
         </label>
-
-        {/* Existing steps */}
-        {steps.length > 0 && (
-          <div className="mb-2 space-y-1">
-            {steps.map((step, index) => (
-              <div
-                key={index}
-                className="flex items-center gap-2 bg-background rounded px-2 py-1.5 group"
-              >
-                <span className="text-xs font-mono text-text-secondary">
-                  {index + 1}.
-                </span>
-                <span className="flex-1 text-sm text-text-primary">
-                  {step}
-                </span>
-                <button
-                  onClick={() => handleRemoveStep(index)}
-                  className="opacity-0 group-hover:opacity-100 p-1 hover:bg-surface-light rounded transition-all"
-                  aria-label="Remove step"
-                >
-                  <Trash2 size={12} className="text-error" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Add step input */}
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={currentStep}
-            onChange={(e) => setCurrentStep(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder="Add a step (press Enter)..."
-            className="flex-1 bg-background border border-border rounded px-3 py-2 text-sm text-text-primary placeholder-text-secondary focus:outline-none focus:border-primary transition-colors"
-          />
-          <button
-            onClick={handleAddStep}
-            disabled={!currentStep.trim()}
-            className="px-3 py-2 rounded border border-border hover:bg-surface-light disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            aria-label="Add step"
-          >
-            <Plus size={16} className="text-text-secondary" />
-          </button>
-        </div>
+        <EditableSteps steps={steps} onSave={setSteps} />
       </div>
 
       {/* Model selector */}

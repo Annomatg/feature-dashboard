@@ -111,15 +111,91 @@ test.describe('NewFeatureCard', () => {
     await stepInput.fill('Step to remove')
     await stepInput.press('Enter')
 
-    // Hover over the step to show the trash icon
-    const stepItem = page.locator('text=Step to remove').locator('..')
-    await stepItem.hover()
+    // Hover over the step row to show the trash icon (go up to group container)
+    const stepRow = page.locator('text=Step to remove').locator('../..')
+    await stepRow.hover()
 
     // Click the trash icon
-    await stepItem.locator('button[aria-label="Remove step"]').click()
+    await stepRow.locator('button[aria-label="Remove step"]').click()
 
     // Step should be removed
     await expect(page.locator('text=Step to remove')).not.toBeVisible()
+  })
+
+  test('should edit step by clicking on it in creation form', async ({ page }) => {
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const stepInput = page.locator('input[placeholder*="Add a step"]')
+
+    // Add a step
+    await stepInput.fill('Original step text')
+    await stepInput.press('Enter')
+
+    // Click on the step text to edit it (step text is in a div with title="Click to edit")
+    await page.locator('div[title="Click to edit"]:has-text("Original step text")').click()
+
+    // An edit input should appear - it uses border-primary class (distinct from add-step input which uses border-border)
+    const editInput = page.locator('input.border-primary')
+    await expect(editInput).toBeVisible()
+
+    // Clear and type new text
+    await editInput.fill('Edited step text')
+    await editInput.press('Enter')
+
+    // Updated text should be visible
+    await expect(page.locator('text=Edited step text')).toBeVisible()
+    await expect(page.locator('text=Original step text')).not.toBeVisible()
+  })
+
+  test('should reorder steps with move up/down buttons in creation form', async ({ page }) => {
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const stepInput = page.locator('input[placeholder*="Add a step"]')
+
+    // Add two steps
+    await stepInput.fill('Alpha step')
+    await stepInput.press('Enter')
+    await stepInput.fill('Beta step')
+    await stepInput.press('Enter')
+
+    // Hover over the second step to reveal move buttons
+    const betaRow = page.locator('text=Beta step').locator('../..')
+    await betaRow.hover()
+
+    // Click move up on the second step
+    await betaRow.locator('button[aria-label="Move step up"]').click()
+
+    // Beta should now be first - verify it appears before Alpha in the DOM
+    const allStepTexts = await page.locator('div[title="Click to edit"]').allTextContents()
+    expect(allStepTexts[0]).toBe('Beta step')
+    expect(allStepTexts[1]).toBe('Alpha step')
+  })
+
+  test('should cancel step edit with Escape key in creation form', async ({ page }) => {
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const stepInput = page.locator('input[placeholder*="Add a step"]')
+
+    // Add a step
+    await stepInput.fill('Unchanging step')
+    await stepInput.press('Enter')
+
+    // Click on the step text to edit it (step text is in a div with title="Click to edit")
+    await page.locator('div[title="Click to edit"]:has-text("Unchanging step")').click()
+
+    // An edit input should appear - it uses border-primary class
+    const editInput = page.locator('input.border-primary')
+    await expect(editInput).toBeVisible()
+
+    // Type something different
+    await editInput.fill('Modified text')
+
+    // Press Escape to cancel
+    await editInput.press('Escape')
+
+    // Original text should still be visible
+    await expect(page.locator('text=Unchanging step')).toBeVisible()
+    await expect(page.locator('text=Modified text')).not.toBeVisible()
   })
 
   test('should cancel feature creation', async ({ page }) => {
