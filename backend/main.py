@@ -57,6 +57,11 @@ DEFAULT_PROMPT_TEMPLATE = (
     "Steps:\n{steps}"
 )
 
+# Maximum time a single Claude process may run before it is forcibly killed.
+# This guards against Claude getting stuck after a terminal API error
+# (e.g. max_output_tokens) where the process never exits on its own.
+AUTOPILOT_PROCESS_TIMEOUT_SECS = 7200  # 2 hours
+
 PLAN_TASKS_PROMPT_TEMPLATE = """\
 You are a Project Expansion Assistant for the Feature Dashboard project.
 
@@ -375,10 +380,48 @@ async def monitor_claude_process(
     - passes=True  → calls handle_autopilot_success
     - passes=False → calls handle_autopilot_failure
     Handles CancelledError silently so auto-pilot disable does not raise.
+
+    If the process runs longer than AUTOPILOT_PROCESS_TIMEOUT_SECS, it is killed
+    and auto-pilot is disabled with an error.  This prevents the autopilot from
+    getting permanently stuck when Claude encounters a terminal API error (e.g.
+    max_output_tokens) and its process never exits on its own.
     """
     try:
         loop = asyncio.get_event_loop()
-        exit_code = await loop.run_in_executor(None, process.wait)
+        wait_future = loop.run_in_executor(None, process.wait)
+
+        timed_out = False
+        try:
+            # asyncio.shield prevents wait_future from being cancelled when
+            # wait_for times out, so we can still await it after killing the process.
+            exit_code = await asyncio.wait_for(
+                asyncio.shield(wait_future), timeout=AUTOPILOT_PROCESS_TIMEOUT_SECS
+            )
+        except asyncio.TimeoutError:
+            timed_out = True
+            try:
+                process.kill()
+            except (ProcessLookupError, OSError):
+                pass  # Process already dead
+            # wait_future is still running; process.kill() causes process.wait()
+            # to return quickly, so this await completes almost immediately.
+            exit_code = await wait_future
+
+        if timed_out:
+            hours = AUTOPILOT_PROCESS_TIMEOUT_SECS // 3600
+            msg = (
+                f"Feature #{feature_id} timed out after {hours}h"
+                " — process killed, auto-pilot disabled"
+            )
+            state.last_error = msg
+            _append_log(state, 'error', msg)
+            state.enabled = False
+            state.current_feature_id = None
+            state.current_feature_name = None
+            state.current_feature_model = None
+            state.active_process = None
+            state.monitor_task = None
+            return
 
         # Open a fresh DB session — the process may have updated the DB while running
         from sqlalchemy import create_engine as _create_engine

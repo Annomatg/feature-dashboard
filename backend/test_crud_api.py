@@ -2448,6 +2448,87 @@ class TestMonitorClaudeProcess:
         asyncio.run(run())
         assert len(completed) == 1  # Coroutine returned normally
 
+    def test_timeout_kills_process_and_disables_autopilot(self, monkeypatch):
+        """When the process exceeds the timeout, it is killed and autopilot is disabled."""
+        import asyncio
+        import threading
+        from backend.main import monitor_claude_process, _AutoPilotState
+        import backend.main as main_module
+
+        # Use a very short timeout so the test completes quickly
+        monkeypatch.setattr(main_module, 'AUTOPILOT_PROCESS_TIMEOUT_SECS', 0.05)
+
+        kill_event = threading.Event()
+        killed = []
+
+        class MockProcess:
+            def wait(self):
+                # Block until kill() is called (simulates a stuck process)
+                kill_event.wait(timeout=10)
+                return -9
+
+            def kill(self):
+                killed.append(True)
+                kill_event.set()
+
+        state = _AutoPilotState()
+        state.enabled = True
+        state.current_feature_id = 7
+        state.current_feature_name = "Stuck Feature"
+        state.current_feature_model = "sonnet"
+
+        asyncio.run(monitor_claude_process(7, MockProcess(), Path("/fake.db"), state))
+
+        assert len(killed) == 1, "process.kill() should be called on timeout"
+        assert state.enabled is False, "autopilot should be disabled after timeout"
+        assert state.last_error is not None, "last_error should be set after timeout"
+        assert "timed out" in state.last_error.lower()
+        assert state.current_feature_id is None
+        assert state.current_feature_name is None
+        assert state.current_feature_model is None
+        assert state.active_process is None
+        assert state.monitor_task is None
+        error_entries = [e for e in state.log if e.level == 'error']
+        assert len(error_entries) >= 1
+        assert "timed out" in error_entries[0].message.lower()
+
+    def test_timeout_cancellation_interplay(self, monkeypatch):
+        """CancelledError raised during timeout handling exits cleanly without propagating."""
+        import asyncio
+        import threading
+        from backend.main import monitor_claude_process, _AutoPilotState
+        import backend.main as main_module
+
+        monkeypatch.setattr(main_module, 'AUTOPILOT_PROCESS_TIMEOUT_SECS', 0.05)
+
+        kill_event = threading.Event()
+        completed = []
+
+        class MockProcess:
+            def wait(self):
+                kill_event.wait(timeout=10)
+                return -9
+
+            def kill(self):
+                kill_event.set()
+
+        async def run():
+            state = _AutoPilotState()
+            task = asyncio.create_task(
+                monitor_claude_process(7, MockProcess(), Path("/fake.db"), state)
+            )
+            # Let the timeout fire, then cancel the task before kill() completes
+            await asyncio.sleep(0.1)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass  # Task was cancelled before completing — that's expected
+            completed.append(True)
+
+        asyncio.run(run())
+        assert len(completed) == 1  # run() finished without propagating errors
+
 
 class TestHandleAutopilotSuccess:
     """Unit tests for handle_autopilot_success."""
