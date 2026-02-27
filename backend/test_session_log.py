@@ -25,6 +25,7 @@ import backend.main as main_module
 from backend.main import (
     _format_tool_call,
     _get_claude_projects_slug,
+    _jsonl_contains_prompt,
     _parse_jsonl_log,
     _find_session_jsonl,
     _get_claude_projects_dir,
@@ -340,6 +341,7 @@ class TestSessionLogEndpoint:
         state = main_module.get_autopilot_state()
         state.enabled = True
         state.session_start_time = since
+        state.session_jsonl_path = None
 
         with patch('backend.main._get_claude_projects_dir', return_value=tmp_path):
             with patch('backend.main._find_session_jsonl', return_value=session_file):
@@ -351,9 +353,11 @@ class TestSessionLogEndpoint:
         assert len(data['entries']) == 2
         assert data['entries'][0]['entry_type'] == 'tool_use'
         assert data['entries'][1]['entry_type'] == 'text'
+        assert state.session_jsonl_path == session_file
         # Reset
         state.enabled = False
         state.session_start_time = None
+        state.session_jsonl_path = None
 
     def test_limit_clamped(self, tmp_path):
         since = datetime.now(timezone.utc) - timedelta(seconds=30)
@@ -379,3 +383,126 @@ class TestSessionLogEndpoint:
         # Reset
         state.enabled = False
         state.session_start_time = None
+
+    def test_caches_session_file_after_first_find(self, tmp_path):
+        """session_jsonl_path is set on first successful find and reused."""
+        since = datetime.now(timezone.utc) - timedelta(seconds=30)
+        session_file = tmp_path / 'cached.jsonl'
+        session_file.write_text(make_assistant_text('hello'))
+
+        state = main_module.get_autopilot_state()
+        state.enabled = True
+        state.session_start_time = since
+        state.session_jsonl_path = None
+        state.session_prompt_snippet = None
+
+        call_count = {'n': 0}
+
+        def counting_find(*args, **kwargs):
+            call_count['n'] += 1
+            return session_file
+
+        with patch('backend.main._get_claude_projects_dir', return_value=tmp_path):
+            with patch('backend.main._find_session_jsonl', side_effect=counting_find):
+                self.client.get('/api/autopilot/session-log')
+                self.client.get('/api/autopilot/session-log')
+
+        # _find_session_jsonl should only be called once; second poll uses cache
+        assert call_count['n'] == 1
+        assert state.session_jsonl_path == session_file
+
+        # Reset
+        state.enabled = False
+        state.session_start_time = None
+        state.session_jsonl_path = None
+
+
+# ---------------------------------------------------------------------------
+# _jsonl_contains_prompt tests
+# ---------------------------------------------------------------------------
+
+class TestJsonlContainsPrompt:
+    def test_finds_snippet_in_string_content(self, tmp_path):
+        f = tmp_path / 's.jsonl'
+        f.write_text(make_jsonl_line({
+            'type': 'user',
+            'message': {'content': 'Please work on Feature #42 [Backend]: Fix bug'}
+        }))
+        assert _jsonl_contains_prompt(f, 'Feature #42 [Backend]') is True
+
+    def test_finds_snippet_in_list_content(self, tmp_path):
+        f = tmp_path / 's.jsonl'
+        f.write_text(make_jsonl_line({
+            'type': 'user',
+            'message': {'content': [{'type': 'text', 'text': 'Feature #7 [Frontend]: Add button'}]}
+        }))
+        assert _jsonl_contains_prompt(f, 'Feature #7 [Frontend]') is True
+
+    def test_returns_false_when_snippet_absent(self, tmp_path):
+        f = tmp_path / 's.jsonl'
+        f.write_text(make_jsonl_line({
+            'type': 'user',
+            'message': {'content': 'Hello world'}
+        }))
+        assert _jsonl_contains_prompt(f, 'Feature #99') is False
+
+    def test_skips_assistant_lines(self, tmp_path):
+        f = tmp_path / 's.jsonl'
+        f.write_text(make_jsonl_line({
+            'type': 'assistant',
+            'message': {'content': [{'type': 'text', 'text': 'Feature #1 [X]: yes'}]}
+        }))
+        assert _jsonl_contains_prompt(f, 'Feature #1 [X]') is False
+
+    def test_nonexistent_file_returns_false(self, tmp_path):
+        assert _jsonl_contains_prompt(tmp_path / 'nope.jsonl', 'anything') is False
+
+
+# ---------------------------------------------------------------------------
+# Additional _find_session_jsonl tests (content-matching)
+# ---------------------------------------------------------------------------
+
+class TestFindSessionJsonlContentMatch:
+    def test_prefers_content_match_over_newest(self, tmp_path):
+        """When prompt_snippet is given, prefer the file that contains it."""
+        since = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        import os
+
+        # Older file — contains the target prompt
+        f_match = tmp_path / 'match.jsonl'
+        f_match.write_text(make_jsonl_line({
+            'type': 'user',
+            'message': {'content': 'Feature #5 [Backend]: task'}
+        }))
+        ts_older = since.timestamp() + 60
+        os.utime(str(f_match), (ts_older, ts_older))
+
+        # Newer file — unrelated (interactive session)
+        f_other = tmp_path / 'other.jsonl'
+        f_other.write_text(make_jsonl_line({
+            'type': 'user',
+            'message': {'content': 'Please help me debug this'}
+        }))
+        ts_newer = since.timestamp() + 120
+        os.utime(str(f_other), (ts_newer, ts_newer))
+
+        result = _find_session_jsonl(tmp_path, since, prompt_snippet='Feature #5 [Backend]')
+        assert result == f_match
+
+    def test_falls_back_to_newest_when_no_match(self, tmp_path):
+        """Without a content match, returns the newest file."""
+        since = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        import os
+
+        f1 = tmp_path / 'a.jsonl'
+        f1.write_text('{}')
+        ts1 = since.timestamp() + 60
+        os.utime(str(f1), (ts1, ts1))
+
+        f2 = tmp_path / 'b.jsonl'
+        f2.write_text('{}')
+        ts2 = since.timestamp() + 120
+        os.utime(str(f2), (ts2, ts2))
+
+        result = _find_session_jsonl(tmp_path, since, prompt_snippet='Feature #99')
+        assert result == f2

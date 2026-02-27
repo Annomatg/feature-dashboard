@@ -201,6 +201,8 @@ class _AutoPilotState:
         self.manual_monitor_task = None  # asyncio.Task monitoring manual process
         # JSONL session log tracking
         self.session_start_time: Optional[datetime] = None
+        self.session_prompt_snippet: Optional[str] = None  # snippet from the feature prompt for JSONL matching
+        self.session_jsonl_path: Optional[Path] = None     # cached path once the session file is identified
 
 
 _autopilot_states: dict[str, _AutoPilotState] = {}
@@ -263,19 +265,78 @@ def _get_claude_projects_dir(working_dir: str) -> Optional[Path]:
     return projects_dir if projects_dir.exists() else None
 
 
-def _find_session_jsonl(projects_dir: Path, since: datetime) -> Optional[Path]:
-    """Find the newest JSONL file in projects_dir modified after 'since'.
+def _find_session_jsonl(
+    projects_dir: Path,
+    since: datetime,
+    prompt_snippet: Optional[str] = None,
+) -> Optional[Path]:
+    """Find the JSONL session file for the active Claude process.
 
-    Returns None if no suitable file is found.
+    Candidates are files in *projects_dir* whose mtime is >= *since*.
+    When *prompt_snippet* is provided the candidates are scanned (newest
+    first) for one whose early user messages contain the snippet — this
+    reliably distinguishes the autopilot subprocess from any concurrent
+    interactive Claude session that shares the same projects directory.
+    Falls back to the newest candidate if no content match is found.
+    Returns None when there are no candidates at all.
     """
     since_ts = since.timestamp()
-    jsonl_files = [
+    candidates = [
         f for f in projects_dir.glob('*.jsonl')
         if f.stat().st_mtime >= since_ts
     ]
-    if not jsonl_files:
+    if not candidates:
         return None
-    return max(jsonl_files, key=lambda f: f.stat().st_mtime)
+
+    # Sort newest-first so we check the most-likely match first.
+    candidates.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+
+    if prompt_snippet:
+        for f in candidates:
+            if _jsonl_contains_prompt(f, prompt_snippet):
+                return f
+
+    # Fallback: return the newest candidate even without a content match.
+    return candidates[0]
+
+
+def _jsonl_contains_prompt(jsonl_file: Path, prompt_snippet: str) -> bool:
+    """Return True if any user message in *jsonl_file* contains *prompt_snippet*.
+
+    Only reads the first 50 KB of the file — the initial user message always
+    appears near the top, so there is no need to scan the whole file.
+    """
+    try:
+        with open(jsonl_file, 'r', encoding='utf-8', errors='replace') as f:
+            head = f.read(50_000)
+    except (IOError, OSError):
+        return False
+
+    for line in head.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get('type') != 'user':
+            continue
+        msg = obj.get('message', {})
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get('content', '')
+        if isinstance(content, str) and prompt_snippet in content:
+            return True
+        if isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict):
+                    text = item.get('text', '')
+                    if isinstance(text, str) and prompt_snippet in text:
+                        return True
+                elif isinstance(item, str) and prompt_snippet in item:
+                    return True
+    return False
 
 
 def _format_tool_call(tool_name: str, tool_input: dict) -> str:
@@ -1545,7 +1606,17 @@ async def get_autopilot_session_log(limit: int = 50):
             total_entries=0,
         )
 
-    session_file = _find_session_jsonl(projects_dir, state.session_start_time)
+    # Use cached session file if already identified; otherwise search.
+    if state.session_jsonl_path is not None:
+        session_file = state.session_jsonl_path
+    else:
+        session_file = _find_session_jsonl(
+            projects_dir,
+            state.session_start_time,
+            prompt_snippet=state.session_prompt_snippet,
+        )
+        if session_file is not None:
+            state.session_jsonl_path = session_file  # cache for future polls
 
     if session_file is None:
         return SessionLogResponse(
@@ -2046,6 +2117,8 @@ async def launch_claude_for_feature(feature_id: int, request: LaunchClaudeReques
         state.manual_feature_model = feature_model
         state.manual_process = launched_process
         state.session_start_time = datetime.now(timezone.utc)
+        state.session_prompt_snippet = f"Feature #{feature_id} [{feature.category}]"
+        state.session_jsonl_path = None
         mode = "hidden" if request.hidden_execution else "interactive"
         _append_log(state, 'info', f"Manual launch \u2014 feature #{feature_id}: {feature.name} ({mode}, {feature_model})")
         state.manual_monitor_task = asyncio.create_task(monitor_manual_process(state))
@@ -2202,6 +2275,8 @@ async def enable_autopilot():
         state.features_completed = 0
         state.log.clear()
         state.session_start_time = datetime.now(timezone.utc)
+        state.session_prompt_snippet = f"Feature #{feature.id} [{feature.category}]"
+        state.session_jsonl_path = None
         _append_log(state, 'info', f"Auto-pilot enabled for database: {_current_db_path.name}")
         _append_log(state, 'info', f"Starting feature #{feature.id}: {feature.name}")
 
