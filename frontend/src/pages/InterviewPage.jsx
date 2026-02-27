@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import SurveyCard from '../components/SurveyCard'
+import InterviewDebugPanel from '../components/InterviewDebugPanel'
 
 /**
  * Spinner — matches the border-based animate-spin used in KanbanBoard and SettingsPanel.
@@ -297,6 +298,9 @@ function InterviewPage() {
 
         </div>
       </div>
+
+      {/* Debug panel — hidden in idle state (no active session) */}
+      {status !== 'idle' && <InterviewDebugPanel />}
     </div>
   )
 }
