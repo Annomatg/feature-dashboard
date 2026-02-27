@@ -279,8 +279,8 @@ def feature_skip(
 
         # Use lock to prevent race condition in priority assignment
         with _priority_lock:
-            # Get max priority and set this feature to max + 1
-            max_priority_result = session.query(Feature.priority).order_by(Feature.priority.desc()).first()
+            # Get max priority among active (non-passing) features and set this feature to max + 1
+            max_priority_result = session.query(Feature.priority).filter(Feature.passes == False).order_by(Feature.priority.desc()).first()
             new_priority = (max_priority_result[0] + 1) if max_priority_result else 1
 
             feature.priority = new_priority
@@ -426,8 +426,8 @@ def feature_create_bulk(
     try:
         # Use lock to prevent race condition in priority assignment
         with _priority_lock:
-            # Get the starting priority
-            max_priority_result = session.query(Feature.priority).order_by(Feature.priority.desc()).first()
+            # Get the starting priority from active (non-passing) features only
+            max_priority_result = session.query(Feature.priority).filter(Feature.passes == False).order_by(Feature.priority.desc()).first()
             start_priority = (max_priority_result[0] + 1) if max_priority_result else 1
 
             created_count = 0
@@ -485,8 +485,8 @@ def feature_create(
     try:
         # Use lock to prevent race condition in priority assignment
         with _priority_lock:
-            # Get the next priority
-            max_priority_result = session.query(Feature.priority).order_by(Feature.priority.desc()).first()
+            # Get the next priority from active (non-passing) features only
+            max_priority_result = session.query(Feature.priority).filter(Feature.passes == False).order_by(Feature.priority.desc()).first()
             next_priority = (max_priority_result[0] + 1) if max_priority_result else 1
 
             db_feature = Feature(

@@ -1118,8 +1118,8 @@ async def create_feature(request: CreateFeatureRequest):
     """
     session = get_session()
     try:
-        # Append after the current highest priority using the standard step size
-        max_priority = session.query(Feature.priority).order_by(Feature.priority.desc()).first()
+        # Append after the current highest priority among active (non-passing) features
+        max_priority = session.query(Feature.priority).filter(Feature.passes == False).order_by(Feature.priority.desc()).first()
         next_priority = (max_priority[0] + _PRIORITY_STEP) if max_priority else _PRIORITY_STEP
 
         # Validate model if provided

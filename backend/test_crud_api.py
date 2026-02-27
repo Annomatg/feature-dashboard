@@ -649,10 +649,11 @@ class TestIntegrationScenarios:
         assert get_response.status_code == 404
 
     def test_priority_auto_assignment(self, client):
-        """Test that new features get auto-assigned the next priority."""
-        # Get current max priority
+        """Test that new features get auto-assigned priority based on active (non-passing) features."""
+        # Get max priority among active (passes=False) features only
         features = client.get("/api/features").json()
-        max_priority = max(f["priority"] for f in features)
+        active_features = [f for f in features if not f["passes"]]
+        max_active_priority = max(f["priority"] for f in active_features)
 
         # Create new feature
         response = client.post("/api/features", json={
@@ -663,7 +664,32 @@ class TestIntegrationScenarios:
         })
 
         assert response.status_code == 201
-        assert response.json()["priority"] == max_priority + 100
+        assert response.json()["priority"] == max_active_priority + 100
+
+    def test_priority_ignores_completed_features(self, client):
+        """Test that completed features with high priorities don't affect new feature priority."""
+        # Mark the highest-priority active feature (priority=400) as passing
+        client.patch("/api/features/4/state", json={"passes": True})
+
+        # Now mark Feature 3 (priority=300, currently passing) - highest active is Feature 2 (200)
+        # Active features: Feature 1 (100), Feature 2 (200), (Feature 4 is now passing at 400)
+        # Max active priority should now be 200
+        features = client.get("/api/features").json()
+        active_features = [f for f in features if not f["passes"]]
+        max_active_priority = max(f["priority"] for f in active_features)
+        assert max_active_priority == 200  # Feature 4 is now passing, so max active is 200
+
+        # Create a new feature - it should be based on active max (200), not the passing max (400)
+        response = client.post("/api/features", json={
+            "category": "Testing",
+            "name": "Priority Ignores Completed",
+            "description": "Verify completed features don't inflate new feature priority",
+            "steps": ["Test"]
+        })
+
+        assert response.status_code == 201
+        # Should be 200 + 100 = 300, not 400 + 100 = 500
+        assert response.json()["priority"] == 300
 
     def test_isolation_from_production(self, client):
         """Verify test database is isolated from production."""
