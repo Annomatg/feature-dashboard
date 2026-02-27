@@ -108,7 +108,7 @@ function AutoPilotToggle() {
             data-testid="autopilot-stopping-dot"
             className="w-2 h-2 rounded-full bg-amber-400 animate-pulse flex-shrink-0"
           />
-          <span className="hidden md:inline">Stopping\u2026</span>
+          <span className="hidden md:inline">{'Stopping\u2026'}</span>
         </>
       ) : (
         <>

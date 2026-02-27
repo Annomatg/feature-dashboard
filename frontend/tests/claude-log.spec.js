@@ -8,36 +8,26 @@ import { test, expect } from '@playwright/test';
  *   Feature 2: IN PROGRESS (in_progress=true,  passes=false)
  *   Feature 3: DONE (passes=true)
  *
- * The claude-log endpoint always returns 404 in the test environment because
- * no real Claude process is running.  Tests that need log data use
- * page.route() to intercept the request and return mock payloads.
+ * The component calls GET /api/autopilot/session-log?limit=50.
+ * Tests that need log data intercept that endpoint with mock payloads.
  */
 
-const MOCK_LOG_404 = { status: 404, contentType: 'application/json', body: JSON.stringify({ detail: 'No Claude log found for feature 2' }) };
-
-const MOCK_LOG_WITH_LINES = {
+const MOCK_SESSION_EMPTY = {
   status: 200,
   contentType: 'application/json',
-  body: JSON.stringify({
-    feature_id: 2,
-    active: true,
-    lines: [
-      { timestamp: '2026-02-27T10:00:01.000000+00:00', stream: 'stdout', text: 'Starting feature work...' },
-      { timestamp: '2026-02-27T10:00:02.000000+00:00', stream: 'stderr', text: 'Warning: slow API call' },
-      { timestamp: '2026-02-27T10:00:03.000000+00:00', stream: 'stdout', text: 'Done.' },
-    ],
-    total_lines: 3,
-  }),
+  body: JSON.stringify({ entries: [], session_file: null }),
 };
 
-const MOCK_LOG_EMPTY = {
+const MOCK_SESSION_WITH_ENTRIES = {
   status: 200,
   contentType: 'application/json',
   body: JSON.stringify({
-    feature_id: 2,
-    active: true,
-    lines: [],
-    total_lines: 0,
+    entries: [
+      { timestamp: '2026-02-27T10:00:01.000000+00:00', entry_type: 'text', text: 'Starting feature work...' },
+      { timestamp: '2026-02-27T10:00:02.000000+00:00', entry_type: 'tool_use', tool_name: 'Bash', text: 'Running command...' },
+      { timestamp: '2026-02-27T10:00:03.000000+00:00', entry_type: 'text', text: 'Done.' },
+    ],
+    session_file: 'session.jsonl',
   }),
 };
 
@@ -79,37 +69,29 @@ test.describe('Claude Log Section', () => {
   });
 
   test('section is visible for an IN PROGRESS feature', async ({ page }) => {
-    await page.route('**/api/features/2/claude-log**', route => route.fulfill(MOCK_LOG_404));
+    await page.route('**/api/autopilot/session-log**', route => route.fulfill(MOCK_SESSION_EMPTY));
     await openInProgressPanel(page);
 
     await expect(page.getByTestId('claude-log-section')).toBeVisible();
   });
 
-  test('shows "No output yet" when log returns 404', async ({ page }) => {
-    await page.route('**/api/features/2/claude-log**', route => route.fulfill(MOCK_LOG_404));
-    await openInProgressPanel(page);
-
-    await expect(page.getByTestId('claude-log-section')).toBeVisible();
-    await expect(page.getByText('No output yet...', { exact: true })).toBeVisible();
-  });
-
-  test('shows "No output yet" when log exists but is empty', async ({ page }) => {
-    await page.route('**/api/features/2/claude-log**', route => route.fulfill(MOCK_LOG_EMPTY));
+  test('shows "No output yet" when session log is empty', async ({ page }) => {
+    await page.route('**/api/autopilot/session-log**', route => route.fulfill(MOCK_SESSION_EMPTY));
     await openInProgressPanel(page);
 
     await expect(page.getByText('No output yet...', { exact: true })).toBeVisible();
   });
 
-  test('renders log lines with timestamp, stream badge and text', async ({ page }) => {
-    await page.route('**/api/features/2/claude-log**', route => route.fulfill(MOCK_LOG_WITH_LINES));
+  test('renders log entries with timestamp, stream badge and text', async ({ page }) => {
+    await page.route('**/api/autopilot/session-log**', route => route.fulfill(MOCK_SESSION_WITH_ENTRIES));
     await openInProgressPanel(page);
 
     const logLines = page.getByTestId('claude-log-lines');
     await expect(logLines).toBeVisible();
 
-    // All three lines should be rendered
+    // All three entries should be rendered
     await expect(logLines.getByText('Starting feature work...')).toBeVisible();
-    await expect(logLines.getByText('Warning: slow API call')).toBeVisible();
+    await expect(logLines.getByText('Running command...')).toBeVisible();
     await expect(logLines.getByText('Done.')).toBeVisible();
 
     // Stream badges present
@@ -117,31 +99,31 @@ test.describe('Claude Log Section', () => {
     await expect(badges).toHaveCount(3);
   });
 
-  test('stdout badge is blue, stderr badge is red', async ({ page }) => {
-    await page.route('**/api/features/2/claude-log**', route => route.fulfill(MOCK_LOG_WITH_LINES));
+  test('tool_use badge is blue, text badge is green', async ({ page }) => {
+    await page.route('**/api/autopilot/session-log**', route => route.fulfill(MOCK_SESSION_WITH_ENTRIES));
     await openInProgressPanel(page);
 
     const badges = page.getByTestId('claude-log-stream-badge');
-    const first = badges.nth(0);  // stdout
-    const second = badges.nth(1); // stderr
+    const first = badges.nth(0);  // text entry
+    const second = badges.nth(1); // tool_use entry
 
-    await expect(first).toHaveText('stdout');
-    await expect(first).toHaveClass(/text-blue-400/);
+    await expect(first).toHaveText('text');
+    await expect(first).toHaveClass(/text-green-400/);
 
-    await expect(second).toHaveText('stderr');
-    await expect(second).toHaveClass(/text-red-400/);
+    await expect(second).toHaveText('Bash');
+    await expect(second).toHaveClass(/text-blue-400/);
   });
 
-  test('header shows total line count', async ({ page }) => {
-    await page.route('**/api/features/2/claude-log**', route => route.fulfill(MOCK_LOG_WITH_LINES));
+  test('header shows total entry count', async ({ page }) => {
+    await page.route('**/api/autopilot/session-log**', route => route.fulfill(MOCK_SESSION_WITH_ENTRIES));
     await openInProgressPanel(page);
 
     const toggle = page.getByTestId('claude-log-toggle');
-    await expect(toggle).toContainText('3 lines');
+    await expect(toggle).toContainText('3 entries');
   });
 
   test('collapse toggle hides log lines', async ({ page }) => {
-    await page.route('**/api/features/2/claude-log**', route => route.fulfill(MOCK_LOG_WITH_LINES));
+    await page.route('**/api/autopilot/session-log**', route => route.fulfill(MOCK_SESSION_WITH_ENTRIES));
     await openInProgressPanel(page);
 
     await expect(page.getByTestId('claude-log-lines')).toBeVisible();
@@ -152,7 +134,7 @@ test.describe('Claude Log Section', () => {
   });
 
   test('collapse toggle re-expands log lines', async ({ page }) => {
-    await page.route('**/api/features/2/claude-log**', route => route.fulfill(MOCK_LOG_WITH_LINES));
+    await page.route('**/api/autopilot/session-log**', route => route.fulfill(MOCK_SESSION_WITH_ENTRIES));
     await openInProgressPanel(page);
 
     await page.getByTestId('claude-log-toggle').click();
@@ -164,9 +146,9 @@ test.describe('Claude Log Section', () => {
 
   test('refresh button re-fetches the log', async ({ page }) => {
     let callCount = 0;
-    await page.route('**/api/features/2/claude-log**', route => {
+    await page.route('**/api/autopilot/session-log**', route => {
       callCount++;
-      route.fulfill(MOCK_LOG_WITH_LINES);
+      route.fulfill(MOCK_SESSION_WITH_ENTRIES);
     });
 
     await openInProgressPanel(page);
@@ -184,7 +166,7 @@ test.describe('Claude Log Section', () => {
 
   test('no horizontal overflow at 375px width', async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 });
-    await page.route('**/api/features/2/claude-log**', route => route.fulfill(MOCK_LOG_WITH_LINES));
+    await page.route('**/api/autopilot/session-log**', route => route.fulfill(MOCK_SESSION_WITH_ENTRIES));
 
     await page.goto('/');
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
@@ -210,7 +192,7 @@ test.describe('Claude Log Section', () => {
 
   test('no horizontal overflow at 768px width', async ({ page }) => {
     await page.setViewportSize({ width: 768, height: 1024 });
-    await page.route('**/api/features/2/claude-log**', route => route.fulfill(MOCK_LOG_WITH_LINES));
+    await page.route('**/api/autopilot/session-log**', route => route.fulfill(MOCK_SESSION_WITH_ENTRIES));
     await openInProgressPanel(page);
 
     const section = page.getByTestId('claude-log-section');

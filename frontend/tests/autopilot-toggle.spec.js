@@ -186,7 +186,8 @@ test.describe('Auto-Pilot Toggle — stopping state', () => {
 
     const toggle = page.getByTestId('autopilot-toggle');
     await expect(toggle).toBeVisible();
-    await expect(toggle).toContainText('Stopping');
+    // Must show the ellipsis character (…), not literal "\u2026"
+    await expect(toggle).toContainText('Stopping\u2026');
     // Should not show enabled styles
     const cls = await toggle.getAttribute('class');
     expect(cls).not.toContain('border-success');
@@ -227,7 +228,7 @@ test.describe('Auto-Pilot Toggle — stopping state', () => {
     await page.goto('/');
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
 
-    await expect(page.getByTestId('autopilot-toggle')).toContainText('Stopping');
+    await expect(page.getByTestId('autopilot-toggle')).toContainText('Stopping\u2026');
 
     // Click to re-enable
     await page.getByTestId('autopilot-toggle').click();
@@ -251,7 +252,7 @@ test.describe('Auto-Pilot Toggle — stopping state', () => {
     await page.goto('/');
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
 
-    await expect(page.getByTestId('autopilot-toggle')).toContainText('Stopping');
+    await expect(page.getByTestId('autopilot-toggle')).toContainText('Stopping\u2026');
 
     // Simulate process finishing (poll will pick it up within 2 s)
     isStopping = false;
