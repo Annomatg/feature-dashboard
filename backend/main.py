@@ -2326,12 +2326,70 @@ async def enable_autopilot():
         session.close()
 
 
-async def _wait_for_stopping_process(proc: "subprocess.Popen", state: "_AutoPilotState") -> None:
-    """Wait for a Claude process to exit after autopilot was manually disabled.
+def _get_child_procs(proc) -> list:
+    """Return psutil Process objects for all descendants of *proc*.
+
+    Must be called BEFORE proc.terminate() while the process tree is intact.
+    Returns an empty list when psutil is unavailable or the process is not found.
+    This is primarily useful on Windows where Claude runs as a child of a
+    PowerShell wrapper — terminating the wrapper orphans Claude, so we need to
+    track children separately to know when Claude actually exits.
+    """
+    try:
+        import psutil
+        try:
+            return psutil.Process(proc.pid).children(recursive=True)
+        except psutil.NoSuchProcess:
+            return []
+    except ImportError:
+        return []
+
+
+def _any_proc_running(procs: list) -> bool:
+    """Return True if any psutil process in *procs* is still running."""
+    for p in procs:
+        try:
+            if p.is_running() and p.status() != "zombie":
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def _wait_for_process_and_children(proc, children: list) -> None:
+    """Block until *proc* and all psutil *children* have exited.
+
+    Run in a thread-pool executor so the event loop is not blocked.
+    Each wait is guarded with a bare except so one failure does not prevent
+    the remaining processes from being waited on.
+    """
+    try:
+        proc.wait()
+    except Exception:
+        pass
+    for child in children:
+        try:
+            child.wait()
+        except Exception:
+            pass
+
+
+async def _wait_for_stopping_process(
+    proc: "subprocess.Popen",
+    state: "_AutoPilotState",
+    child_procs: list | None = None,
+) -> None:
+    """Wait for a Claude process (and any orphaned children) to exit.
 
     Called when terminate() was sent but the process (or a child it spawned on
-    Windows) is still alive.  Once the process exits, the stopping flag and
+    Windows) is still alive.  Once ALL processes exit the stopping flag and
     feature fields are cleared so the status bar disappears from the UI.
+
+    On Windows, Claude runs inside a PowerShell wrapper.  Terminating the
+    wrapper exits it quickly but leaves Claude alive as an orphan.  *child_procs*
+    should contain the psutil handles for those children, collected before
+    terminate() was called.  When empty (non-Windows or psutil unavailable),
+    this function waits only for the parent process — the previous behaviour.
 
     If the task is cancelled (e.g. because the user re-enabled autopilot before
     the process finished) we return immediately WITHOUT touching state, because
@@ -2341,9 +2399,10 @@ async def _wait_for_stopping_process(proc: "subprocess.Popen", state: "_AutoPilo
     instance via MCP tools. The backend only manages process lifecycle and
     in-memory autopilot state.
     """
+    children = child_procs or []
     try:
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, proc.wait)
+        await loop.run_in_executor(None, _wait_for_process_and_children, proc, children)
     except asyncio.CancelledError:
         # Caller (enable_autopilot) cancelled this task and is responsible for
         # resetting state — do not touch anything here.
@@ -2380,17 +2439,26 @@ async def disable_autopilot():
     # Attempt to terminate the Claude process.
     proc = state.active_process
     if proc is not None:
+        # Collect child processes BEFORE terminating.  On Windows the spawned
+        # process is a PowerShell wrapper; terminating it exits the wrapper
+        # quickly but leaves Claude itself alive as an orphan.  We capture
+        # the children now (while the tree is intact) so _wait_for_stopping_process
+        # can also wait for Claude to actually finish.
+        child_procs: list = _get_child_procs(proc)
+
         try:
             proc.terminate()
         except Exception:
             pass  # Process may have already exited
 
-        # On Windows, terminate() kills the PowerShell wrapper but not the
-        # Claude child process it spawned.  Poll the process to check whether
-        # it is still alive.  We guard with try-except so that test mocks
-        # without a poll() method do not break existing behaviour.
+        # Check whether the parent process OR any of its children are still
+        # alive.  On Windows the parent (PowerShell) may have exited already
+        # even though Claude (child) is still running — so polling only the
+        # parent is not sufficient.
         try:
-            still_running = proc.poll() is None
+            parent_running = proc.poll() is None
+            children_running = _any_proc_running(child_procs)
+            still_running = parent_running or children_running
         except Exception:
             still_running = False
 
@@ -2403,9 +2471,9 @@ async def disable_autopilot():
             # Keep current_feature_id / name / model for display purposes.
             _append_log(state, 'info', "Auto-pilot manually disabled — waiting for Claude process to finish")
             _write_autopilot_to_config(False)
-            # Spawn a task that waits for the process and clears stopping state.
+            # Spawn a task that waits for the process (and children) and clears stopping state.
             state.monitor_task = asyncio.create_task(
-                _wait_for_stopping_process(proc, state)
+                _wait_for_stopping_process(proc, state, child_procs)
             )
             _settings = load_settings()
             return AutoPilotStatusResponse(

@@ -3932,6 +3932,266 @@ class TestAutoPilotStoppingState:
         assert state.stopping is True  # still stopping (caller is responsible)
 
 
+class TestChildProcessTracking:
+    """Tests that disable_autopilot tracks child processes (Windows PowerShell wrapper).
+
+    On Windows, Claude runs as a child of a PowerShell wrapper.  Terminating the
+    wrapper exits it almost immediately, but Claude keeps running as an orphan.
+    The fix collects child processes *before* terminate() and waits for all of
+    them in _wait_for_stopping_process so the UI remains in 'Stopping…' state
+    until Claude actually finishes.
+    """
+
+    def _reset_autopilot_state(self, monkeypatch):
+        import backend.main as main_module
+        monkeypatch.setattr(main_module, '_autopilot_states', {})
+
+    # ------------------------------------------------------------------
+    # _get_child_procs helper
+    # ------------------------------------------------------------------
+
+    def test_get_child_procs_returns_empty_when_psutil_unavailable(self, monkeypatch):
+        """_get_child_procs falls back to [] when psutil cannot be imported."""
+        import backend.main as main_module
+        import builtins
+
+        real_import = builtins.__import__
+
+        def no_psutil(name, *args, **kwargs):
+            if name == "psutil":
+                raise ImportError("psutil not available")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", no_psutil)
+
+        class FakeProc:
+            pid = 99999
+
+        result = main_module._get_child_procs(FakeProc())
+        assert result == []
+
+    def test_get_child_procs_returns_empty_for_nonexistent_pid(self):
+        """_get_child_procs returns [] if the process does not exist."""
+        import backend.main as main_module
+
+        class FakeProc:
+            pid = 999999999  # Unlikely to exist
+
+        result = main_module._get_child_procs(FakeProc())
+        assert result == []
+
+    # ------------------------------------------------------------------
+    # _any_proc_running helper
+    # ------------------------------------------------------------------
+
+    def test_any_proc_running_returns_false_for_empty_list(self):
+        """_any_proc_running([]) is always False."""
+        import backend.main as main_module
+        assert main_module._any_proc_running([]) is False
+
+    def test_any_proc_running_returns_false_when_all_dead(self):
+        """_any_proc_running returns False if all processes are dead."""
+        import backend.main as main_module
+
+        class DeadProc:
+            def is_running(self): return False
+            def status(self): return "zombie"
+
+        assert main_module._any_proc_running([DeadProc(), DeadProc()]) is False
+
+    def test_any_proc_running_returns_true_when_one_alive(self):
+        """_any_proc_running returns True if at least one process is running."""
+        import backend.main as main_module
+
+        class DeadProc:
+            def is_running(self): return False
+            def status(self): return "zombie"
+
+        class AliveProc:
+            def is_running(self): return True
+            def status(self): return "running"
+
+        assert main_module._any_proc_running([DeadProc(), AliveProc()]) is True
+
+    def test_any_proc_running_handles_exceptions(self):
+        """_any_proc_running treats exceptions as 'not running' for safety."""
+        import backend.main as main_module
+
+        class BrokenProc:
+            def is_running(self): raise RuntimeError("process gone")
+
+        assert main_module._any_proc_running([BrokenProc()]) is False
+
+    # ------------------------------------------------------------------
+    # _wait_for_process_and_children helper
+    # ------------------------------------------------------------------
+
+    def test_wait_for_process_and_children_waits_for_children(self):
+        """_wait_for_process_and_children blocks until all children have exited."""
+        import threading
+        import backend.main as main_module
+
+        waited = []
+
+        class FakeParent:
+            def wait(self): waited.append("parent")
+
+        class FakeChild:
+            def wait(self): waited.append("child")
+
+        main_module._wait_for_process_and_children(FakeParent(), [FakeChild(), FakeChild()])
+        assert waited == ["parent", "child", "child"]
+
+    def test_wait_for_process_and_children_tolerates_child_exception(self):
+        """_wait_for_process_and_children continues even if a child.wait() raises."""
+        import backend.main as main_module
+
+        waited = []
+
+        class FakeParent:
+            def wait(self): waited.append("parent")
+
+        class CrashingChild:
+            def wait(self): raise RuntimeError("no such process")
+
+        class GoodChild:
+            def wait(self): waited.append("good_child")
+
+        # Should not raise; good_child should still be waited on
+        main_module._wait_for_process_and_children(FakeParent(), [CrashingChild(), GoodChild()])
+        assert "parent" in waited
+        assert "good_child" in waited
+
+    # ------------------------------------------------------------------
+    # disable_autopilot enters stopping state when only children are alive
+    # ------------------------------------------------------------------
+
+    def test_disable_enters_stopping_when_parent_exited_but_children_running(self, client, monkeypatch):
+        """stopping=True when parent already exited but child process is still running."""
+        self._reset_autopilot_state(monkeypatch)
+        import backend.main as main_module
+
+        class ExitedParent:
+            pid = 42
+            def terminate(self): pass
+            def poll(self): return 0   # parent has exited
+            def wait(self): return 0
+
+        class RunningChild:
+            def is_running(self): return True
+            def status(self): return "running"
+            def wait(self): return 0
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: ExitedParent())
+        # Patch _get_child_procs to return our running child
+        monkeypatch.setattr(main_module, "_get_child_procs", lambda proc: [RunningChild()])
+
+        client.post("/api/autopilot/enable")
+        resp = client.post("/api/autopilot/disable")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["enabled"] is False
+        assert data["stopping"] is True
+
+    def test_disable_stopping_log_message_when_only_children_running(self, client, monkeypatch):
+        """Log mentions 'waiting for Claude process' even when only children are alive."""
+        self._reset_autopilot_state(monkeypatch)
+        import backend.main as main_module
+
+        class ExitedParent:
+            pid = 42
+            def terminate(self): pass
+            def poll(self): return 0
+            def wait(self): return 0
+
+        class RunningChild:
+            def is_running(self): return True
+            def status(self): return "running"
+            def wait(self): return 0
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: ExitedParent())
+        monkeypatch.setattr(main_module, "_get_child_procs", lambda proc: [RunningChild()])
+
+        client.post("/api/autopilot/enable")
+        resp = client.post("/api/autopilot/disable")
+        log_messages = [e["message"] for e in resp.json().get("log", [])]
+        assert any("waiting for Claude process" in m for m in log_messages)
+
+    def test_disable_no_stopping_when_all_procs_exited(self, client, monkeypatch):
+        """stopping=False when parent AND all children have already exited."""
+        self._reset_autopilot_state(monkeypatch)
+        import backend.main as main_module
+
+        class ExitedParent:
+            pid = 42
+            def terminate(self): pass
+            def poll(self): return 0   # exited
+            def wait(self): return 0
+
+        class DeadChild:
+            def is_running(self): return False
+            def status(self): return "zombie"
+            def wait(self): return 0
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: ExitedParent())
+        monkeypatch.setattr(main_module, "_get_child_procs", lambda proc: [DeadChild()])
+
+        client.post("/api/autopilot/enable")
+        resp = client.post("/api/autopilot/disable")
+        data = resp.json()
+        assert data["enabled"] is False
+        assert data["stopping"] is False
+
+    # ------------------------------------------------------------------
+    # _wait_for_stopping_process waits for children
+    # ------------------------------------------------------------------
+
+    def test_wait_for_stopping_process_waits_for_child_procs(self):
+        """_wait_for_stopping_process clears state only after parent AND children exit."""
+        import asyncio
+        import threading
+        import backend.main as main_module
+
+        waited = []
+
+        parent_done = threading.Event()
+        child_done = threading.Event()
+
+        class FakeParent:
+            def wait(self):
+                parent_done.wait(timeout=5)
+                waited.append("parent")
+
+        class FakeChild:
+            def wait(self):
+                child_done.wait(timeout=5)
+                waited.append("child")
+
+        state = main_module._AutoPilotState()
+        state.stopping = True
+        state.current_feature_id = 10
+        state.current_feature_name = "Test"
+
+        async def run():
+            task = asyncio.create_task(
+                main_module._wait_for_stopping_process(FakeParent(), state, [FakeChild()])
+            )
+            await asyncio.sleep(0)  # Let the task start
+            # Unblock parent then child
+            parent_done.set()
+            child_done.set()
+            await task
+
+        asyncio.run(run())
+
+        assert "parent" in waited
+        assert "child" in waited
+        # State should be cleared after all processes exit
+        assert state.stopping is False
+        assert state.current_feature_id is None
+
+
 class TestManualLaunchTracking:
     """Tests for manual-launch visibility via autopilot status endpoint.
 
