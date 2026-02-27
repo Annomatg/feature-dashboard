@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from sqlalchemy import func as sa_func
 
 from api.database import Comment, Feature, create_database
+from backend.providers import REGISTRY, get_provider
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -327,70 +328,21 @@ def get_next_autopilot_feature(session) -> Optional["Feature"]:
 
 
 def spawn_claude_for_autopilot(feature, settings: dict, working_dir: str) -> "subprocess.Popen":
-    """Spawn a background Claude process for auto-pilot mode and return the Popen handle.
+    """Spawn a background AI process for auto-pilot mode and return the Popen handle.
 
-    Differences from the interactive launch-claude endpoint:
-    - No CREATE_NEW_CONSOLE — runs silently in the background.
-    - Always uses --print (non-interactive, exits when done).
-    - Raises RuntimeError when no PowerShell executable is found (Windows).
-    - Raises FileNotFoundError when the Claude CLI is not in PATH (Linux/Mac).
+    Delegates to the AI provider configured in settings (default: 'claude').
 
     Args:
         feature:     Feature ORM object (must have id, category, name, description, steps, model).
-        settings:    Settings dict containing 'claude_prompt_template'.
+        settings:    Settings dict containing 'provider' and provider-specific configuration.
         working_dir: Working directory string for the spawned process.
 
     Returns:
         subprocess.Popen handle for the spawned process.
     """
-    template = settings.get("claude_prompt_template", DEFAULT_PROMPT_TEMPLATE)
-    steps_text = "\n".join(f"{i + 1}. {step}" for i, step in enumerate(feature.steps))
-    prompt = template.format(
-        feature_id=feature.id,
-        category=feature.category,
-        name=feature.name,
-        description=feature.description,
-        steps=steps_text,
-    )
-
-    feature_model = feature.model or "sonnet"
-
-    if sys.platform == "win32":
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False, encoding="utf-8"
-        ) as f:
-            f.write(prompt)
-            prompt_file = f.name
-
-        ps_cmd = (
-            f'claude --model {feature_model} --dangerously-skip-permissions '
-            f'--print (Get-Content -LiteralPath "{prompt_file}" -Raw)'
-        )
-        for ps_exe in ["pwsh", "powershell"]:
-            try:
-                return subprocess.Popen(
-                    [ps_exe, "-Command", ps_cmd],
-                    cwd=working_dir,
-                    # No CREATE_NEW_CONSOLE — background execution
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                )
-            except FileNotFoundError:
-                continue
-
-        raise RuntimeError(
-            "No PowerShell found. Install PowerShell 7 (pwsh) or ensure powershell.exe is available."
-        )
-    else:
-        try:
-            return subprocess.Popen(
-                ["claude", "--model", feature_model, "--dangerously-skip-permissions", "--print", prompt],
-                cwd=working_dir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-        except FileNotFoundError:
-            raise FileNotFoundError("Claude CLI not found. Make sure claude is in your PATH.")
+    provider_name = settings.get("provider", "claude")
+    provider = get_provider(provider_name)
+    return provider.spawn_process(feature, settings, working_dir)
 
 
 def handle_budget_exhausted(state: "_AutoPilotState") -> None:
@@ -753,6 +705,7 @@ def load_settings() -> dict:
         "claude_prompt_template": DEFAULT_PROMPT_TEMPLATE,
         "plan_tasks_prompt_template": PLAN_TASKS_PROMPT_TEMPLATE,
         "autopilot_budget_limit": 0,
+        "provider": "claude",
     }
     if not SETTINGS_FILE.exists():
         return defaults
@@ -946,6 +899,8 @@ class SettingsResponse(BaseModel):
     claude_prompt_template: str
     plan_tasks_prompt_template: str
     autopilot_budget_limit: int = 0
+    provider: str = "claude"
+    available_providers: list[str] = []
 
 
 class UpdateSettingsRequest(BaseModel):
@@ -953,6 +908,7 @@ class UpdateSettingsRequest(BaseModel):
     claude_prompt_template: str
     plan_tasks_prompt_template: Optional[str] = None
     autopilot_budget_limit: int = 0
+    provider: str = "claude"
 
 
 class CommentResponse(BaseModel):
@@ -1665,6 +1621,7 @@ async def reorder_feature(feature_id: int, request: ReorderFeatureRequest):
 async def get_settings():
     """Get application settings."""
     settings = load_settings()
+    settings["available_providers"] = sorted(REGISTRY.keys())
     return SettingsResponse(**settings)
 
 
@@ -1672,6 +1629,8 @@ async def get_settings():
 async def update_settings(request: UpdateSettingsRequest):
     """Update application settings."""
     try:
+        # Validate the requested provider before saving
+        get_provider(request.provider)
         current = load_settings()
         settings = {
             "claude_prompt_template": request.claude_prompt_template,
@@ -1681,9 +1640,13 @@ async def update_settings(request: UpdateSettingsRequest):
                 else current.get("plan_tasks_prompt_template", PLAN_TASKS_PROMPT_TEMPLATE)
             ),
             "autopilot_budget_limit": request.autopilot_budget_limit,
+            "provider": request.provider,
         }
         save_settings(settings)
+        settings["available_providers"] = sorted(REGISTRY.keys())
         return SettingsResponse(**settings)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save settings: {str(e)}")
 
