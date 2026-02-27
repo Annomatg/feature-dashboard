@@ -995,6 +995,9 @@ class AutoPilotStatusResponse(BaseModel):
     manual_feature_id: Optional[int] = None
     manual_feature_name: Optional[str] = None
     manual_feature_model: Optional[str] = None
+    # Budget fields
+    budget_limit: int = 0
+    features_completed: int = 0
 
 
 @app.get("/")
@@ -1939,12 +1942,15 @@ async def enable_autopilot():
 
         if feature is None:
             _append_log(state, 'info', 'No tasks available')
+            settings = load_settings()
             return AutoPilotStatusResponse(
                 enabled=False,
                 current_feature_id=None,
                 current_feature_name=None,
                 last_error=None,
                 log=list(state.log),
+                budget_limit=settings.get("autopilot_budget_limit", 0),
+                features_completed=state.features_completed,
             )
 
         state.enabled = True
@@ -1997,6 +2003,8 @@ async def enable_autopilot():
             current_feature_model=feature.model or "sonnet",
             last_error=None,
             log=list(state.log),
+            budget_limit=settings.get("autopilot_budget_limit", 0),
+            features_completed=state.features_completed,
         )
     finally:
         session.close()
@@ -2083,6 +2091,7 @@ async def disable_autopilot():
             state.monitor_task = asyncio.create_task(
                 _wait_for_stopping_process(proc, state)
             )
+            _settings = load_settings()
             return AutoPilotStatusResponse(
                 enabled=False,
                 stopping=True,
@@ -2091,6 +2100,8 @@ async def disable_autopilot():
                 current_feature_model=state.current_feature_model,
                 last_error=None,
                 log=list(state.log),
+                budget_limit=_settings.get("autopilot_budget_limit", 0),
+                features_completed=state.features_completed,
             )
         else:
             # Process already exited — clear the handle.
@@ -2106,6 +2117,7 @@ async def disable_autopilot():
     _append_log(state, 'info', "Auto-pilot manually disabled")
     _write_autopilot_to_config(False)
 
+    _settings = load_settings()
     return AutoPilotStatusResponse(
         enabled=False,
         stopping=False,
@@ -2114,6 +2126,8 @@ async def disable_autopilot():
         current_feature_model=None,
         last_error=None,
         log=list(state.log),
+        budget_limit=_settings.get("autopilot_budget_limit", 0),
+        features_completed=state.features_completed,
     )
 
 
@@ -2154,6 +2168,7 @@ async def get_autopilot_status():
     The frontend polls this endpoint every 2 seconds while auto-pilot is enabled.
     """
     state = get_autopilot_state()
+    settings = load_settings()
     return AutoPilotStatusResponse(
         enabled=state.enabled,
         stopping=state.stopping,
@@ -2166,6 +2181,8 @@ async def get_autopilot_status():
         manual_feature_id=state.manual_feature_id,
         manual_feature_name=state.manual_feature_name,
         manual_feature_model=state.manual_feature_model,
+        budget_limit=settings.get("autopilot_budget_limit", 0),
+        features_completed=state.features_completed,
     )
 
 

@@ -4324,5 +4324,115 @@ class TestAutopilotBudgetLimit:
         monkeypatch.setattr(main_module, '_autopilot_states', {})
 
 
+# ==============================================================================
+# Budget status in AutoPilotStatusResponse tests
+# ==============================================================================
+
+class TestAutopilotBudgetStatusResponse:
+    """Tests for budget_limit and features_completed fields in autopilot status API."""
+
+    def _reset_autopilot_state(self, monkeypatch):
+        import backend.main as main_module
+        monkeypatch.setattr(main_module, '_autopilot_states', {})
+
+    def test_status_returns_budget_fields_default(self, client, tmp_path, monkeypatch):
+        """GET /api/autopilot/status includes budget_limit=0 and features_completed=0 by default."""
+        import backend.main as main_module
+        self._reset_autopilot_state(monkeypatch)
+        monkeypatch.setattr(main_module, 'SETTINGS_FILE', tmp_path / "none.json")
+
+        response = client.get("/api/autopilot/status")
+        assert response.status_code == 200
+        data = response.json()
+        assert "budget_limit" in data
+        assert "features_completed" in data
+        assert data["budget_limit"] == 0
+        assert data["features_completed"] == 0
+
+    def test_status_returns_configured_budget_limit(self, client, tmp_path, monkeypatch):
+        """GET /api/autopilot/status returns budget_limit from settings."""
+        import json
+        import backend.main as main_module
+        self._reset_autopilot_state(monkeypatch)
+
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps({
+            "claude_prompt_template": "t",
+            "plan_tasks_prompt_template": "p",
+            "autopilot_budget_limit": 7,
+        }))
+        monkeypatch.setattr(main_module, 'SETTINGS_FILE', settings_file)
+
+        response = client.get("/api/autopilot/status")
+        assert response.status_code == 200
+        assert response.json()["budget_limit"] == 7
+
+    def test_status_reflects_features_completed_counter(self, client, tmp_path, monkeypatch):
+        """GET /api/autopilot/status returns the current features_completed counter."""
+        import backend.main as main_module
+        self._reset_autopilot_state(monkeypatch)
+        monkeypatch.setattr(main_module, 'SETTINGS_FILE', tmp_path / "none.json")
+
+        state = main_module.get_autopilot_state()
+        state.features_completed = 3
+
+        response = client.get("/api/autopilot/status")
+        assert response.status_code == 200
+        assert response.json()["features_completed"] == 3
+
+    def test_enable_returns_budget_fields(self, client, tmp_path, monkeypatch):
+        """POST /api/autopilot/enable response includes budget_limit and features_completed."""
+        import json
+        import backend.main as main_module
+        self._reset_autopilot_state(monkeypatch)
+
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps({
+            "claude_prompt_template": "t",
+            "plan_tasks_prompt_template": "p",
+            "autopilot_budget_limit": 4,
+        }))
+        monkeypatch.setattr(main_module, 'SETTINGS_FILE', settings_file)
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {
+            "pid": 1, "terminate": lambda self: None, "wait": lambda self: 0
+        })())
+
+        response = client.post("/api/autopilot/enable")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["budget_limit"] == 4
+        assert data["features_completed"] == 0  # reset on fresh enable
+
+    def test_disable_returns_budget_fields(self, client, tmp_path, monkeypatch):
+        """POST /api/autopilot/disable response includes budget_limit and features_completed."""
+        import json
+        import backend.main as main_module
+        self._reset_autopilot_state(monkeypatch)
+
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps({
+            "claude_prompt_template": "t",
+            "plan_tasks_prompt_template": "p",
+            "autopilot_budget_limit": 10,
+        }))
+        monkeypatch.setattr(main_module, 'SETTINGS_FILE', settings_file)
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {
+            "pid": 1, "terminate": lambda self: None, "wait": lambda self: 0
+        })())
+
+        # Enable first so disable has something to do
+        client.post("/api/autopilot/enable")
+
+        # Manually set features_completed to simulate session progress
+        state = main_module.get_autopilot_state()
+        state.features_completed = 2
+
+        response = client.post("/api/autopilot/disable")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["budget_limit"] == 10
+        assert data["features_completed"] == 2
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

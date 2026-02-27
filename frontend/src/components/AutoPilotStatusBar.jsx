@@ -94,6 +94,18 @@ function AutoPilotStatusBar() {
           </span>
         )}
 
+        {/* Budget indicator — only when a limit is set */}
+        {status.budget_limit > 0 && (
+          <span
+            data-testid="autopilot-budget-indicator"
+            className="flex-shrink-0 font-mono text-xs text-text-secondary"
+          >
+            {status.features_completed}
+            <span className="text-border mx-0.5">/</span>
+            {status.budget_limit}
+          </span>
+        )}
+
         {/* Model badge */}
         {model && (
           <span
