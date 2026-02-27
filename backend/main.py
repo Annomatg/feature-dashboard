@@ -199,6 +199,8 @@ class _AutoPilotState:
         self.manual_feature_model: Optional[str] = None
         self.manual_process = None  # subprocess.Popen handle for manual launch
         self.manual_monitor_task = None  # asyncio.Task monitoring manual process
+        # JSONL session log tracking
+        self.session_start_time: Optional[datetime] = None
 
 
 _autopilot_states: dict[str, _AutoPilotState] = {}
@@ -243,6 +245,149 @@ async def _read_stream_to_buffer(stream, stream_name: str, log: ClaudeProcessLog
         if not line:  # EOF
             break
         log.append(stream_name, line.decode('utf-8', errors='replace').rstrip('\r\n'))
+
+
+def _get_claude_projects_slug(working_dir: str) -> str:
+    """Convert a working directory path to a Claude projects slug.
+
+    Claude encodes the project path by replacing ':' with '-' and path separators with '-'.
+    Example: 'F:\\Work\\Godot\\feature-dashboard' -> 'F--Work-Godot-feature-dashboard'
+    """
+    return working_dir.replace(':', '-').replace('\\', '-').replace('/', '-')
+
+
+def _get_claude_projects_dir(working_dir: str) -> Optional[Path]:
+    """Return the ~/.claude/projects/{slug}/ directory for the given working directory."""
+    slug = _get_claude_projects_slug(working_dir)
+    projects_dir = Path.home() / '.claude' / 'projects' / slug
+    return projects_dir if projects_dir.exists() else None
+
+
+def _find_session_jsonl(projects_dir: Path, since: datetime) -> Optional[Path]:
+    """Find the newest JSONL file in projects_dir modified after 'since'.
+
+    Returns None if no suitable file is found.
+    """
+    since_ts = since.timestamp()
+    jsonl_files = [
+        f for f in projects_dir.glob('*.jsonl')
+        if f.stat().st_mtime >= since_ts
+    ]
+    if not jsonl_files:
+        return None
+    return max(jsonl_files, key=lambda f: f.stat().st_mtime)
+
+
+def _format_tool_call(tool_name: str, tool_input: dict) -> str:
+    """Format a Claude tool call into a human-readable string."""
+    if tool_name == 'Bash':
+        desc = tool_input.get('description', '')
+        cmd = tool_input.get('command', '')
+        return f"$ {desc or cmd[:120]}"
+    elif tool_name == 'Read':
+        path = tool_input.get('file_path', '')
+        return f"Read: {Path(path).name if path else '?'}"
+    elif tool_name == 'Edit':
+        path = tool_input.get('file_path', '')
+        return f"Edit: {Path(path).name if path else '?'}"
+    elif tool_name == 'Write':
+        path = tool_input.get('file_path', '')
+        return f"Write: {Path(path).name if path else '?'}"
+    elif tool_name == 'Glob':
+        pattern = tool_input.get('pattern', '')
+        return f"Glob: {pattern}"
+    elif tool_name == 'Grep':
+        pattern = tool_input.get('pattern', '')
+        return f"Grep: {pattern}"
+    elif tool_name == 'Task':
+        desc = tool_input.get('description', '')
+        return f"Task: {desc[:80]}"
+    elif tool_name == 'TaskCreate':
+        subject = tool_input.get('subject', '')
+        return f"Task Create: {subject}"
+    elif tool_name == 'TaskUpdate':
+        status = tool_input.get('status', '')
+        task_id = tool_input.get('taskId', '')
+        return f"Task Update #{task_id}: {status}"
+    elif tool_name.startswith('mcp__features__'):
+        feature_tool = tool_name.replace('mcp__features__', '')
+        feature_id = tool_input.get('feature_id', '')
+        if feature_id:
+            return f"Feature #{feature_id}: {feature_tool}"
+        return f"Feature: {feature_tool}"
+    else:
+        return tool_name
+
+
+def _parse_jsonl_log(jsonl_file: Path, limit: int = 50) -> list[dict]:
+    """Parse a Claude JSONL session file and return the last N meaningful log entries.
+
+    For large files (>500KB), reads only the last 100KB for performance.
+    Returns entries in chronological order.
+    """
+    entries: list[dict] = []
+    file_size = 0
+    try:
+        file_size = jsonl_file.stat().st_size
+    except OSError:
+        return []
+
+    try:
+        with open(jsonl_file, 'r', encoding='utf-8', errors='replace') as f:
+            if file_size > 500_000:
+                f.seek(max(0, file_size - 100_000))
+                f.readline()  # Skip partial first line
+            lines = f.readlines()
+    except (IOError, OSError):
+        return []
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        if obj.get('type') != 'assistant':
+            continue
+
+        msg = obj.get('message', {})
+        if not isinstance(msg, dict):
+            continue
+
+        content = msg.get('content', [])
+        if not isinstance(content, list):
+            continue
+
+        timestamp = obj.get('timestamp', '')
+
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            item_type = item.get('type', '')
+            if item_type == 'tool_use':
+                tool_name = item.get('name', 'unknown')
+                tool_input = item.get('input', {}) or {}
+                entries.append({
+                    'timestamp': timestamp,
+                    'entry_type': 'tool_use',
+                    'tool_name': tool_name,
+                    'text': _format_tool_call(tool_name, tool_input),
+                })
+            elif item_type == 'text':
+                text = item.get('text', '').strip()
+                if text:
+                    text = text.replace('\n', ' ').replace('\r', '')
+                    entries.append({
+                        'timestamp': timestamp,
+                        'entry_type': 'text',
+                        'tool_name': None,
+                        'text': text[:200],
+                    })
+
+    return entries[-limit:] if len(entries) > limit else entries
 
 
 async def monitor_manual_process(state: "_AutoPilotState") -> None:
@@ -995,6 +1140,22 @@ class ClaudeLogResponse(BaseModel):
     total_lines: int
 
 
+class SessionLogEntry(BaseModel):
+    """A single entry from the Claude JSONL session log."""
+    timestamp: str
+    entry_type: str  # 'tool_use' | 'text'
+    tool_name: Optional[str] = None
+    text: str
+
+
+class SessionLogResponse(BaseModel):
+    """Response for GET /api/autopilot/session-log."""
+    active: bool
+    session_file: Optional[str] = None
+    entries: list[SessionLogEntry]
+    total_entries: int
+
+
 class AutoPilotStatusResponse(BaseModel):
     """Response for auto-pilot enable/status."""
     enabled: bool
@@ -1349,6 +1510,59 @@ async def get_claude_log(feature_id: int, limit: int = 10, stream: str = "all"):
             for ln in selected
         ],
         total_lines=total,
+    )
+
+
+@app.get("/api/autopilot/session-log", response_model=SessionLogResponse)
+async def get_autopilot_session_log(limit: int = 50):
+    """Get log entries from the active Claude JSONL session file.
+
+    Reads ~/.claude/projects/{slug}/*.jsonl files created after the current
+    autopilot or manual session started. Returns tool calls and text responses.
+
+    Query params:
+    - limit: number of entries to return (1–200, default 50)
+    """
+    state = get_autopilot_state()
+    active = state.enabled or state.manual_active
+
+    if not active or state.session_start_time is None:
+        return SessionLogResponse(
+            active=active,
+            session_file=None,
+            entries=[],
+            total_entries=0,
+        )
+
+    working_dir = str(_current_db_path.parent)
+    projects_dir = _get_claude_projects_dir(working_dir)
+
+    if projects_dir is None:
+        return SessionLogResponse(
+            active=active,
+            session_file=None,
+            entries=[],
+            total_entries=0,
+        )
+
+    session_file = _find_session_jsonl(projects_dir, state.session_start_time)
+
+    if session_file is None:
+        return SessionLogResponse(
+            active=active,
+            session_file=None,
+            entries=[],
+            total_entries=0,
+        )
+
+    clamped_limit = max(1, min(limit, 200))
+    entries = _parse_jsonl_log(session_file, limit=clamped_limit)
+
+    return SessionLogResponse(
+        active=active,
+        session_file=session_file.name,
+        entries=[SessionLogEntry(**e) for e in entries],
+        total_entries=len(entries),
     )
 
 
@@ -1831,6 +2045,7 @@ async def launch_claude_for_feature(feature_id: int, request: LaunchClaudeReques
         state.manual_feature_name = feature.name
         state.manual_feature_model = feature_model
         state.manual_process = launched_process
+        state.session_start_time = datetime.now(timezone.utc)
         mode = "hidden" if request.hidden_execution else "interactive"
         _append_log(state, 'info', f"Manual launch \u2014 feature #{feature_id}: {feature.name} ({mode}, {feature_model})")
         state.manual_monitor_task = asyncio.create_task(monitor_manual_process(state))
@@ -1986,6 +2201,7 @@ async def enable_autopilot():
         state.consecutive_skip_count = 0
         state.features_completed = 0
         state.log.clear()
+        state.session_start_time = datetime.now(timezone.utc)
         _append_log(state, 'info', f"Auto-pilot enabled for database: {_current_db_path.name}")
         _append_log(state, 'info', f"Starting feature #{feature.id}: {feature.name}")
 

@@ -156,25 +156,20 @@ function EditableField({ value, onSave, multiline = false, className = '', place
 
 function ClaudeLogSection({ featureId, inProgress }) {
   const [collapsed, setCollapsed] = useState(false)
-  const [logData, setLogData] = useState(null)
+  const [sessionData, setSessionData] = useState(null)
   const [fetchError, setFetchError] = useState(null)
   const intervalRef = useRef(null)
 
   const fetchLog = useCallback(async () => {
     try {
-      const response = await fetch(`/api/features/${featureId}/claude-log?limit=10`)
-      if (response.status === 404) {
-        setLogData({ feature_id: featureId, active: false, lines: [], total_lines: 0 })
-        setFetchError(null)
-        return
-      }
+      const response = await fetch(`/api/autopilot/session-log?limit=50`)
       if (!response.ok) throw new Error('Failed to fetch log')
-      setLogData(await response.json())
+      setSessionData(await response.json())
       setFetchError(null)
     } catch (err) {
       setFetchError(err.message)
     }
-  }, [featureId])
+  }, [])
 
   useEffect(() => {
     if (!inProgress) return
@@ -193,6 +188,8 @@ function ClaudeLogSection({ featureId, inProgress }) {
     }
   }
 
+  const entries = sessionData?.entries ?? []
+
   return (
     <div data-testid="claude-log-section">
       <div className="flex items-center justify-between mb-2">
@@ -202,7 +199,7 @@ function ClaudeLogSection({ featureId, inProgress }) {
           className="flex items-center gap-1.5 text-xs font-mono text-text-secondary uppercase tracking-wide hover:text-text-primary transition-colors"
         >
           <Terminal size={12} />
-          Claude Log ({logData?.total_lines ?? 0} lines)
+          Claude Log ({entries.length} entries)
           <ChevronDown size={12} className={`transition-transform ${collapsed ? '-rotate-90' : ''}`} />
         </button>
         <button
@@ -221,27 +218,29 @@ function ClaudeLogSection({ featureId, inProgress }) {
         >
           {fetchError ? (
             <p className="text-xs font-mono text-error p-2">{fetchError}</p>
-          ) : !logData || logData.lines.length === 0 ? (
+          ) : entries.length === 0 ? (
             <p className="text-xs font-mono text-text-secondary p-2 italic">No output yet...</p>
           ) : (
             <div className="divide-y divide-border">
-              {logData.lines.map((line, i) => (
+              {entries.map((entry, i) => (
                 <div key={i} className="flex items-start gap-2 px-2 py-1 min-w-0">
                   <span className="text-xs font-mono text-text-secondary flex-shrink-0 pt-0.5">
-                    {formatTime(line.timestamp)}
+                    {formatTime(entry.timestamp)}
                   </span>
                   <span
                     className={`text-xs font-mono px-1 rounded flex-shrink-0 ${
-                      line.stream === 'stdout'
+                      entry.entry_type === 'tool_use'
                         ? 'bg-blue-500/20 text-blue-400'
-                        : 'bg-red-500/20 text-red-400'
+                        : 'bg-green-500/20 text-green-400'
                     }`}
                     data-testid="claude-log-stream-badge"
                   >
-                    {line.stream}
+                    {entry.entry_type === 'tool_use'
+                      ? (entry.tool_name?.split('__').pop() ?? 'tool')
+                      : 'text'}
                   </span>
                   <span className="text-xs font-mono text-text-primary break-all min-w-0">
-                    {line.text}
+                    {entry.text}
                   </span>
                 </div>
               ))}
