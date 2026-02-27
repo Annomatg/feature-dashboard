@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 from collections import deque
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -127,6 +128,34 @@ class LogEntry(BaseModel):
     message: str
 
 
+@dataclass
+class LogLine:
+    """A single captured output line from a Claude subprocess."""
+    timestamp: str          # ISO 8601 UTC timestamp
+    stream: str             # 'stdout' | 'stderr'
+    text: str
+
+
+class ClaudeProcessLog:
+    """In-memory ring buffer of stdout/stderr lines from a Claude process."""
+
+    def __init__(self, feature_id: int) -> None:
+        self.feature_id = feature_id
+        self.lines: deque = deque(maxlen=500)
+
+    def append(self, stream: str, text: str) -> None:
+        self.lines.append(LogLine(
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            stream=stream,
+            text=text,
+        ))
+
+
+# Per-feature stdout/stderr capture buffers, keyed by feature_id.
+# Created when a Claude process starts, removed when monitoring ends.
+_claude_process_logs: dict[int, ClaudeProcessLog] = {}
+
+
 # Auto-pilot in-memory state, keyed by database path string
 class _AutoPilotState:
     """Tracks auto-pilot mode for a single database."""
@@ -178,18 +207,60 @@ def _append_log(state: _AutoPilotState, level: str, message: str) -> None:
     ))
 
 
+async def _read_stream_to_buffer(stream, stream_name: str, log: ClaudeProcessLog) -> None:
+    """Read lines from a subprocess pipe and append each to *log*.
+
+    Runs until EOF (process closed its write end).  Each line is stripped of
+    trailing CR/LF before storing.  Decoding errors are replaced with U+FFFD.
+    """
+    loop = asyncio.get_event_loop()
+    while True:
+        try:
+            line = await loop.run_in_executor(None, stream.readline)
+        except Exception:
+            break
+        if not line:  # EOF
+            break
+        log.append(stream_name, line.decode('utf-8', errors='replace').rstrip('\r\n'))
+
+
 async def monitor_manual_process(state: "_AutoPilotState") -> None:
     """Wait for a manually launched Claude process to finish and update the log.
 
     Runs in the background as an asyncio task. When the process exits it appends a
     success or info log entry and clears all ``manual_*`` state fields.
+
+    If the process has stdout/stderr pipes (hidden-execution mode) the output is
+    captured into ``_claude_process_logs`` keyed by feature_id.
     """
     process = state.manual_process
     feature_id = state.manual_feature_id
     feature_name = state.manual_feature_name
+
+    # Set up log buffer and reader tasks if the process has pipes
+    log: Optional[ClaudeProcessLog] = None
+    reader_tasks: list[asyncio.Task] = []
+    proc_stdout = getattr(process, 'stdout', None)
+    proc_stderr = getattr(process, 'stderr', None)
+    if feature_id is not None and (proc_stdout or proc_stderr):
+        log = ClaudeProcessLog(feature_id=feature_id)
+        _claude_process_logs[feature_id] = log
+        if proc_stdout:
+            reader_tasks.append(asyncio.create_task(
+                _read_stream_to_buffer(proc_stdout, 'stdout', log)
+            ))
+        if proc_stderr:
+            reader_tasks.append(asyncio.create_task(
+                _read_stream_to_buffer(proc_stderr, 'stderr', log)
+            ))
+
     try:
         loop = asyncio.get_event_loop()
         return_code = await loop.run_in_executor(None, process.wait)
+        # Drain remaining pipe output now that the process has exited
+        if reader_tasks:
+            await asyncio.gather(*reader_tasks, return_exceptions=True)
+            reader_tasks.clear()
         if return_code == 0:
             _append_log(state, 'success', f"Manual run complete \u2014 feature #{feature_id}: {feature_name}")
         else:
@@ -197,6 +268,11 @@ async def monitor_manual_process(state: "_AutoPilotState") -> None:
     except Exception as exc:
         _append_log(state, 'error', f"Manual run monitor error \u2014 feature #{feature_id}: {exc}")
     finally:
+        for task in reader_tasks:
+            if not task.done():
+                task.cancel()
+        if feature_id is not None:
+            _claude_process_logs.pop(feature_id, None)
         # Only clear if this task is still tracking the same process
         if state.manual_process is process:
             state.manual_active = False
@@ -294,6 +370,8 @@ def spawn_claude_for_autopilot(feature, settings: dict, working_dir: str) -> "su
                     [ps_exe, "-Command", ps_cmd],
                     cwd=working_dir,
                     # No CREATE_NEW_CONSOLE — background execution
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                 )
             except FileNotFoundError:
                 continue
@@ -306,6 +384,8 @@ def spawn_claude_for_autopilot(feature, settings: dict, working_dir: str) -> "su
             return subprocess.Popen(
                 ["claude", "--model", feature_model, "--dangerously-skip-permissions", "--print", prompt],
                 cwd=working_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
         except FileNotFoundError:
             raise FileNotFoundError("Claude CLI not found. Make sure claude is in your PATH.")
@@ -422,7 +502,26 @@ async def monitor_claude_process(
     and auto-pilot is disabled with an error.  This prevents the autopilot from
     getting permanently stuck when Claude encounters a terminal API error (e.g.
     max_output_tokens) and its process never exits on its own.
+
+    stdout/stderr are captured into ``_claude_process_logs[feature_id]`` while the
+    process runs.  The buffer is cleaned up when this coroutine exits.
     """
+    # Create per-feature log buffer and start async reader tasks for stdout/stderr
+    log = ClaudeProcessLog(feature_id=feature_id)
+    _claude_process_logs[feature_id] = log
+
+    reader_tasks: list[asyncio.Task] = []
+    stdout = getattr(process, 'stdout', None)
+    stderr = getattr(process, 'stderr', None)
+    if stdout:
+        reader_tasks.append(asyncio.create_task(
+            _read_stream_to_buffer(stdout, 'stdout', log)
+        ))
+    if stderr:
+        reader_tasks.append(asyncio.create_task(
+            _read_stream_to_buffer(stderr, 'stderr', log)
+        ))
+
     try:
         loop = asyncio.get_event_loop()
         wait_future = loop.run_in_executor(None, process.wait)
@@ -443,6 +542,11 @@ async def monitor_claude_process(
             # wait_future is still running; process.kill() causes process.wait()
             # to return quickly, so this await completes almost immediately.
             exit_code = await wait_future
+
+        # Drain any remaining output now that the process has exited and pipes are at EOF
+        if reader_tasks:
+            await asyncio.gather(*reader_tasks, return_exceptions=True)
+            reader_tasks.clear()
 
         if timed_out:
             mins = AUTOPILOT_PROCESS_TIMEOUT_SECS // 60
@@ -482,6 +586,12 @@ async def monitor_claude_process(
     except asyncio.CancelledError:
         # Auto-pilot was disabled externally — exit cleanly without propagating
         pass
+    finally:
+        # Cancel any still-running reader tasks and remove the log buffer
+        for task in reader_tasks:
+            if not task.done():
+                task.cancel()
+        _claude_process_logs.pop(feature_id, None)
 
 
 @app.on_event("startup")
@@ -1566,10 +1676,18 @@ async def launch_claude_for_feature(feature_id: int, request: LaunchClaudeReques
                 launched = False
                 for ps_exe in ps_executables:
                     try:
+                        popen_kwargs: dict = {
+                            "cwd": working_dir,
+                        }
+                        if request.hidden_execution:
+                            # Hidden execution: capture stdout/stderr; no console window needed
+                            popen_kwargs["stdout"] = subprocess.PIPE
+                            popen_kwargs["stderr"] = subprocess.PIPE
+                        else:
+                            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_CONSOLE
                         launched_process = subprocess.Popen(
                             [ps_exe, "-Command", ps_cmd],
-                            creationflags=subprocess.CREATE_NEW_CONSOLE,
-                            cwd=working_dir,
+                            **popen_kwargs,
                         )
                         launched = True
                         break
@@ -1584,10 +1702,16 @@ async def launch_claude_for_feature(feature_id: int, request: LaunchClaudeReques
             else:
                 # --print runs Claude non-interactively so the session closes automatically when done
                 cmd = ["claude", "--model", feature_model, "--dangerously-skip-permissions"]
+                pipe_output = request.hidden_execution
                 if request.hidden_execution:
                     cmd.append("--print")
                 cmd.append(prompt)
-                launched_process = subprocess.Popen(cmd, cwd=working_dir)
+                launched_process = subprocess.Popen(
+                    cmd,
+                    cwd=working_dir,
+                    stdout=subprocess.PIPE if pipe_output else None,
+                    stderr=subprocess.PIPE if pipe_output else None,
+                )
         except FileNotFoundError:
             raise HTTPException(
                 status_code=500,

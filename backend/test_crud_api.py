@@ -3334,9 +3334,13 @@ class TestAutoPilotPersistence:
 
         client, temp_db_path, config_path = client_with_config
 
+        import subprocess as _subprocess
         monkeypatch.setattr(
             main_module, 'subprocess',
-            type('M', (), {'Popen': lambda *a, **kw: type('P', (), {'pid': 1})()})()
+            type('M', (), {
+                'Popen': lambda *a, **kw: type('P', (), {'pid': 1, 'stdout': None, 'stderr': None})(),
+                'PIPE': _subprocess.PIPE,
+            })()
         )
 
         response = client.post("/api/autopilot/enable")
