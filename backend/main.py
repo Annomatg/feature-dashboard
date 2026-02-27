@@ -172,6 +172,7 @@ class _AutoPilotState:
         self.consecutive_skip_count: int = 0  # incremented when same feature is returned consecutively
         self.last_skipped_feature_id: Optional[int] = None  # last feature id given to the sequencer
         self.features_completed: int = 0  # number of features completed in this session
+        self.budget_exhausted: bool = False  # True when stopped by budget limit
         # Manual launch tracking (user clicked "Launch Claude" in the detail panel)
         self.manual_active: bool = False
         self.manual_feature_id: Optional[int] = None
@@ -398,6 +399,7 @@ def handle_budget_exhausted(state: "_AutoPilotState") -> None:
     msg = f"Session budget reached: {limit} feature{'s' if limit != 1 else ''} completed"
     _append_log(state, 'info', msg)
     state.enabled = False
+    state.budget_exhausted = True
     state.current_feature_id = None
     state.current_feature_name = None
     state.current_feature_model = None
@@ -998,6 +1000,7 @@ class AutoPilotStatusResponse(BaseModel):
     # Budget fields
     budget_limit: int = 0
     features_completed: int = 0
+    budget_exhausted: bool = False
 
 
 @app.get("/")
@@ -1951,6 +1954,7 @@ async def enable_autopilot():
                 log=list(state.log),
                 budget_limit=settings.get("autopilot_budget_limit", 0),
                 features_completed=state.features_completed,
+                budget_exhausted=state.budget_exhausted,
             )
 
         state.enabled = True
@@ -1958,6 +1962,7 @@ async def enable_autopilot():
         state.current_feature_name = feature.name
         state.current_feature_model = feature.model or "sonnet"
         state.last_error = None
+        state.budget_exhausted = False
         state.last_skipped_feature_id = feature.id
         state.consecutive_skip_count = 0
         state.features_completed = 0
@@ -2005,6 +2010,7 @@ async def enable_autopilot():
             log=list(state.log),
             budget_limit=settings.get("autopilot_budget_limit", 0),
             features_completed=state.features_completed,
+            budget_exhausted=state.budget_exhausted,
         )
     finally:
         session.close()
@@ -2102,6 +2108,7 @@ async def disable_autopilot():
                 log=list(state.log),
                 budget_limit=_settings.get("autopilot_budget_limit", 0),
                 features_completed=state.features_completed,
+                budget_exhausted=state.budget_exhausted,
             )
         else:
             # Process already exited — clear the handle.
@@ -2128,6 +2135,7 @@ async def disable_autopilot():
         log=list(state.log),
         budget_limit=_settings.get("autopilot_budget_limit", 0),
         features_completed=state.features_completed,
+        budget_exhausted=state.budget_exhausted,
     )
 
 
@@ -2154,6 +2162,7 @@ async def clear_autopilot_error():
     """
     state = get_autopilot_state()
     state.last_error = None
+    state.budget_exhausted = False
     return {"cleared": True}
 
 
@@ -2183,6 +2192,7 @@ async def get_autopilot_status():
         manual_feature_model=state.manual_feature_model,
         budget_limit=settings.get("autopilot_budget_limit", 0),
         features_completed=state.features_completed,
+        budget_exhausted=state.budget_exhausted,
     )
 
 

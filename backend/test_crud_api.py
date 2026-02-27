@@ -4434,5 +4434,111 @@ class TestAutopilotBudgetStatusResponse:
         assert data["features_completed"] == 2
 
 
+# ==============================================================================
+# budget_exhausted flag tests
+# ==============================================================================
+
+class TestBudgetExhaustedFlag:
+    """Tests for the budget_exhausted flag in _AutoPilotState and status API."""
+
+    def _reset_autopilot_state(self, monkeypatch):
+        import backend.main as main_module
+        monkeypatch.setattr(main_module, '_autopilot_states', {})
+
+    def test_budget_exhausted_default_is_false(self):
+        """_AutoPilotState.budget_exhausted defaults to False."""
+        from backend.main import _AutoPilotState
+        state = _AutoPilotState()
+        assert state.budget_exhausted is False
+
+    def test_handle_budget_exhausted_sets_flag(self):
+        """handle_budget_exhausted() sets state.budget_exhausted = True."""
+        from backend.main import handle_budget_exhausted, _AutoPilotState
+        state = _AutoPilotState()
+        state.enabled = True
+        state.features_completed = 3
+        handle_budget_exhausted(state)
+        assert state.budget_exhausted is True
+        assert state.enabled is False
+
+    def test_status_returns_budget_exhausted_false_by_default(self, client, tmp_path, monkeypatch):
+        """GET /api/autopilot/status returns budget_exhausted=False by default."""
+        import backend.main as main_module
+        self._reset_autopilot_state(monkeypatch)
+        monkeypatch.setattr(main_module, 'SETTINGS_FILE', tmp_path / "none.json")
+
+        response = client.get("/api/autopilot/status")
+        assert response.status_code == 200
+        assert response.json()["budget_exhausted"] is False
+
+    def test_status_reflects_budget_exhausted_true(self, client, tmp_path, monkeypatch):
+        """GET /api/autopilot/status returns budget_exhausted=True after budget is hit."""
+        import backend.main as main_module
+        self._reset_autopilot_state(monkeypatch)
+        monkeypatch.setattr(main_module, 'SETTINGS_FILE', tmp_path / "none.json")
+
+        state = main_module.get_autopilot_state()
+        state.budget_exhausted = True
+
+        response = client.get("/api/autopilot/status")
+        assert response.status_code == 200
+        assert response.json()["budget_exhausted"] is True
+
+    def test_clear_error_also_clears_budget_exhausted(self, client, tmp_path, monkeypatch):
+        """POST /api/autopilot/clear-error clears budget_exhausted flag."""
+        import backend.main as main_module
+        self._reset_autopilot_state(monkeypatch)
+        monkeypatch.setattr(main_module, 'SETTINGS_FILE', tmp_path / "none.json")
+
+        state = main_module.get_autopilot_state()
+        state.budget_exhausted = True
+
+        response = client.post("/api/autopilot/clear-error")
+        assert response.status_code == 200
+        assert state.budget_exhausted is False
+
+    def test_enable_resets_budget_exhausted(self, client, tmp_path, monkeypatch):
+        """POST /api/autopilot/enable resets budget_exhausted to False."""
+        import backend.main as main_module
+        self._reset_autopilot_state(monkeypatch)
+        monkeypatch.setattr(main_module, 'SETTINGS_FILE', tmp_path / "none.json")
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {
+            "pid": 1, "terminate": lambda self: None, "wait": lambda self: 0
+        })())
+
+        state = main_module.get_autopilot_state()
+        state.budget_exhausted = True
+
+        response = client.post("/api/autopilot/enable")
+        assert response.status_code == 200
+        assert state.budget_exhausted is False
+        assert response.json()["budget_exhausted"] is False
+
+    def test_handle_budget_exhausted_via_success_handler(self, test_db_with_path, monkeypatch):
+        """Budget flag is set when handle_autopilot_success hits the limit."""
+        import asyncio
+        from backend.main import handle_autopilot_success, _AutoPilotState
+        import backend.main as main_module
+
+        session_maker, db_path = test_db_with_path
+
+        monkeypatch.setattr(main_module, 'load_settings', lambda: {
+            "claude_prompt_template": "t",
+            "autopilot_budget_limit": 1,
+        })
+        monkeypatch.setattr("backend.main.spawn_claude_for_autopilot",
+                            lambda *a, **k: type("P", (), {"pid": 1})())
+        monkeypatch.setattr("asyncio.create_task", lambda coro: coro.close() or None)
+
+        state = _AutoPilotState()
+        state.enabled = True
+        state.features_completed = 0
+
+        asyncio.run(handle_autopilot_success(1, state, db_path))
+
+        assert state.budget_exhausted is True
+        assert state.enabled is False
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
