@@ -2214,7 +2214,7 @@ async def delete_comment(feature_id: int, comment_id: int):
 # Interview endpoints
 # ---------------------------------------------------------------------------
 
-from backend.interview_state import get_interview_session  # noqa: E402
+from backend.interview_state import get_interview_session, _log_event as _log_interview_event, get_debug_log  # noqa: E402
 
 
 class InterviewQuestionRequest(BaseModel):
@@ -2300,6 +2300,7 @@ async def interview_question_stream():
     """
     session = get_interview_session()
     queue = session.subscribe()
+    _log_interview_event(session, "sse_connect", {})
 
     async def event_generator():
         try:
@@ -2334,6 +2335,7 @@ async def interview_question_stream():
                     break
         finally:
             session.unsubscribe(queue)
+            _log_interview_event(session, "sse_disconnect", {})
 
     return StreamingResponse(
         event_generator(),
@@ -2432,6 +2434,22 @@ async def delete_interview_session(features_created: int = 0):
     session = get_interview_session()
     await session.reset(features_created=features_created)
     return {"message": "Session ended"}
+
+
+@app.get("/api/interview/debug")
+async def get_interview_debug():
+    """
+    Return the session event log for debugging.
+
+    Returns the full structured log for the active session, or the last
+    session's log if it ended within the past 60 seconds.
+
+    Returns 404 if no session is active and no recent log is available.
+    """
+    result = get_debug_log()
+    if result is None:
+        raise HTTPException(status_code=404, detail="No active or recent interview session.")
+    return result
 
 
 if __name__ == "__main__":

@@ -49,6 +49,9 @@ def reset_interview_state():
     # Re-create the event to ensure clean state
     session._answer_ready = asyncio.Event()
     session._subscribers = []
+    session.log.clear()
+    state_module._last_session_log = None
+    state_module._last_session_log_time = None
     yield
     # Reset again after test to avoid leaking state to subsequent tests
     session.active_question = None
@@ -57,6 +60,9 @@ def reset_interview_state():
     session.started_at = None
     session._answer_ready = asyncio.Event()
     session._subscribers = []
+    session.log.clear()
+    state_module._last_session_log = None
+    state_module._last_session_log_time = None
 
 
 @pytest.fixture
