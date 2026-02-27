@@ -31,6 +31,8 @@ function SettingsPanel({ onClose }) {
   const [savedTemplate, setSavedTemplate] = useState('')
   const [planTemplate, setPlanTemplate] = useState('')
   const [savedPlanTemplate, setSavedPlanTemplate] = useState('')
+  const [budgetLimit, setBudgetLimit] = useState(0)
+  const [savedBudgetLimit, setSavedBudgetLimit] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [saveMessage, setSaveMessage] = useState(null)
@@ -44,12 +46,17 @@ function SettingsPanel({ onClose }) {
         setSavedTemplate(data.claude_prompt_template)
         setPlanTemplate(data.plan_tasks_prompt_template ?? DEFAULT_PLAN_TASKS_TEMPLATE)
         setSavedPlanTemplate(data.plan_tasks_prompt_template ?? DEFAULT_PLAN_TASKS_TEMPLATE)
+        const limit = data.autopilot_budget_limit ?? 0
+        setBudgetLimit(limit)
+        setSavedBudgetLimit(limit)
       })
       .catch(() => {
         setPromptTemplate(DEFAULT_PROMPT_TEMPLATE)
         setSavedTemplate(DEFAULT_PROMPT_TEMPLATE)
         setPlanTemplate(DEFAULT_PLAN_TASKS_TEMPLATE)
         setSavedPlanTemplate(DEFAULT_PLAN_TASKS_TEMPLATE)
+        setBudgetLimit(0)
+        setSavedBudgetLimit(0)
       })
       .finally(() => setIsLoading(false))
   }, [])
@@ -63,7 +70,7 @@ function SettingsPanel({ onClose }) {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
 
-  const isDirty = promptTemplate !== savedTemplate || planTemplate !== savedPlanTemplate
+  const isDirty = promptTemplate !== savedTemplate || planTemplate !== savedPlanTemplate || budgetLimit !== savedBudgetLimit
 
   const handleSave = async () => {
     setIsSaving(true)
@@ -72,9 +79,11 @@ function SettingsPanel({ onClose }) {
       await saveSettings({
         claude_prompt_template: promptTemplate,
         plan_tasks_prompt_template: planTemplate,
+        autopilot_budget_limit: budgetLimit,
       })
       setSavedTemplate(promptTemplate)
       setSavedPlanTemplate(planTemplate)
+      setSavedBudgetLimit(budgetLimit)
       setSaveMessage({ type: 'success', text: 'Settings saved!' })
     } catch (err) {
       setSaveMessage({ type: 'error', text: err.message || 'Failed to save' })
@@ -130,6 +139,25 @@ function SettingsPanel({ onClose }) {
             </div>
           ) : (
             <>
+              {/* Session Budget */}
+              <div>
+                <label className="block text-xs font-mono text-text-secondary uppercase tracking-wide mb-2">
+                  Session Budget (max features)
+                </label>
+                <p className="text-xs text-text-secondary mb-3 leading-relaxed">
+                  Stop autopilot after completing this many features in one session. Set to{' '}
+                  <code className="font-mono text-primary">0</code> for unlimited.
+                </p>
+                <input
+                  type="number"
+                  data-testid="budget-limit-input"
+                  value={budgetLimit}
+                  min={0}
+                  onChange={(e) => setBudgetLimit(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                  className="w-32 bg-background border border-border rounded px-3 py-2 text-sm text-text-primary font-mono focus:outline-none focus:border-primary transition-colors"
+                />
+              </div>
+
               {/* Autopilot prompt template */}
               <div>
                 <div className="flex items-center justify-between mb-2">

@@ -171,6 +171,7 @@ class _AutoPilotState:
         self.monitor_task = None  # asyncio.Task handle, if monitoring
         self.consecutive_skip_count: int = 0  # incremented when same feature is returned consecutively
         self.last_skipped_feature_id: Optional[int] = None  # last feature id given to the sequencer
+        self.features_completed: int = 0  # number of features completed in this session
         # Manual launch tracking (user clicked "Launch Claude" in the detail panel)
         self.manual_active: bool = False
         self.manual_feature_id: Optional[int] = None
@@ -391,6 +392,19 @@ def spawn_claude_for_autopilot(feature, settings: dict, working_dir: str) -> "su
             raise FileNotFoundError("Claude CLI not found. Make sure claude is in your PATH.")
 
 
+def handle_budget_exhausted(state: "_AutoPilotState") -> None:
+    """Stop auto-pilot because the session budget limit has been reached."""
+    limit = state.features_completed
+    msg = f"Session budget reached: {limit} feature{'s' if limit != 1 else ''} completed"
+    _append_log(state, 'info', msg)
+    state.enabled = False
+    state.current_feature_id = None
+    state.current_feature_name = None
+    state.current_feature_model = None
+    state.active_process = None
+    state.monitor_task = None
+
+
 async def handle_autopilot_success(
     feature_id: int, state: "_AutoPilotState", db_path: Path
 ) -> None:
@@ -401,6 +415,14 @@ async def handle_autopilot_success(
     """
     feature_name = state.current_feature_name or "unknown"
     _append_log(state, 'success', f"Feature #{feature_id} completed: {feature_name}")
+    state.features_completed += 1
+
+    # Budget limit check: stop if the session limit has been reached
+    settings = load_settings()
+    budget_limit = settings.get("autopilot_budget_limit", 0)
+    if budget_limit > 0 and state.features_completed >= budget_limit:
+        handle_budget_exhausted(state)
+        return
 
     # Fetch the next feature with a fresh session
     from sqlalchemy import create_engine as _create_engine
@@ -442,7 +464,6 @@ async def handle_autopilot_success(
     state.current_feature_id = next_feature.id
     state.current_feature_name = next_feature.name
     state.current_feature_model = next_feature.model or "sonnet"
-    settings = load_settings()
     try:
         proc = spawn_claude_for_autopilot(next_feature, settings, str(db_path.parent))
         state.active_process = proc
@@ -729,6 +750,7 @@ def load_settings() -> dict:
     defaults = {
         "claude_prompt_template": DEFAULT_PROMPT_TEMPLATE,
         "plan_tasks_prompt_template": PLAN_TASKS_PROMPT_TEMPLATE,
+        "autopilot_budget_limit": 0,
     }
     if not SETTINGS_FILE.exists():
         return defaults
@@ -921,12 +943,14 @@ class SettingsResponse(BaseModel):
     """Application settings response."""
     claude_prompt_template: str
     plan_tasks_prompt_template: str
+    autopilot_budget_limit: int = 0
 
 
 class UpdateSettingsRequest(BaseModel):
     """Request to update application settings."""
     claude_prompt_template: str
     plan_tasks_prompt_template: Optional[str] = None
+    autopilot_budget_limit: int = 0
 
 
 class CommentResponse(BaseModel):
@@ -1650,6 +1674,7 @@ async def update_settings(request: UpdateSettingsRequest):
                 if request.plan_tasks_prompt_template is not None
                 else current.get("plan_tasks_prompt_template", PLAN_TASKS_PROMPT_TEMPLATE)
             ),
+            "autopilot_budget_limit": request.autopilot_budget_limit,
         }
         save_settings(settings)
         return SettingsResponse(**settings)
@@ -1929,6 +1954,7 @@ async def enable_autopilot():
         state.last_error = None
         state.last_skipped_feature_id = feature.id
         state.consecutive_skip_count = 0
+        state.features_completed = 0
         state.log.clear()
         _append_log(state, 'info', f"Auto-pilot enabled for database: {_current_db_path.name}")
         _append_log(state, 'info', f"Starting feature #{feature.id}: {feature.name}")

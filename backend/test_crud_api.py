@@ -4122,5 +4122,207 @@ class TestClaudeLog:
         assert response.json()["active"] is True
 
 
+# ==============================================================================
+# Autopilot budget limit tests
+# ==============================================================================
+
+def test_settings_includes_budget_limit_default(client, tmp_path, monkeypatch):
+    """GET /api/settings returns autopilot_budget_limit=0 by default."""
+    import backend.main as main_module
+    monkeypatch.setattr(main_module, 'SETTINGS_FILE', tmp_path / "settings_nonexistent.json")
+
+    response = client.get("/api/settings")
+    assert response.status_code == 200
+    data = response.json()
+    assert "autopilot_budget_limit" in data
+    assert data["autopilot_budget_limit"] == 0
+
+
+def test_put_settings_saves_budget_limit(client, tmp_path, monkeypatch):
+    """PUT /api/settings saves and returns autopilot_budget_limit."""
+    import json
+    import backend.main as main_module
+    settings_file = tmp_path / "test_settings.json"
+    monkeypatch.setattr(main_module, 'SETTINGS_FILE', settings_file)
+
+    response = client.put("/api/settings", json={
+        "claude_prompt_template": "some template",
+        "plan_tasks_prompt_template": "some plan",
+        "autopilot_budget_limit": 5,
+    })
+    assert response.status_code == 200
+    data = response.json()
+    assert data["autopilot_budget_limit"] == 5
+
+    # Verify persisted to disk
+    saved = json.loads(settings_file.read_text())
+    assert saved["autopilot_budget_limit"] == 5
+
+
+def test_put_settings_budget_limit_defaults_to_zero_when_omitted(client, tmp_path, monkeypatch):
+    """PUT /api/settings defaults autopilot_budget_limit to 0 when not provided."""
+    import backend.main as main_module
+    settings_file = tmp_path / "test_settings.json"
+    monkeypatch.setattr(main_module, 'SETTINGS_FILE', settings_file)
+
+    response = client.put("/api/settings", json={
+        "claude_prompt_template": "some template",
+    })
+    assert response.status_code == 200
+    assert response.json()["autopilot_budget_limit"] == 0
+
+
+class TestAutopilotBudgetLimit:
+    """Unit tests for budget limit enforcement in handle_autopilot_success."""
+
+    def test_budget_limit_zero_does_not_stop(self, test_db_with_path, monkeypatch):
+        """When budget_limit=0 (unlimited), autopilot continues after each feature."""
+        import asyncio
+        from backend.main import handle_autopilot_success, _AutoPilotState
+        import backend.main as main_module
+
+        session_maker, db_path = test_db_with_path
+
+        monkeypatch.setattr(main_module, 'load_settings', lambda: {
+            "claude_prompt_template": "t",
+            "autopilot_budget_limit": 0,
+        })
+        spawn_calls = []
+
+        def mock_spawn(feature, settings, working_dir):
+            spawn_calls.append(feature.id)
+            return type("P", (), {"pid": 1, "wait": lambda s: 0})()
+
+        monkeypatch.setattr("backend.main.spawn_claude_for_autopilot", mock_spawn)
+        monkeypatch.setattr("asyncio.create_task", lambda coro: coro.close() or None)
+
+        state = _AutoPilotState()
+        state.current_feature_name = "Feature Done"
+        asyncio.run(handle_autopilot_success(99, state, db_path))
+
+        # Should NOT have stopped — next feature was spawned
+        assert len(spawn_calls) == 1
+        assert state.enabled is False  # still False since we never set it True in state
+        # More importantly, handle_budget_exhausted was NOT called so enabled wasn't forced off
+        # via the budget path — check via log that budget message is absent
+        budget_entries = [e for e in state.log if "budget" in e.message.lower()]
+        assert len(budget_entries) == 0
+
+    def test_budget_limit_stops_after_n_features(self, test_db_with_path, monkeypatch):
+        """When budget_limit=2, autopilot stops after completing 2 features."""
+        import asyncio
+        from backend.main import handle_autopilot_success, _AutoPilotState
+        import backend.main as main_module
+
+        session_maker, db_path = test_db_with_path
+
+        monkeypatch.setattr(main_module, 'load_settings', lambda: {
+            "claude_prompt_template": "t",
+            "autopilot_budget_limit": 2,
+        })
+
+        spawn_calls = []
+
+        def mock_spawn(feature, settings, working_dir):
+            spawn_calls.append(feature.id)
+            return type("P", (), {"pid": 1, "wait": lambda s: 0})()
+
+        monkeypatch.setattr("backend.main.spawn_claude_for_autopilot", mock_spawn)
+        monkeypatch.setattr("asyncio.create_task", lambda coro: coro.close() or None)
+
+        state = _AutoPilotState()
+        state.enabled = True
+        state.current_feature_name = "Feature A"
+        state.features_completed = 1  # simulate 1 already completed
+
+        # Completing a second feature should hit the budget limit
+        asyncio.run(handle_autopilot_success(99, state, db_path))
+
+        assert state.enabled is False
+        assert state.current_feature_id is None
+        assert state.current_feature_name is None
+        assert len(spawn_calls) == 0  # no next feature spawned
+
+        budget_entries = [e for e in state.log if "budget" in e.message.lower()]
+        assert len(budget_entries) == 1
+        assert "2" in budget_entries[0].message  # "2 features completed"
+
+    def test_budget_limit_one_stops_immediately(self, test_db_with_path, monkeypatch):
+        """When budget_limit=1 and features_completed reaches 1, autopilot stops."""
+        import asyncio
+        from backend.main import handle_autopilot_success, _AutoPilotState
+        import backend.main as main_module
+
+        session_maker, db_path = test_db_with_path
+
+        monkeypatch.setattr(main_module, 'load_settings', lambda: {
+            "claude_prompt_template": "t",
+            "autopilot_budget_limit": 1,
+        })
+
+        spawn_calls = []
+        monkeypatch.setattr("backend.main.spawn_claude_for_autopilot",
+                            lambda *a, **k: spawn_calls.append(1) or type("P", (), {"pid": 1})())
+        monkeypatch.setattr("asyncio.create_task", lambda coro: coro.close() or None)
+
+        state = _AutoPilotState()
+        state.enabled = True
+        state.current_feature_name = "First Feature"
+        state.features_completed = 0  # nothing done yet
+
+        asyncio.run(handle_autopilot_success(1, state, db_path))
+
+        assert state.enabled is False
+        assert len(spawn_calls) == 0  # no further features spawned
+
+        budget_entries = [e for e in state.log if "budget" in e.message.lower()]
+        assert len(budget_entries) == 1
+
+    def test_features_completed_counter_increments(self, test_db_with_path, monkeypatch):
+        """features_completed is incremented on each successful feature."""
+        import asyncio
+        from backend.main import handle_autopilot_success, _AutoPilotState
+        import backend.main as main_module
+
+        session_maker, db_path = test_db_with_path
+
+        monkeypatch.setattr(main_module, 'load_settings', lambda: {
+            "claude_prompt_template": "t",
+            "autopilot_budget_limit": 0,
+        })
+        monkeypatch.setattr("backend.main.spawn_claude_for_autopilot",
+                            lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda s: 0})())
+        monkeypatch.setattr("asyncio.create_task", lambda coro: coro.close() or None)
+
+        state = _AutoPilotState()
+        assert state.features_completed == 0
+
+        asyncio.run(handle_autopilot_success(99, state, db_path))
+        assert state.features_completed == 1
+
+    def test_enable_autopilot_resets_features_completed(self, client, monkeypatch):
+        """Enabling autopilot resets features_completed counter to 0."""
+        import backend.main as main_module
+        from backend.main import _AutoPilotState
+
+        self._reset_autopilot_state(monkeypatch)
+
+        state = main_module.get_autopilot_state()
+        state.features_completed = 5  # simulate a previous session
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {
+            "pid": 1, "terminate": lambda self: None, "wait": lambda self: 0
+        })())
+
+        client.post("/api/autopilot/enable")
+
+        assert state.features_completed == 0
+
+    def _reset_autopilot_state(self, monkeypatch):
+        """Reset global autopilot state so tests start fresh."""
+        import backend.main as main_module
+        monkeypatch.setattr(main_module, '_autopilot_states', {})
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
