@@ -942,6 +942,21 @@ class CreateCommentRequest(BaseModel):
     content: str
 
 
+class ClaudeLogLineResponse(BaseModel):
+    """A single captured output line returned by the claude-log endpoint."""
+    timestamp: str
+    stream: str
+    text: str
+
+
+class ClaudeLogResponse(BaseModel):
+    """Response for GET /api/features/{id}/claude-log."""
+    feature_id: int
+    active: bool
+    lines: list[ClaudeLogLineResponse]
+    total_lines: int
+
+
 class AutoPilotStatusResponse(BaseModel):
     """Response for auto-pilot enable/status."""
     enabled: bool
@@ -1257,6 +1272,42 @@ async def get_feature(feature_id: int):
         return feature_to_response(feature, counts)
     finally:
         session.close()
+
+
+@app.get("/api/features/{feature_id}/claude-log", response_model=ClaudeLogResponse)
+async def get_claude_log(feature_id: int, limit: int = 10, stream: str = "all"):
+    """Get the last N lines of Claude process output for a feature.
+
+    Returns 404 if no log buffer exists for the feature (process never started
+    or has already exited and been cleaned up).  Returns 200 with an empty
+    ``lines`` list if the process started but has not yet produced output.
+
+    Query params:
+    - limit: number of lines to return, clamped to 1–500 (default 10)
+    - stream: 'stdout' | 'stderr' | 'all' (default 'all')
+    """
+    if feature_id not in _claude_process_logs:
+        raise HTTPException(status_code=404, detail=f"No Claude log found for feature {feature_id}")
+
+    log = _claude_process_logs[feature_id]
+    all_lines = list(log.lines)
+
+    if stream != "all":
+        all_lines = [ln for ln in all_lines if ln.stream == stream]
+
+    total = len(all_lines)
+    clamped_limit = max(1, min(limit, 500))
+    selected = all_lines[-clamped_limit:] if all_lines else []
+
+    return ClaudeLogResponse(
+        feature_id=feature_id,
+        active=feature_id in _claude_process_logs,
+        lines=[
+            ClaudeLogLineResponse(timestamp=ln.timestamp, stream=ln.stream, text=ln.text)
+            for ln in selected
+        ],
+        total_lines=total,
+    )
 
 
 @app.post("/api/features", response_model=FeatureResponse, status_code=201)

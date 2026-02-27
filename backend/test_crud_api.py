@@ -4006,5 +4006,121 @@ class TestManualLaunchTracking:
         assert any("exit 1" in e.message or "exit code" in e.message.lower() for e in info_entries)
 
 
+class TestClaudeLog:
+    """Tests for GET /api/features/{feature_id}/claude-log"""
+
+    def test_no_log_returns_404(self, client, monkeypatch):
+        """Returns 404 when no log buffer exists for the feature."""
+        import backend.main as main_module
+        monkeypatch.setattr(main_module, '_claude_process_logs', {})
+        response = client.get("/api/features/1/claude-log")
+        assert response.status_code == 404
+
+    def test_empty_log_returns_200_with_no_lines(self, client, monkeypatch):
+        """Returns 200 with empty lines list when log exists but has no output yet."""
+        import backend.main as main_module
+        from backend.main import ClaudeProcessLog
+        log = ClaudeProcessLog(feature_id=1)
+        monkeypatch.setattr(main_module, '_claude_process_logs', {1: log})
+        response = client.get("/api/features/1/claude-log")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["feature_id"] == 1
+        assert data["active"] is True
+        assert data["lines"] == []
+        assert data["total_lines"] == 0
+
+    def test_log_with_data_returns_last_n_lines(self, client, monkeypatch):
+        """Returns last N lines when limit is applied."""
+        import backend.main as main_module
+        from backend.main import ClaudeProcessLog
+        log = ClaudeProcessLog(feature_id=2)
+        for i in range(20):
+            log.append("stdout", f"line {i}")
+        monkeypatch.setattr(main_module, '_claude_process_logs', {2: log})
+
+        response = client.get("/api/features/2/claude-log?limit=5")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_lines"] == 20
+        assert len(data["lines"]) == 5
+        assert data["lines"][0]["text"] == "line 15"
+        assert data["lines"][-1]["text"] == "line 19"
+
+    def test_filter_by_stdout(self, client, monkeypatch):
+        """Filters lines by stream=stdout."""
+        import backend.main as main_module
+        from backend.main import ClaudeProcessLog
+        log = ClaudeProcessLog(feature_id=3)
+        log.append("stdout", "out line 1")
+        log.append("stderr", "err line 1")
+        log.append("stdout", "out line 2")
+        monkeypatch.setattr(main_module, '_claude_process_logs', {3: log})
+
+        response = client.get("/api/features/3/claude-log?stream=stdout&limit=10")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_lines"] == 2
+        assert all(ln["stream"] == "stdout" for ln in data["lines"])
+
+    def test_filter_by_stderr(self, client, monkeypatch):
+        """Filters lines by stream=stderr."""
+        import backend.main as main_module
+        from backend.main import ClaudeProcessLog
+        log = ClaudeProcessLog(feature_id=3)
+        log.append("stdout", "out line")
+        log.append("stderr", "err line 1")
+        log.append("stderr", "err line 2")
+        monkeypatch.setattr(main_module, '_claude_process_logs', {3: log})
+
+        response = client.get("/api/features/3/claude-log?stream=stderr&limit=10")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_lines"] == 2
+        assert all(ln["stream"] == "stderr" for ln in data["lines"])
+
+    def test_limit_clamped_to_500(self, client, monkeypatch):
+        """Limit is clamped to a maximum of 500."""
+        import backend.main as main_module
+        from backend.main import ClaudeProcessLog
+        log = ClaudeProcessLog(feature_id=1)
+        for i in range(10):
+            log.append("stdout", f"line {i}")
+        monkeypatch.setattr(main_module, '_claude_process_logs', {1: log})
+
+        response = client.get("/api/features/1/claude-log?limit=9999")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["lines"]) == 10  # only 10 exist, all returned
+
+    def test_line_schema(self, client, monkeypatch):
+        """Each line has timestamp, stream, and text fields."""
+        import backend.main as main_module
+        from backend.main import ClaudeProcessLog
+        log = ClaudeProcessLog(feature_id=1)
+        log.append("stdout", "hello world")
+        monkeypatch.setattr(main_module, '_claude_process_logs', {1: log})
+
+        response = client.get("/api/features/1/claude-log")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["lines"]) == 1
+        line = data["lines"][0]
+        assert "timestamp" in line
+        assert line["stream"] == "stdout"
+        assert line["text"] == "hello world"
+
+    def test_active_flag_reflects_log_presence(self, client, monkeypatch):
+        """active=True when the log key is present (process running)."""
+        import backend.main as main_module
+        from backend.main import ClaudeProcessLog
+        log = ClaudeProcessLog(feature_id=1)
+        monkeypatch.setattr(main_module, '_claude_process_logs', {1: log})
+
+        response = client.get("/api/features/1/claude-log")
+        assert response.status_code == 200
+        assert response.json()["active"] is True
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
