@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { X, Trash2, Check, RotateCcw, Terminal, MessageSquare } from 'lucide-react'
+import { X, Trash2, Check, RotateCcw, Terminal, MessageSquare, ChevronDown, RefreshCw } from 'lucide-react'
 import EditableSteps from './EditableSteps'
 
 async function fetchComments(featureId) {
@@ -149,6 +149,106 @@ function EditableField({ value, onSave, multiline = false, className = '', place
       title="Click to edit"
     >
       {value || <span className="text-text-secondary italic">{placeholder || 'Click to edit...'}</span>}
+    </div>
+  )
+}
+
+
+function ClaudeLogSection({ featureId, inProgress }) {
+  const [collapsed, setCollapsed] = useState(false)
+  const [logData, setLogData] = useState(null)
+  const [fetchError, setFetchError] = useState(null)
+  const intervalRef = useRef(null)
+
+  const fetchLog = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/features/${featureId}/claude-log?limit=10`)
+      if (response.status === 404) {
+        setLogData({ feature_id: featureId, active: false, lines: [], total_lines: 0 })
+        setFetchError(null)
+        return
+      }
+      if (!response.ok) throw new Error('Failed to fetch log')
+      setLogData(await response.json())
+      setFetchError(null)
+    } catch (err) {
+      setFetchError(err.message)
+    }
+  }, [featureId])
+
+  useEffect(() => {
+    if (!inProgress) return
+    fetchLog()
+    intervalRef.current = setInterval(fetchLog, 3000)
+    return () => clearInterval(intervalRef.current)
+  }, [featureId, inProgress, fetchLog])
+
+  if (!inProgress) return null
+
+  const formatTime = (iso) => {
+    try {
+      return new Date(iso).toLocaleTimeString('en-US', { hour12: false })
+    } catch {
+      return iso
+    }
+  }
+
+  return (
+    <div data-testid="claude-log-section">
+      <div className="flex items-center justify-between mb-2">
+        <button
+          onClick={() => setCollapsed(c => !c)}
+          data-testid="claude-log-toggle"
+          className="flex items-center gap-1.5 text-xs font-mono text-text-secondary uppercase tracking-wide hover:text-text-primary transition-colors"
+        >
+          <Terminal size={12} />
+          Claude Log ({logData?.total_lines ?? 0} lines)
+          <ChevronDown size={12} className={`transition-transform ${collapsed ? '-rotate-90' : ''}`} />
+        </button>
+        <button
+          onClick={fetchLog}
+          data-testid="claude-log-refresh"
+          title="Refresh"
+          className="p-1 rounded hover:bg-surface-light transition-colors"
+        >
+          <RefreshCw size={12} className="text-text-secondary" />
+        </button>
+      </div>
+      {!collapsed && (
+        <div
+          className="bg-background rounded border border-border overflow-y-auto max-h-[200px] custom-scrollbar"
+          data-testid="claude-log-lines"
+        >
+          {fetchError ? (
+            <p className="text-xs font-mono text-error p-2">{fetchError}</p>
+          ) : !logData || logData.lines.length === 0 ? (
+            <p className="text-xs font-mono text-text-secondary p-2 italic">No output yet...</p>
+          ) : (
+            <div className="divide-y divide-border">
+              {logData.lines.map((line, i) => (
+                <div key={i} className="flex items-start gap-2 px-2 py-1 min-w-0">
+                  <span className="text-xs font-mono text-text-secondary flex-shrink-0 pt-0.5">
+                    {formatTime(line.timestamp)}
+                  </span>
+                  <span
+                    className={`text-xs font-mono px-1 rounded flex-shrink-0 ${
+                      line.stream === 'stdout'
+                        ? 'bg-blue-500/20 text-blue-400'
+                        : 'bg-red-500/20 text-red-400'
+                    }`}
+                    data-testid="claude-log-stream-badge"
+                  >
+                    {line.stream}
+                  </span>
+                  <span className="text-xs font-mono text-text-primary break-all min-w-0">
+                    {line.text}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -343,6 +443,9 @@ function DetailPanel({ feature, onClose, onUpdate, onDelete }) {
               onSave={handleStepsSave}
             />
           </div>
+
+          {/* Claude Log - only shown for IN PROGRESS features */}
+          <ClaudeLogSection featureId={feature.id} inProgress={feature.in_progress} />
 
           {/* Comments */}
           {comments.length > 0 && (
