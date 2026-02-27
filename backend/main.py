@@ -59,6 +59,24 @@ DEFAULT_PROMPT_TEMPLATE = (
     "Steps:\n{steps}"
 )
 
+# Text patterns (lowercased) in Claude CLI stdout/stderr that indicate a rate or
+# session limit.  A case-insensitive substring search is performed against the
+# concatenated process output so we can surface a friendly message instead of a
+# generic red error banner.
+CLAUDE_RATE_LIMIT_PATTERNS: frozenset[str] = frozenset([
+    "rate limit",
+    "usage limit",
+    "session limit",
+    "rate_limit_error",
+    "overloaded_error",
+    "claude usage limit reached",
+    "you've reached your usage limit",
+])
+
+# Process exit codes that the Claude CLI uses to signal a session or rate limit.
+# 130 = SIGINT (128 + 2) — commonly emitted when a CLI tool is stopped externally.
+CLAUDE_SESSION_LIMIT_EXIT_CODES: frozenset[int] = frozenset([130])
+
 # Maximum time a single Claude process may run before it is forcibly killed.
 # Tasks are expected to be small; this guards against Claude getting stuck
 # after a terminal API error (e.g. max_output_tokens) where the process
@@ -438,19 +456,50 @@ async def handle_autopilot_success(
 
 
 async def handle_autopilot_failure(
-    feature_id: int, exit_code: int, state: "_AutoPilotState"
+    feature_id: int, exit_code: int, state: "_AutoPilotState", output_text: str = ""
 ) -> None:
     """Handle failed feature (process exited but feature.passes=False).
 
-    Sets last_error, logs the failure, and disables auto-pilot.
-    The feature's DB state is left unchanged (not reverted).
+    Checks the exit code and concatenated process output for known rate/session-limit
+    signals.  If detected, sets budget_exhausted=True and emits a friendly info-level
+    message so the info banner (not the red error banner) is shown in the UI.
+    Otherwise keeps the existing red error banner behaviour.
+
+    The raw exit code is always appended to the log first for debugging purposes.
+
+    Args:
+        feature_id:  Feature that was being processed.
+        exit_code:   Exit code returned by the Claude process.
+        state:       Current autopilot state (mutated in place).
+        output_text: Concatenated stdout+stderr captured from the process; used to
+                     detect rate-limit messages in CLI output.
     """
-    msg = (
-        f"Feature #{feature_id} failed: process exited with code {exit_code}"
-        " and was not marked as passing"
+    # Always log the raw exit code for debugging
+    _append_log(state, 'info', f"Feature #{feature_id}: process exited with code {exit_code}")
+
+    # Detect rate/session limit via exit code or output text
+    output_lower = output_text.lower()
+    is_limit = (
+        exit_code in CLAUDE_SESSION_LIMIT_EXIT_CODES
+        or any(pattern in output_lower for pattern in CLAUDE_RATE_LIMIT_PATTERNS)
     )
-    state.last_error = msg
-    _append_log(state, 'error', msg)
+
+    if is_limit:
+        msg = (
+            f"Feature #{feature_id}: Claude session/rate limit reached"
+            " \u2014 please wait before retrying"
+        )
+        state.last_error = msg
+        _append_log(state, 'info', msg)
+        state.budget_exhausted = True
+    else:
+        msg = (
+            f"Feature #{feature_id} failed: process exited with code {exit_code}"
+            " and was not marked as passing"
+        )
+        state.last_error = msg
+        _append_log(state, 'error', msg)
+
     state.enabled = False
     state.current_feature_id = None
     state.current_feature_name = None
@@ -557,7 +606,14 @@ async def monitor_claude_process(
         if passes:
             await handle_autopilot_success(feature_id, state, db_path)
         else:
-            await handle_autopilot_failure(feature_id, exit_code, state)
+            # Collect captured stdout/stderr for rate-limit detection.
+            # The log buffer is still present here; it is removed in the finally block.
+            process_log = _claude_process_logs.get(feature_id)
+            output_text = (
+                "\n".join(line.text for line in process_log.lines)
+                if process_log else ""
+            )
+            await handle_autopilot_failure(feature_id, exit_code, state, output_text)
     except asyncio.CancelledError:
         # Auto-pilot was disabled externally — exit cleanly without propagating
         pass

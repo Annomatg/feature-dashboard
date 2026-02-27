@@ -2400,7 +2400,7 @@ class TestMonitorClaudeProcess:
         async def mock_success(fid, state, path):
             success_calls.append(fid)
 
-        async def mock_failure(fid, exit_code, state):
+        async def mock_failure(fid, exit_code, state, output_text=""):
             failure_calls.append((fid, exit_code))
 
         import backend.main as main_module
@@ -2427,7 +2427,7 @@ class TestMonitorClaudeProcess:
 
         failure_calls = []
 
-        async def mock_failure(fid, exit_code, state):
+        async def mock_failure(fid, exit_code, state, output_text=""):
             failure_calls.append((fid, exit_code))
 
         import backend.main as main_module
@@ -2810,6 +2810,142 @@ class TestHandleAutopilotFailure:
             assert after.in_progress == before_in_progress
         finally:
             session.close()
+
+
+class TestHandleAutopilotFailureRateLimit:
+    """Tests for rate/session-limit detection in handle_autopilot_failure."""
+
+    def _run(self, exit_code=1, output_text=""):
+        import asyncio
+        from backend.main import handle_autopilot_failure, _AutoPilotState
+        state = _AutoPilotState()
+        state.enabled = True
+        asyncio.run(handle_autopilot_failure(7, exit_code, state, output_text))
+        return state
+
+    # ── exit code always logged ───────────────────────────────────────────────
+
+    def test_exit_code_always_logged_normal_failure(self):
+        """Raw exit code appears in the log even for a generic failure."""
+        state = self._run(exit_code=42, output_text="")
+        log_messages = [e.message for e in state.log]
+        assert any("42" in m for m in log_messages)
+
+    def test_exit_code_always_logged_rate_limit(self):
+        """Raw exit code appears in the log even when a rate limit is detected."""
+        state = self._run(exit_code=1, output_text="API Error: Rate limit reached")
+        log_messages = [e.message for e in state.log]
+        assert any("1" in m for m in log_messages)
+
+    # ── normal failure path (no rate limit) ───────────────────────────────────
+
+    def test_normal_failure_sets_error_level(self):
+        """Generic failure uses 'error' log level."""
+        state = self._run(exit_code=1, output_text="some unrelated error output")
+        assert any(e.level == 'error' for e in state.log)
+
+    def test_normal_failure_budget_exhausted_stays_false(self):
+        """budget_exhausted is not set on a generic failure."""
+        state = self._run(exit_code=1, output_text="")
+        assert state.budget_exhausted is False
+
+    def test_normal_failure_last_error_contains_not_marked_as_passing(self):
+        """Generic failure message retains the original wording."""
+        state = self._run(exit_code=1, output_text="")
+        assert state.last_error is not None
+        assert "not marked as passing" in state.last_error
+
+    # ── rate limit via output text ─────────────────────────────────────────────
+
+    def test_rate_limit_pattern_rate_limit(self):
+        state = self._run(output_text="Error: rate limit exceeded")
+        assert state.budget_exhausted is True
+
+    def test_rate_limit_pattern_usage_limit(self):
+        state = self._run(output_text="usage limit reached")
+        assert state.budget_exhausted is True
+
+    def test_rate_limit_pattern_session_limit(self):
+        state = self._run(output_text="session limit hit")
+        assert state.budget_exhausted is True
+
+    def test_rate_limit_pattern_rate_limit_error_json(self):
+        state = self._run(output_text='{"type":"rate_limit_error","message":"too many requests"}')
+        assert state.budget_exhausted is True
+
+    def test_rate_limit_pattern_overloaded_error(self):
+        state = self._run(output_text='{"type":"overloaded_error"}')
+        assert state.budget_exhausted is True
+
+    def test_rate_limit_pattern_claude_usage_limit_reached(self):
+        state = self._run(output_text="Claude usage limit reached. Your limit will reset at 5pm")
+        assert state.budget_exhausted is True
+
+    def test_rate_limit_pattern_youve_reached_your_usage_limit(self):
+        state = self._run(output_text="You've reached your usage limit for this period.")
+        assert state.budget_exhausted is True
+
+    def test_rate_limit_pattern_is_case_insensitive(self):
+        state = self._run(output_text="RATE LIMIT REACHED")
+        assert state.budget_exhausted is True
+
+    def test_rate_limit_friendly_message_in_last_error(self):
+        state = self._run(output_text="rate limit exceeded")
+        assert state.last_error is not None
+        assert "session/rate limit" in state.last_error
+        assert "please wait" in state.last_error.lower()
+
+    def test_rate_limit_uses_info_log_level(self):
+        """Rate limit message is logged at 'info' level (not 'error') so info banner shows."""
+        state = self._run(output_text="rate limit exceeded")
+        error_entries = [e for e in state.log if e.level == 'error']
+        info_entries = [e for e in state.log if e.level == 'info']
+        # No error-level entry for a rate-limit failure
+        assert len(error_entries) == 0
+        # At least one info entry contains the friendly message
+        assert any("session/rate limit" in e.message for e in info_entries)
+
+    def test_rate_limit_disables_autopilot(self):
+        state = self._run(output_text="rate limit exceeded")
+        assert state.enabled is False
+        assert state.current_feature_id is None
+
+    # ── rate limit via exit code ───────────────────────────────────────────────
+
+    def test_exit_code_130_triggers_rate_limit_path(self):
+        """Exit code 130 (SIGINT) is treated as a session/rate limit."""
+        state = self._run(exit_code=130, output_text="")
+        assert state.budget_exhausted is True
+
+    def test_exit_code_130_friendly_message(self):
+        state = self._run(exit_code=130, output_text="")
+        assert state.last_error is not None
+        assert "session/rate limit" in state.last_error
+
+    def test_exit_code_130_info_log_level(self):
+        state = self._run(exit_code=130, output_text="")
+        error_entries = [e for e in state.log if e.level == 'error']
+        assert len(error_entries) == 0
+
+    def test_exit_code_1_without_rate_limit_output_is_generic_failure(self):
+        """Exit code 1 with no matching output text remains a generic failure."""
+        state = self._run(exit_code=1, output_text="some other error")
+        assert state.budget_exhausted is False
+        assert "not marked as passing" in state.last_error
+
+    # ── constants exported ─────────────────────────────────────────────────────
+
+    def test_claude_session_limit_exit_codes_contains_130(self):
+        from backend.main import CLAUDE_SESSION_LIMIT_EXIT_CODES
+        assert 130 in CLAUDE_SESSION_LIMIT_EXIT_CODES
+
+    def test_claude_rate_limit_patterns_contains_rate_limit(self):
+        from backend.main import CLAUDE_RATE_LIMIT_PATTERNS
+        assert "rate limit" in CLAUDE_RATE_LIMIT_PATTERNS
+
+    def test_claude_rate_limit_patterns_contains_usage_limit(self):
+        from backend.main import CLAUDE_RATE_LIMIT_PATTERNS
+        assert "usage limit" in CLAUDE_RATE_LIMIT_PATTERNS
 
 
 class TestHandleAllComplete:
