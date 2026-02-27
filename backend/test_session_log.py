@@ -384,6 +384,49 @@ class TestSessionLogEndpoint:
         state.enabled = False
         state.session_start_time = None
 
+    def test_returns_entries_when_stopping(self, tmp_path):
+        """Session log stays readable while stopping=True (process still running)."""
+        since = datetime.now(timezone.utc) - timedelta(seconds=30)
+        session_file = tmp_path / 'stopping_session.jsonl'
+        session_file.write_text(
+            make_assistant_tool_use('Bash', {'command': 'ls', 'description': 'List files'}) +
+            make_assistant_text('Finishing up.')
+        )
+
+        state = main_module.get_autopilot_state()
+        state.enabled = False       # autopilot was disabled
+        state.stopping = True       # but Claude process still running
+        state.manual_active = False
+        state.session_start_time = since
+        state.session_jsonl_path = None
+
+        with patch('backend.main._get_claude_projects_dir', return_value=tmp_path):
+            with patch('backend.main._find_session_jsonl', return_value=session_file):
+                resp = self.client.get('/api/autopilot/session-log')
+
+        assert resp.status_code == 200
+        data = resp.json()
+        # active should reflect stopping state
+        assert data['active'] is True
+        assert len(data['entries']) == 2
+        # Reset
+        state.stopping = False
+        state.session_start_time = None
+        state.session_jsonl_path = None
+
+    def test_returns_empty_after_stopping_completes(self):
+        """Once stopping completes (stopping=False, enabled=False), log returns empty."""
+        state = main_module.get_autopilot_state()
+        state.enabled = False
+        state.stopping = False
+        state.manual_active = False
+        state.session_start_time = None
+        resp = self.client.get('/api/autopilot/session-log')
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data['active'] is False
+        assert data['entries'] == []
+
     def test_caches_session_file_after_first_find(self, tmp_path):
         """session_jsonl_path is set on first successful find and reused."""
         since = datetime.now(timezone.utc) - timedelta(seconds=30)

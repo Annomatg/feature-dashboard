@@ -1585,7 +1585,9 @@ async def get_autopilot_session_log(limit: int = 50):
     - limit: number of entries to return (1–200, default 50)
     """
     state = get_autopilot_state()
-    active = state.enabled or state.manual_active
+    # Include stopping state: autopilot disabled but Claude process still running —
+    # the session log should remain readable until the process actually exits.
+    active = state.enabled or state.manual_active or state.stopping
 
     if not active or state.session_start_time is None:
         return SessionLogResponse(
