@@ -34,19 +34,20 @@ function AutoPilotStatusBar() {
     queryFn: fetchAutoPilotStatus,
     refetchInterval: (query) => {
       const data = query.state.data
-      // Poll frequently while running or while waiting for the process to exit.
-      if (data?.enabled || data?.stopping) return 2000
+      // Poll frequently while running, stopping, or a manual launch is active.
+      if (data?.enabled || data?.stopping || data?.manual_active) return 2000
       return 10000
     },
   })
 
-  // Hide the bar only when neither running nor stopping.
-  if (!status?.enabled && !status?.stopping) return null
+  // Hide the bar when nothing is running.
+  if (!status?.enabled && !status?.stopping && !status?.manual_active) return null
 
   const isStopping = !status.enabled && !!status.stopping
-  const featureId = status.current_feature_id
-  const featureName = status.current_feature_name
-  const model = status.current_feature_model
+  const isManual = !status.enabled && !status.stopping && !!status.manual_active
+  const featureId = isManual ? status.manual_feature_id : status.current_feature_id
+  const featureName = isManual ? status.manual_feature_name : status.current_feature_name
+  const model = isManual ? status.manual_feature_model : status.current_feature_model
 
   return (
     <div
@@ -68,7 +69,7 @@ function AutoPilotStatusBar() {
           }`}
           data-testid="autopilot-status-label"
         >
-          {isStopping ? 'Stopping\u2026' : 'Auto-Pilot'}
+          {isStopping ? 'Stopping\u2026' : isManual ? 'Manual Run' : 'Auto-Pilot'}
         </span>
 
         {/* Separator */}

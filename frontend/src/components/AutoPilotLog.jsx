@@ -47,7 +47,7 @@ function AutoPilotLog() {
     queryFn: fetchAutoPilotStatus,
     refetchInterval: (query) => {
       const data = query.state.data
-      if (data?.enabled || data?.stopping) return 2000
+      if (data?.enabled || data?.stopping || data?.manual_active) return 2000
       return 10000
     },
   })

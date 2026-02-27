@@ -2,6 +2,7 @@ import { Settings, Sparkles, MessageSquare } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import DatabaseSelector from './DatabaseSelector'
 import AutoPilotToggle from './AutoPilotToggle'
+import ManualRunIndicator from './ManualRunIndicator'
 
 function StatPill({ label, value, color }) {
   return (
@@ -71,6 +72,9 @@ function Header({ totalFeatures, inProgressCount, doneCount, onSettingsClick, on
           >
             <MessageSquare size={18} />
           </Link>
+
+          {/* Manual run indicator (shown when user manually launched Claude) */}
+          <ManualRunIndicator />
 
           {/* Auto-Pilot toggle */}
           <AutoPilotToggle />

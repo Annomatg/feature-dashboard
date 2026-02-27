@@ -3792,5 +3792,215 @@ class TestAutoPilotStoppingState:
         assert state.stopping is True  # still stopping (caller is responsible)
 
 
+class TestManualLaunchTracking:
+    """Tests for manual-launch visibility via autopilot status endpoint.
+
+    When the user launches Claude manually via POST /api/features/{id}/launch-claude,
+    the autopilot state should reflect that a manual run is active so the UI can
+    show a running indicator in the top bar and add entries to the event log.
+    """
+
+    def _reset_autopilot_state(self, monkeypatch):
+        import backend.main as main_module
+        monkeypatch.setattr(main_module, '_autopilot_states', {})
+
+    def test_manual_launch_sets_manual_active_in_status(self, client, monkeypatch):
+        """After launching Claude manually, GET /api/autopilot/status should return manual_active=True."""
+        self._reset_autopilot_state(monkeypatch)
+
+        class MockProcess:
+            pid = 42
+            def wait(self):
+                return 0
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: MockProcess())
+
+        client.post("/api/features/1/launch-claude")
+
+        status = client.get("/api/autopilot/status").json()
+        assert status["manual_active"] is True
+        assert status["manual_feature_id"] == 1
+        assert status["manual_feature_name"] == "Feature 1"
+        assert status["manual_feature_model"] == "sonnet"
+
+    def test_manual_launch_adds_log_entry(self, client, monkeypatch):
+        """After launching Claude manually, a log entry should appear in the event log."""
+        self._reset_autopilot_state(monkeypatch)
+
+        class MockProcess:
+            pid = 42
+            def wait(self):
+                return 0
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: MockProcess())
+
+        client.post("/api/features/1/launch-claude")
+
+        status = client.get("/api/autopilot/status").json()
+        assert len(status["log"]) >= 1
+        messages = [e["message"] for e in status["log"]]
+        assert any("Manual launch" in m and "#1" in m and "Feature 1" in m for m in messages)
+
+    def test_manual_launch_log_entry_level_is_info(self, client, monkeypatch):
+        """The manual launch log entry should have level='info'."""
+        self._reset_autopilot_state(monkeypatch)
+
+        class MockProcess:
+            pid = 42
+            def wait(self):
+                return 0
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: MockProcess())
+
+        client.post("/api/features/1/launch-claude")
+
+        status = client.get("/api/autopilot/status").json()
+        launch_entries = [e for e in status["log"] if "Manual launch" in e["message"]]
+        assert len(launch_entries) == 1
+        assert launch_entries[0]["level"] == "info"
+
+    def test_manual_launch_includes_hidden_mode_in_log(self, client, monkeypatch):
+        """The log entry should indicate whether it was hidden or interactive."""
+        self._reset_autopilot_state(monkeypatch)
+
+        class MockProcess:
+            pid = 42
+            def wait(self):
+                return 0
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: MockProcess())
+
+        # hidden_execution=True (default)
+        client.post("/api/features/1/launch-claude", json={"hidden_execution": True})
+
+        status = client.get("/api/autopilot/status").json()
+        messages = [e["message"] for e in status["log"]]
+        assert any("hidden" in m for m in messages)
+
+    def test_manual_launch_includes_interactive_mode_in_log(self, client, monkeypatch):
+        """Log entry should say 'interactive' when hidden_execution=False."""
+        self._reset_autopilot_state(monkeypatch)
+
+        class MockProcess:
+            pid = 42
+            def wait(self):
+                return 0
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: MockProcess())
+
+        client.post("/api/features/1/launch-claude", json={"hidden_execution": False})
+
+        status = client.get("/api/autopilot/status").json()
+        messages = [e["message"] for e in status["log"]]
+        assert any("interactive" in m for m in messages)
+
+    def test_status_has_manual_active_field_when_disabled(self, client, monkeypatch):
+        """GET /api/autopilot/status always includes manual_active field (False by default)."""
+        self._reset_autopilot_state(monkeypatch)
+
+        status = client.get("/api/autopilot/status").json()
+        assert "manual_active" in status
+        assert status["manual_active"] is False
+        assert "manual_feature_id" in status
+        assert "manual_feature_name" in status
+        assert "manual_feature_model" in status
+
+    def test_monitor_manual_process_clears_state_on_exit(self, client, monkeypatch):
+        """When the manual process exits, monitor_manual_process should clear manual_* state."""
+        import asyncio
+        import backend.main as main_module
+
+        self._reset_autopilot_state(monkeypatch)
+
+        class MockProcess:
+            pid = 42
+            def wait(self):
+                return 0
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: MockProcess())
+
+        # Allow the monitor task to actually run by NOT suppressing create_task
+        monkeypatch.setattr(main_module.asyncio, 'create_task',
+                            asyncio.ensure_future)
+
+        async def run():
+            # Launch and give the monitor task a chance to run
+            state = main_module.get_autopilot_state()
+            process = MockProcess()
+            state.manual_active = True
+            state.manual_feature_id = 1
+            state.manual_feature_name = "Feature 1"
+            state.manual_feature_model = "sonnet"
+            state.manual_process = process
+            task = asyncio.create_task(main_module.monitor_manual_process(state))
+            await task
+            return state
+
+        state = asyncio.run(run())
+
+        assert state.manual_active is False
+        assert state.manual_feature_id is None
+        assert state.manual_feature_name is None
+        assert state.manual_feature_model is None
+        assert state.manual_process is None
+        assert state.manual_monitor_task is None
+
+    def test_monitor_manual_process_logs_success_on_zero_exit(self, client, monkeypatch):
+        """monitor_manual_process logs a success entry when process exits with code 0."""
+        import asyncio
+        import backend.main as main_module
+
+        self._reset_autopilot_state(monkeypatch)
+
+        class MockProcess:
+            pid = 42
+            def wait(self):
+                return 0
+
+        async def run():
+            state = main_module.get_autopilot_state()
+            state.manual_active = True
+            state.manual_feature_id = 5
+            state.manual_feature_name = "My Feature"
+            state.manual_feature_model = "sonnet"
+            state.manual_process = MockProcess()
+            await main_module.monitor_manual_process(state)
+            return state
+
+        state = asyncio.run(run())
+
+        success_entries = [e for e in state.log if e.level == "success"]
+        assert len(success_entries) >= 1
+        assert any("#5" in e.message and "My Feature" in e.message for e in success_entries)
+
+    def test_monitor_manual_process_logs_info_on_nonzero_exit(self, client, monkeypatch):
+        """monitor_manual_process logs an info entry when process exits with non-zero code."""
+        import asyncio
+        import backend.main as main_module
+
+        self._reset_autopilot_state(monkeypatch)
+
+        class MockProcess:
+            pid = 42
+            def wait(self):
+                return 1  # non-zero exit
+
+        async def run():
+            state = main_module.get_autopilot_state()
+            state.manual_active = True
+            state.manual_feature_id = 5
+            state.manual_feature_name = "My Feature"
+            state.manual_feature_model = "sonnet"
+            state.manual_process = MockProcess()
+            await main_module.monitor_manual_process(state)
+            return state
+
+        state = asyncio.run(run())
+
+        info_entries = [e for e in state.log if e.level == "info"]
+        assert len(info_entries) >= 1
+        assert any("exit 1" in e.message or "exit code" in e.message.lower() for e in info_entries)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

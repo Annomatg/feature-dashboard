@@ -142,6 +142,13 @@ class _AutoPilotState:
         self.monitor_task = None  # asyncio.Task handle, if monitoring
         self.consecutive_skip_count: int = 0  # incremented when same feature is returned consecutively
         self.last_skipped_feature_id: Optional[int] = None  # last feature id given to the sequencer
+        # Manual launch tracking (user clicked "Launch Claude" in the detail panel)
+        self.manual_active: bool = False
+        self.manual_feature_id: Optional[int] = None
+        self.manual_feature_name: Optional[str] = None
+        self.manual_feature_model: Optional[str] = None
+        self.manual_process = None  # subprocess.Popen handle for manual launch
+        self.manual_monitor_task = None  # asyncio.Task monitoring manual process
 
 
 _autopilot_states: dict[str, _AutoPilotState] = {}
@@ -169,6 +176,35 @@ def _append_log(state: _AutoPilotState, level: str, message: str) -> None:
         level=level,
         message=message,
     ))
+
+
+async def monitor_manual_process(state: "_AutoPilotState") -> None:
+    """Wait for a manually launched Claude process to finish and update the log.
+
+    Runs in the background as an asyncio task. When the process exits it appends a
+    success or info log entry and clears all ``manual_*`` state fields.
+    """
+    process = state.manual_process
+    feature_id = state.manual_feature_id
+    feature_name = state.manual_feature_name
+    try:
+        loop = asyncio.get_event_loop()
+        return_code = await loop.run_in_executor(None, process.wait)
+        if return_code == 0:
+            _append_log(state, 'success', f"Manual run complete \u2014 feature #{feature_id}: {feature_name}")
+        else:
+            _append_log(state, 'info', f"Manual run finished \u2014 feature #{feature_id}: {feature_name} (exit {return_code})")
+    except Exception as exc:
+        _append_log(state, 'error', f"Manual run monitor error \u2014 feature #{feature_id}: {exc}")
+    finally:
+        # Only clear if this task is still tracking the same process
+        if state.manual_process is process:
+            state.manual_active = False
+            state.manual_feature_id = None
+            state.manual_feature_name = None
+            state.manual_feature_model = None
+            state.manual_process = None
+            state.manual_monitor_task = None
 
 
 def handle_all_complete(state: "_AutoPilotState") -> None:
@@ -805,6 +841,11 @@ class AutoPilotStatusResponse(BaseModel):
     current_feature_model: Optional[str] = None
     last_error: Optional[str] = None
     log: list[LogEntry] = []
+    # Manual launch fields (user clicked "Launch Claude" in detail panel)
+    manual_active: bool = False
+    manual_feature_id: Optional[int] = None
+    manual_feature_name: Optional[str] = None
+    manual_feature_model: Optional[str] = None
 
 
 @app.get("/")
@@ -1505,6 +1546,7 @@ async def launch_claude_for_feature(feature_id: int, request: LaunchClaudeReques
         # Launch Claude in the directory containing the active features.db
         working_dir = str(_current_db_path.parent)
 
+        launched_process = None
         try:
             if sys.platform == "win32":
                 # Write prompt to a temp file to avoid shell quoting issues
@@ -1524,7 +1566,7 @@ async def launch_claude_for_feature(feature_id: int, request: LaunchClaudeReques
                 launched = False
                 for ps_exe in ps_executables:
                     try:
-                        subprocess.Popen(
+                        launched_process = subprocess.Popen(
                             [ps_exe, "-Command", ps_cmd],
                             creationflags=subprocess.CREATE_NEW_CONSOLE,
                             cwd=working_dir,
@@ -1545,7 +1587,7 @@ async def launch_claude_for_feature(feature_id: int, request: LaunchClaudeReques
                 if request.hidden_execution:
                     cmd.append("--print")
                 cmd.append(prompt)
-                subprocess.Popen(cmd, cwd=working_dir)
+                launched_process = subprocess.Popen(cmd, cwd=working_dir)
         except FileNotFoundError:
             raise HTTPException(
                 status_code=500,
@@ -1553,6 +1595,20 @@ async def launch_claude_for_feature(feature_id: int, request: LaunchClaudeReques
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to launch Claude: {str(e)}")
+
+        # Track the manual launch in autopilot state so the UI can show progress
+        state = get_autopilot_state()
+        # Cancel any previous manual monitor task
+        if state.manual_monitor_task and not state.manual_monitor_task.done():
+            state.manual_monitor_task.cancel()
+        state.manual_active = True
+        state.manual_feature_id = feature_id
+        state.manual_feature_name = feature.name
+        state.manual_feature_model = feature_model
+        state.manual_process = launched_process
+        mode = "hidden" if request.hidden_execution else "interactive"
+        _append_log(state, 'info', f"Manual launch \u2014 feature #{feature_id}: {feature.name} ({mode}, {feature_model})")
+        state.manual_monitor_task = asyncio.create_task(monitor_manual_process(state))
 
         return LaunchClaudeResponse(
             launched=True,
@@ -1905,6 +1961,10 @@ async def get_autopilot_status():
         current_feature_model=state.current_feature_model,
         last_error=state.last_error,
         log=list(state.log),
+        manual_active=state.manual_active,
+        manual_feature_id=state.manual_feature_id,
+        manual_feature_name=state.manual_feature_name,
+        manual_feature_model=state.manual_feature_model,
     )
 
 

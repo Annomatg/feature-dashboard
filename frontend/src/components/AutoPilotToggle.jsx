@@ -35,16 +35,17 @@ function AutoPilotToggle() {
   const { data: status } = useQuery({
     queryKey: ['autopilot-status'],
     queryFn: fetchAutoPilotStatus,
-    // Poll frequently while running or while waiting for the process to exit.
+    // Poll frequently while running, stopping, or a manual launch is active.
     refetchInterval: (query) => {
       const data = query.state.data
-      if (data?.enabled || data?.stopping) return 2000
+      if (data?.enabled || data?.stopping || data?.manual_active) return 2000
       return 10000
     },
   })
 
   const enabled = status?.enabled ?? false
   const stopping = status?.stopping ?? false
+  const manualActive = status?.manual_active ?? false
 
   async function handleClick() {
     if (loading) return
@@ -73,14 +74,14 @@ function AutoPilotToggle() {
       disabled={loading}
       data-testid="autopilot-toggle"
       aria-label={
-        enabled   ? 'Disable Auto-Pilot'
-        : stopping ? 'Re-enable Auto-Pilot'
-        :            'Enable Auto-Pilot'
+        enabled      ? 'Disable Auto-Pilot'
+        : stopping   ? 'Re-enable Auto-Pilot'
+        :              'Enable Auto-Pilot'
       }
       title={
-        enabled   ? 'Auto-Pilot ON — click to disable'
-        : stopping ? 'Claude process still finishing — click to restart Auto-Pilot'
-        :            'Enable Auto-Pilot'
+        enabled      ? 'Auto-Pilot ON — click to disable'
+        : stopping   ? 'Claude process still finishing — click to restart Auto-Pilot'
+        :              'Enable Auto-Pilot'
       }
       className={`
         flex-shrink-0 flex items-center gap-2 px-2 md:px-2.5 py-1.5 rounded transition-colors font-mono text-xs
