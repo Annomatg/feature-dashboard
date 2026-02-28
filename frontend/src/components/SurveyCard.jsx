@@ -8,13 +8,22 @@ import { useState, useRef, useEffect } from 'react'
  *   onAnswer    (answer: string) => void   called once when the user commits an answer
  *   accentColor string (optional, defaults to primary blue)
  */
+
+/** Options matching this pattern are free-text prompts, not real choices. */
+const isTypeInOption = (opt) => /^\(type/i.test(opt.trim())
+
 function SurveyCard({ question, onAnswer, accentColor = '#3b82f6' }) {
-  const [selected, setSelected] = useState(null)
+  const options = question?.options ?? []
+
+  // If every option is a "(type …)" placeholder, skip straight to text input.
+  const allTypeIn = options.length > 0 && options.every(isTypeInOption)
+
+  const [selected, setSelected] = useState(() => allTypeIn ? '__other__' : null)
   const [submitted, setSubmitted] = useState(false)
   const [otherText, setOtherText] = useState('')
   const otherInputRef = useRef(null)
 
-  // Auto-focus the Other input when it becomes visible
+  // Auto-focus the text input when it becomes visible
   useEffect(() => {
     if (selected === '__other__' && otherInputRef.current) {
       otherInputRef.current.focus()
@@ -23,13 +32,16 @@ function SurveyCard({ question, onAnswer, accentColor = '#3b82f6' }) {
 
   const handleSelect = (option) => {
     if (submitted) return
-    setSelected(option)
 
-    // Non-Other options submit immediately
-    if (option !== '__other__') {
-      setSubmitted(true)
-      onAnswer?.(option)
+    // "Other…" button and "(type …)" placeholders both open the text input
+    if (option === '__other__' || isTypeInOption(option)) {
+      setSelected('__other__')
+      return
     }
+
+    setSelected(option)
+    setSubmitted(true)
+    onAnswer?.(option)
   }
 
   const handleOtherSubmit = () => {
@@ -46,8 +58,6 @@ function SurveyCard({ question, onAnswer, accentColor = '#3b82f6' }) {
     }
   }
 
-  const options = question?.options ?? []
-
   return (
     <div
       className="w-full max-w-2xl mx-auto"
@@ -61,9 +71,9 @@ function SurveyCard({ question, onAnswer, accentColor = '#3b82f6' }) {
         {question?.text}
       </h2>
 
-      {/* Option cards */}
+      {/* Option cards — hidden when all options are free-text placeholders */}
       <div className="flex flex-col gap-3" role="group" aria-label="Answer options">
-        {options.map((option, index) => {
+        {!allTypeIn && options.map((option, index) => {
           const isSelected = selected === option
           const isDisabled = submitted && !isSelected
 

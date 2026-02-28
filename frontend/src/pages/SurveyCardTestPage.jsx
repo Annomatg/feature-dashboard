@@ -1,23 +1,36 @@
 import { useState } from 'react'
 import SurveyCard from '../components/SurveyCard'
 
-const SAMPLE_QUESTION = {
-  text: 'Which frontend framework do you prefer?',
-  options: ['React', 'Vue', 'Svelte', 'Angular'],
+const QUESTIONS = {
+  default: {
+    text: 'Which frontend framework do you prefer?',
+    options: ['React', 'Vue', 'Svelte', 'Angular'],
+  },
+  'type-in': {
+    text: 'What is the name of this feature?',
+    options: ['(type in browser)'],
+  },
+  'mixed': {
+    text: 'Choose a category or describe your own:',
+    options: ['Backend', 'Frontend', '(type in browser)'],
+  },
 }
 
 /**
  * Minimal test page that renders a SurveyCard with sample data.
  * Used exclusively for E2E testing.
+ * Query param ?q= selects the question variant (default, type-in, mixed).
  */
 function SurveyCardTestPage() {
   const [lastAnswer, setLastAnswer] = useState(null)
+  const q = new URLSearchParams(window.location.search).get('q') ?? 'default'
+  const question = QUESTIONS[q] ?? QUESTIONS.default
 
   return (
     <div className="min-h-screen bg-background flex flex-col items-center justify-center p-8">
       <div className="w-full max-w-2xl">
         <SurveyCard
-          question={SAMPLE_QUESTION}
+          question={question}
           onAnswer={(answer) => setLastAnswer(answer)}
           accentColor="#3b82f6"
         />

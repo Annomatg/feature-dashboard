@@ -144,3 +144,66 @@ test.describe('SurveyCard', () => {
     await expect(page.getByTestId('other-text-input')).toBeFocused()
   })
 })
+
+test.describe('SurveyCard — type-in option', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/survey-card-test?q=type-in')
+    await page.waitForSelector('[data-testid="survey-card"]', { timeout: 10000 })
+  })
+
+  test('shows text input immediately without any button click', async ({ page }) => {
+    await expect(page.getByTestId('other-input-container')).toBeVisible()
+    await expect(page.getByTestId('other-text-input')).toBeVisible()
+  })
+
+  test('does not render the (type in browser) placeholder as a button', async ({ page }) => {
+    await expect(page.getByTestId('survey-option-0')).not.toBeVisible()
+  })
+
+  test('text input is auto-focused', async ({ page }) => {
+    await expect(page.getByTestId('other-text-input')).toBeFocused()
+  })
+
+  test('submits the typed text, not the placeholder label', async ({ page }) => {
+    await page.getByTestId('other-text-input').fill('My cool feature')
+    await page.getByTestId('other-submit-btn').click()
+
+    await expect(page.getByTestId('last-answer')).toContainText('My cool feature')
+    await expect(page.getByTestId('last-answer')).not.toContainText('type in browser')
+  })
+
+  test('pressing Enter submits the typed text', async ({ page }) => {
+    await page.getByTestId('other-text-input').fill('Enter key feature')
+    await page.getByTestId('other-text-input').press('Enter')
+
+    await expect(page.getByTestId('last-answer')).toContainText('Enter key feature')
+  })
+})
+
+test.describe('SurveyCard — mixed options with (type in browser)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/survey-card-test?q=mixed')
+    await page.waitForSelector('[data-testid="survey-card"]', { timeout: 10000 })
+  })
+
+  test('renders real options as buttons', async ({ page }) => {
+    await expect(page.getByTestId('survey-option-0')).toContainText('Backend')
+    await expect(page.getByTestId('survey-option-1')).toContainText('Frontend')
+  })
+
+  test('clicking (type in browser) opens text input instead of submitting the label', async ({ page }) => {
+    await page.getByTestId('survey-option-2').click()
+
+    await expect(page.getByTestId('other-input-container')).toBeVisible()
+    await expect(page.getByTestId('last-answer')).not.toBeVisible()
+  })
+
+  test('typing after clicking (type in browser) submits the typed text', async ({ page }) => {
+    await page.getByTestId('survey-option-2').click()
+    await page.getByTestId('other-text-input').fill('Custom category')
+    await page.getByTestId('other-submit-btn').click()
+
+    await expect(page.getByTestId('last-answer')).toContainText('Custom category')
+    await expect(page.getByTestId('last-answer')).not.toContainText('type in browser')
+  })
+})

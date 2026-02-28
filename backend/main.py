@@ -2885,6 +2885,108 @@ async def get_interview_debug():
     return result
 
 
+# ---------------------------------------------------------------------------
+# Interview process launcher (opens a visible terminal with the real command)
+# ---------------------------------------------------------------------------
+
+_interview_terminal_launched: bool = False
+
+
+@app.post("/api/interview/launch")
+async def launch_interview_process() -> dict:
+    """Open a terminal window running the same command used in production.
+
+    Reads the interview-feature skill, builds the prompt, writes it to a temp
+    file, then opens a new terminal running:
+
+        claude --dangerously-skip-permissions --print <prompt-file>
+
+    After Claude exits the window stays open (Read-Host / exec bash) so the
+    user can read any error output before the window disappears.
+    """
+    global _interview_terminal_launched
+
+    skill_path = PROJECT_DIR / '.claude' / 'skills' / 'interview-feature.md'
+    if not skill_path.exists():
+        raise HTTPException(status_code=500, detail="interview-feature.md skill file not found")
+
+    skill_content = skill_path.read_text(encoding='utf-8')
+    skill_lines = skill_content.split('\n')
+    if skill_lines and skill_lines[0].strip() == '---':
+        try:
+            end_idx = skill_lines.index('---', 1)
+            skill_content = '\n'.join(skill_lines[end_idx + 1:]).lstrip('\n')
+        except ValueError:
+            pass
+
+    prompt = (
+        "Execute the Feature Planning Interview procedure below. "
+        "Follow all steps exactly as documented, using the Bash tool for curl commands "
+        "and the feature_create MCP tool to create features.\n\n"
+        + skill_content
+    )
+
+    working_dir = str(PROJECT_DIR)
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".txt", delete=False, encoding="utf-8"
+    ) as f:
+        f.write(prompt)
+        prompt_file = f.name
+
+    if sys.platform == "win32":
+        # Pipe the prompt via stdin — no --print so output streams live.
+        claude_cmd = (
+            f'Get-Content -LiteralPath "{prompt_file}" -Raw | '
+            f'claude --dangerously-skip-permissions'
+        )
+        # After claude exits, pause so the user can read any error output.
+        ps_cmd = f"Set-Location '{working_dir}'; {claude_cmd}; Read-Host 'Press Enter to close'"
+        for launcher, args in [
+            (
+                "wt",
+                ["wt", "-d", working_dir, "pwsh", "-Command", ps_cmd],
+            ),
+            (
+                "pwsh",
+                ["pwsh", "-Command", ps_cmd],
+            ),
+            (
+                "powershell",
+                ["powershell", "-Command", ps_cmd],
+            ),
+        ]:
+            try:
+                kwargs: dict = {"cwd": working_dir}
+                if launcher != "wt":
+                    kwargs["creationflags"] = subprocess.CREATE_NEW_CONSOLE
+                subprocess.Popen(args, **kwargs)
+                _interview_terminal_launched = True
+                return {"launched": True, "message": f"Terminal opened via {launcher}"}
+            except FileNotFoundError:
+                continue
+        raise HTTPException(
+            status_code=500,
+            detail="No terminal launcher found (tried wt, pwsh, powershell).",
+        )
+    else:
+        claude_cmd = f"claude --dangerously-skip-permissions < '{prompt_file}'"
+        for term, args in [
+            ("gnome-terminal", ["gnome-terminal", "--working-directory", working_dir, "--", "bash", "-c", f"{claude_cmd}; exec bash"]),
+            ("xterm",          ["xterm", "-e", f"cd '{working_dir}' && {claude_cmd}; exec bash"]),
+        ]:
+            try:
+                subprocess.Popen(args, cwd=working_dir)
+                _interview_terminal_launched = True
+                return {"launched": True, "message": f"Terminal opened via {term}"}
+            except FileNotFoundError:
+                continue
+        raise HTTPException(
+            status_code=500,
+            detail="No terminal emulator found (tried gnome-terminal, xterm).",
+        )
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

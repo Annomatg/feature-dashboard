@@ -42,6 +42,7 @@ function InterviewPage() {
   const [errorMsg, setErrorMsg] = useState('')
   const [featuresCreated, setFeaturesCreated] = useState(0)
   const [sessionKey, setSessionKey] = useState(0) // increment to reconnect SSE
+  const [launched, setLaunched] = useState(false)
 
   // Set page title on mount, restore on unmount
   useEffect(() => {
@@ -115,6 +116,15 @@ function InterviewPage() {
     }
   }, [sessionKey])
 
+  const handleLaunchClaude = async () => {
+    try {
+      const res = await fetch('/api/interview/launch', { method: 'POST' })
+      if (res.ok) setLaunched(true)
+    } catch {
+      // silently ignore — user will notice if the terminal didn't open
+    }
+  }
+
   const handleAnswer = async (answer) => {
     setStatus('answered')
     try {
@@ -163,9 +173,34 @@ function InterviewPage() {
               <p className="text-text-primary text-base font-semibold">
                 Waiting for Claude to start an interview...
               </p>
-              <p className="text-text-secondary text-sm leading-relaxed">
-                Run the <span className="font-mono text-primary">/interview-feature</span> skill in Claude Code on your PC to begin
-              </p>
+              {!launched ? (
+                <>
+                  <p className="text-text-secondary text-sm leading-relaxed">
+                    Run the <span className="font-mono text-primary">/interview-feature</span> skill in Claude Code on your PC,
+                    or launch a terminal session below.
+                  </p>
+                  <button
+                    onClick={handleLaunchClaude}
+                    className="px-6 py-3 rounded-lg bg-primary text-white text-sm font-mono font-semibold hover:opacity-80 transition-opacity"
+                    data-testid="interview-launch-btn"
+                  >
+                    Launch Claude Session
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p className="text-success text-sm font-mono">
+                    Terminal opened — type <span className="font-semibold">/interview-feature</span> to start
+                  </p>
+                  <button
+                    onClick={handleLaunchClaude}
+                    className="px-4 py-2 rounded-lg border border-border text-text-secondary text-xs font-mono hover:border-text-secondary hover:text-text-primary transition-colors"
+                    data-testid="interview-launch-btn"
+                  >
+                    Launch Again
+                  </button>
+                </>
+              )}
             </div>
           )}
 
