@@ -451,6 +451,58 @@ def _parse_jsonl_log(jsonl_file: Path, limit: int = 50) -> list[dict]:
     return entries[-limit:] if len(entries) > limit else entries
 
 
+def _launch_claude_terminal(
+    prompt: str, working_dir: str, model: Optional[str] = None
+) -> None:
+    """Open Claude interactively in a new terminal window with *prompt* as the first message.
+
+    On Windows, writes the prompt to a temp file and opens pwsh/powershell with
+    CREATE_NEW_CONSOLE so a visible window appears. Uses the PowerShell sub-expression
+    ``(Get-Content -LiteralPath "..." -Raw)`` to pass the prompt — this avoids shell
+    quoting issues and the wt pane-separator problem caused by ``|`` and ``;``.
+
+    On Linux/macOS, passes the prompt as a positional argument directly to claude.
+
+    Raises HTTPException(500) if no suitable executable is found.
+    """
+    model_flag = f"--model {model} " if model else ""
+
+    if sys.platform == "win32":
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(prompt)
+            prompt_file = f.name
+
+        ps_cmd = f'claude {model_flag}--dangerously-skip-permissions (Get-Content -LiteralPath "{prompt_file}" -Raw)'
+        for ps_exe in ["pwsh", "powershell"]:
+            try:
+                subprocess.Popen(
+                    [ps_exe, "-Command", ps_cmd],
+                    cwd=working_dir,
+                    creationflags=subprocess.CREATE_NEW_CONSOLE,
+                )
+                return
+            except FileNotFoundError:
+                continue
+        raise HTTPException(
+            status_code=500,
+            detail="No PowerShell found. Install PowerShell 7 (pwsh) or ensure powershell.exe is available.",
+        )
+    else:
+        cmd = ["claude", "--dangerously-skip-permissions"]
+        if model:
+            cmd += ["--model", model]
+        cmd.append(prompt)
+        try:
+            subprocess.Popen(cmd, cwd=working_dir)
+        except FileNotFoundError:
+            raise HTTPException(
+                status_code=500,
+                detail="Claude CLI not found. Make sure 'claude' is in your PATH.",
+            )
+
+
 async def monitor_manual_process(state: "_AutoPilotState") -> None:
     """Wait for a manually launched Claude process to finish and update the log.
 
@@ -2054,52 +2106,43 @@ async def launch_claude_for_feature(feature_id: int, request: LaunchClaudeReques
                     f.write(prompt)
                     prompt_file = f.name
 
-                # PowerShell reads the file and passes its content as the first message
-                # --dangerously-skip-permissions enables full access mode (no permission prompts)
-                # --print runs Claude non-interactively so the session closes automatically when done
-                print_flag = "--print " if request.hidden_execution else ""
-                ps_cmd = f'claude --model {feature_model} --dangerously-skip-permissions {print_flag}(Get-Content -LiteralPath "{prompt_file}" -Raw)'
-                # Try pwsh (PowerShell 7) first, fall back to powershell (Windows PS 5)
-                ps_executables = ["pwsh", "powershell"]
-                launched = False
-                for ps_exe in ps_executables:
-                    try:
-                        popen_kwargs: dict = {
-                            "cwd": working_dir,
-                        }
-                        if request.hidden_execution:
-                            # Hidden execution: capture stdout/stderr; no console window needed
-                            popen_kwargs["stdout"] = subprocess.PIPE
-                            popen_kwargs["stderr"] = subprocess.PIPE
-                        else:
-                            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_CONSOLE
-                        launched_process = subprocess.Popen(
-                            [ps_exe, "-Command", ps_cmd],
-                            **popen_kwargs,
-                        )
-                        launched = True
-                        break
-                    except FileNotFoundError:
-                        continue
-
-                if not launched:
-                    raise HTTPException(
-                        status_code=500,
-                        detail="No PowerShell found. Install PowerShell 7 (pwsh) or ensure powershell.exe is available.",
-                    )
-            else:
-                # --print runs Claude non-interactively so the session closes automatically when done
-                cmd = ["claude", "--model", feature_model, "--dangerously-skip-permissions"]
-                pipe_output = request.hidden_execution
                 if request.hidden_execution:
-                    cmd.append("--print")
-                cmd.append(prompt)
-                launched_process = subprocess.Popen(
-                    cmd,
-                    cwd=working_dir,
-                    stdout=subprocess.PIPE if pipe_output else None,
-                    stderr=subprocess.PIPE if pipe_output else None,
-                )
+                    # Hidden: capture stdout/stderr for log monitoring
+                    ps_cmd = f'claude --model {feature_model} --dangerously-skip-permissions --print (Get-Content -LiteralPath "{prompt_file}" -Raw)'
+                    ps_executables = ["pwsh", "powershell"]
+                    launched = False
+                    for ps_exe in ps_executables:
+                        try:
+                            launched_process = subprocess.Popen(
+                                [ps_exe, "-Command", ps_cmd],
+                                cwd=working_dir,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                            )
+                            launched = True
+                            break
+                        except FileNotFoundError:
+                            continue
+                    if not launched:
+                        raise HTTPException(
+                            status_code=500,
+                            detail="No PowerShell found. Install PowerShell 7 (pwsh) or ensure powershell.exe is available.",
+                        )
+                else:
+                    _launch_claude_terminal(prompt, working_dir, model=feature_model)
+                    launched_process = None
+            else:
+                if request.hidden_execution:
+                    cmd = ["claude", "--model", feature_model, "--dangerously-skip-permissions", "--print", prompt]
+                    launched_process = subprocess.Popen(
+                        cmd,
+                        cwd=working_dir,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                    )
+                else:
+                    _launch_claude_terminal(prompt, working_dir, model=feature_model)
+                    launched_process = None
         except FileNotFoundError:
             raise HTTPException(
                 status_code=500,
@@ -2159,45 +2202,7 @@ async def plan_tasks(request: PlanTasksRequest):
     working_dir = str(_current_db_path.parent)
 
     try:
-        if sys.platform == "win32":
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".txt", delete=False, encoding="utf-8"
-            ) as f:
-                f.write(prompt)
-                prompt_file = f.name
-
-            # Interactive mode: no --print flag so the terminal stays open
-            ps_cmd = f'claude --dangerously-skip-permissions (Get-Content -LiteralPath "{prompt_file}" -Raw)'
-            ps_executables = ["pwsh", "powershell"]
-            launched = False
-            for ps_exe in ps_executables:
-                try:
-                    subprocess.Popen(
-                        [ps_exe, "-Command", ps_cmd],
-                        creationflags=subprocess.CREATE_NEW_CONSOLE,
-                        cwd=working_dir,
-                    )
-                    launched = True
-                    break
-                except FileNotFoundError:
-                    continue
-
-            if not launched:
-                raise HTTPException(
-                    status_code=500,
-                    detail="No PowerShell found. Install PowerShell 7 (pwsh) or ensure powershell.exe is available.",
-                )
-        else:
-            # Interactive mode: no --print flag
-            subprocess.Popen(
-                ["claude", "--dangerously-skip-permissions", prompt],
-                cwd=working_dir,
-            )
-    except FileNotFoundError:
-        raise HTTPException(
-            status_code=500,
-            detail="Claude CLI not found. Make sure 'claude' is in your PATH.",
-        )
+        _launch_claude_terminal(prompt, working_dir)
     except HTTPException:
         raise
     except Exception as e:
@@ -2927,64 +2932,9 @@ async def launch_interview_process() -> dict:
     )
 
     working_dir = str(PROJECT_DIR)
-
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".txt", delete=False, encoding="utf-8"
-    ) as f:
-        f.write(prompt)
-        prompt_file = f.name
-
-    if sys.platform == "win32":
-        # Pipe the prompt via stdin — no --print so output streams live.
-        claude_cmd = (
-            f'Get-Content -LiteralPath "{prompt_file}" -Raw | '
-            f'claude --dangerously-skip-permissions'
-        )
-        # After claude exits, pause so the user can read any error output.
-        ps_cmd = f"Set-Location '{working_dir}'; {claude_cmd}; Read-Host 'Press Enter to close'"
-        for launcher, args in [
-            (
-                "wt",
-                ["wt", "-d", working_dir, "pwsh", "-Command", ps_cmd],
-            ),
-            (
-                "pwsh",
-                ["pwsh", "-Command", ps_cmd],
-            ),
-            (
-                "powershell",
-                ["powershell", "-Command", ps_cmd],
-            ),
-        ]:
-            try:
-                kwargs: dict = {"cwd": working_dir}
-                if launcher != "wt":
-                    kwargs["creationflags"] = subprocess.CREATE_NEW_CONSOLE
-                subprocess.Popen(args, **kwargs)
-                _interview_terminal_launched = True
-                return {"launched": True, "message": f"Terminal opened via {launcher}"}
-            except FileNotFoundError:
-                continue
-        raise HTTPException(
-            status_code=500,
-            detail="No terminal launcher found (tried wt, pwsh, powershell).",
-        )
-    else:
-        claude_cmd = f"claude --dangerously-skip-permissions < '{prompt_file}'"
-        for term, args in [
-            ("gnome-terminal", ["gnome-terminal", "--working-directory", working_dir, "--", "bash", "-c", f"{claude_cmd}; exec bash"]),
-            ("xterm",          ["xterm", "-e", f"cd '{working_dir}' && {claude_cmd}; exec bash"]),
-        ]:
-            try:
-                subprocess.Popen(args, cwd=working_dir)
-                _interview_terminal_launched = True
-                return {"launched": True, "message": f"Terminal opened via {term}"}
-            except FileNotFoundError:
-                continue
-        raise HTTPException(
-            status_code=500,
-            detail="No terminal emulator found (tried gnome-terminal, xterm).",
-        )
+    _launch_claude_terminal(prompt, working_dir)
+    _interview_terminal_launched = True
+    return {"launched": True, "message": "Terminal opened"}
 
 
 if __name__ == "__main__":
