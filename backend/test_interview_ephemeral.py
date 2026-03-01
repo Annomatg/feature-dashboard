@@ -145,7 +145,7 @@ class TestNoDatabaseModel:
     def test_only_expected_tables_exist(self):
         from api.database import Base
         table_names = set(Base.metadata.tables.keys())
-        expected = {'features', 'comments', 'name_tokens'}
+        expected = {'features', 'comments', 'name_tokens', 'description_tokens'}
         assert table_names == expected, (
             f"Unexpected tables: {table_names - expected}. "
             "Add new tables here if they are intentionally persisted."
