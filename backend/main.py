@@ -2948,7 +2948,7 @@ following API.
 
 | Action | Command |
 |--------|---------|
-| Post question (first) | `curl -s -X POST http://localhost:8000/api/interview/question -H "Content-Type: application/json" -d '{"text":"...","options":[]}'` |
+| Post question (first) | See "Safe JSON Pattern" below — NEVER use inline `-d '{...}'` |
 | Post question (subsequent) | Add `-H "X-Interview-Token: $SESSION_TOKEN"` to every POST |
 | Poll for answer | `curl -s --max-time 610 http://localhost:8000/api/interview/answer` |
 | End session | `curl -s -X DELETE "http://localhost:8000/api/interview/session?features_created=<N>"` |
@@ -2956,17 +2956,32 @@ following API.
 Always use `--max-time 610` on the answer poll — the server long-polls up to 600 s total
 (soft pause at 5 min, hard kill at 10 min).
 
-### Session Token
+### CRITICAL: Always Use Python to Build the JSON Body
 
-Capture `session_token` from the **first** POST response and include it as
-`X-Interview-Token` in every subsequent POST.
+**NEVER** construct the curl body with inline `-d '{"text":"..."}'. Question text
+may contain backslashes, quotes, or other characters that break shell JSON strings.
+Always generate the body with Python:
 
 ```bash
+# First question — captures SESSION_TOKEN from response
+BODY=$(python -c "import json; print(json.dumps({'text': 'Your question here', 'options': ['Option A', 'Option B']}))")
 RESPONSE=$(curl -s -X POST http://localhost:8000/api/interview/question \\
   -H "Content-Type: application/json" \\
-  -d '{"text":"...","options":[]}')
-SESSION_TOKEN=$(echo "$RESPONSE" | python -c "import sys,json; print(json.load(sys.stdin)['session_token'])")
+  -d "$BODY")
+SESSION_TOKEN=$(echo "$RESPONSE" | python -c "import sys,json; d=json.load(sys.stdin); print(d.get('session_token',''))")
+
+# Subsequent questions — include the session token header
+BODY=$(python -c "import json; print(json.dumps({'text': 'Next question', 'options': ['A', 'B']}))")
+RESPONSE=$(curl -s -X POST http://localhost:8000/api/interview/question \\
+  -H "Content-Type: application/json" \\
+  -H "X-Interview-Token: $SESSION_TOKEN" \\
+  -d "$BODY")
 ```
+
+**Key rules:**
+- Always use `python -c "import json; print(json.dumps({...}))"` to build the body
+- Use `d.get('session_token', '')` — never use direct key access, which raises KeyError if the key is absent
+- `session_token` is only present in the **first** POST response; subsequent responses omit it
 
 ### Option Types
 

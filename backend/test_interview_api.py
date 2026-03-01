@@ -1294,3 +1294,182 @@ class TestDeleteInterviewSession:
         event_type, data = received[0]
         assert event_type == "end"
         assert data.get("features_created") == 3
+
+
+# ---------------------------------------------------------------------------
+# Special-character handling and prompt-safety regression tests (Feature #138)
+# ---------------------------------------------------------------------------
+
+class TestInterviewSpecialCharacters:
+    """
+    Regression tests for Feature #138.
+
+    The original bug: Claude constructed curl bodies with inline string
+    interpolation like -d '{"text":"..."}', causing JSON decode errors when
+    the question text contained backslashes or other special characters.
+
+    These tests verify that the API correctly accepts and round-trips question
+    text containing all problematic characters when the body is valid JSON
+    (i.e. when the caller uses Python json.dumps() to construct the body, as
+    the updated _INTERVIEW_API_SUFFIX now instructs).
+    """
+
+    def test_question_text_with_backslash_is_accepted(self, client):
+        """Question text containing a literal backslash is preserved."""
+        text = "What is the path? e.g. C:\\Users\\project"
+        response = client.post("/api/interview/question", json={
+            "text": text,
+            "options": ["Windows path", "Unix path"],
+        })
+
+        assert response.status_code == 200
+        assert response.json()["text"] == text
+
+    def test_question_text_with_double_quotes_is_accepted(self, client):
+        """Question text containing double-quote characters is preserved."""
+        text = 'Choose: "Option A" or "Option B"?'
+        response = client.post("/api/interview/question", json={
+            "text": text,
+            "options": ["A", "B"],
+        })
+
+        assert response.status_code == 200
+        assert response.json()["text"] == text
+
+    def test_question_text_with_newline_is_accepted(self, client):
+        """Question text containing newlines is preserved."""
+        text = "Line one.\nLine two.\nWhich approach?"
+        response = client.post("/api/interview/question", json={
+            "text": text,
+            "options": ["Approach A", "Approach B"],
+        })
+
+        assert response.status_code == 200
+        assert response.json()["text"] == text
+
+    def test_question_text_with_unicode_is_accepted(self, client):
+        """Question text containing unicode characters is preserved."""
+        text = "Welche Option bevorzugen Sie? (Ü/Ä/Ö/ß)"
+        response = client.post("/api/interview/question", json={
+            "text": text,
+            "options": ["Option 1", "Option 2"],
+        })
+
+        assert response.status_code == 200
+        assert response.json()["text"] == text
+
+    def test_options_with_special_characters_are_preserved(self, client):
+        """Options containing special characters are returned unchanged."""
+        options = ['Use "fast" mode', "Use 'slow' mode", "C:\\path\\to\\file"]
+        response = client.post("/api/interview/question", json={
+            "text": "Which setting?",
+            "options": options,
+        })
+
+        assert response.status_code == 200
+        assert response.json()["options"] == options
+
+    def test_special_chars_stored_in_session(self, client):
+        """Special-character question text is stored verbatim in the session."""
+        text = "Path: C:\\Users\\dev\\project\nNotes: use \"quotes\""
+        client.post("/api/interview/question", json={
+            "text": text,
+            "options": ["OK"],
+        })
+
+        session = state_module.get_interview_session()
+        assert session.active_question["text"] == text
+
+
+class TestInterviewPromptSafety:
+    """
+    Tests verifying that _INTERVIEW_API_SUFFIX (the prompt injected into Claude)
+    contains safe patterns for JSON construction and session-token extraction.
+
+    These guard against regressions to Feature #138 where the prompt's example
+    bash code caused:
+      - KeyError: 'session_token' (direct dict access on error responses)
+      - JSON decode error: Invalid \\escape (inline curl body construction)
+    """
+
+    def test_suffix_uses_python_json_dumps_for_body_construction(self):
+        """
+        The prompt instructs Claude to build the curl body with
+        'python -c "import json; print(json.dumps({...}))"' to avoid
+        JSON escape errors from inline string interpolation.
+        """
+        import backend.main as main_module
+        assert "json.dumps(" in main_module._INTERVIEW_API_SUFFIX, (
+            "_INTERVIEW_API_SUFFIX must instruct Claude to use json.dumps() "
+            "to build the curl body — never inline '-d '{...}'' strings"
+        )
+
+    def test_suffix_uses_safe_session_token_extraction(self):
+        """
+        The prompt must use d.get('session_token', '') so that the Python
+        extraction script does not raise KeyError when the first POST fails
+        or when subsequent responses omit session_token.
+        """
+        import backend.main as main_module
+        assert "get('session_token'" in main_module._INTERVIEW_API_SUFFIX, (
+            "_INTERVIEW_API_SUFFIX must use .get('session_token', ...) "
+            "instead of direct key access to prevent KeyError on error responses"
+        )
+
+    def test_suffix_does_not_use_bare_key_access_for_session_token(self):
+        """
+        The prompt must not contain ['session_token'] (bare key access)
+        which raises KeyError when the response is an error JSON.
+        """
+        import backend.main as main_module
+        assert "['session_token']" not in main_module._INTERVIEW_API_SUFFIX, (
+            "_INTERVIEW_API_SUFFIX must not use ['session_token'] — "
+            "use .get('session_token', '') to handle error responses safely"
+        )
+
+    def test_suffix_documents_that_session_token_only_in_first_response(self):
+        """
+        The prompt explains that session_token is only present in the first
+        POST response, preventing Claude from expecting it in every response.
+        """
+        import backend.main as main_module
+        suffix = main_module._INTERVIEW_API_SUFFIX
+        assert "first" in suffix.lower() and "session_token" in suffix, (
+            "_INTERVIEW_API_SUFFIX must clarify that session_token is only "
+            "returned in the first POST response"
+        )
+
+    def test_api_first_post_returns_session_token(self, client):
+        """
+        Regression: the first POST always returns session_token so Claude
+        can capture it from the response.
+        """
+        response = client.post("/api/interview/question", json={
+            "text": "Hello, what would you like to build?",
+            "options": ["(type in browser)"],
+        })
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "session_token" in data
+        assert len(data["session_token"]) >= 10
+
+    def test_api_subsequent_post_omits_session_token(self, client):
+        """
+        Regression: subsequent POSTs omit session_token so Claude's
+        .get('session_token', '') returns '' and SESSION_TOKEN is unchanged.
+        """
+        first = client.post("/api/interview/question", json={
+            "text": "Q1",
+            "options": ["A"],
+        })
+        token = first.json()["session_token"]
+
+        second = client.post(
+            "/api/interview/question",
+            json={"text": "Q2", "options": ["B"]},
+            headers={"X-Interview-Token": token},
+        )
+
+        assert second.status_code == 200
+        assert "session_token" not in second.json()
