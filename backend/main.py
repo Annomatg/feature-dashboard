@@ -694,6 +694,10 @@ async def handle_autopilot_success(
     state.current_feature_id = next_feature.id
     state.current_feature_name = next_feature.name
     state.current_feature_model = next_feature.model or "sonnet"
+    # Reset session log tracking so the new task's JSONL is discovered (not the old one)
+    state.session_start_time = datetime.now(timezone.utc)
+    state.session_prompt_snippet = f"Feature #{next_feature.id} [{next_feature.category}]"
+    state.session_jsonl_path = None
     try:
         proc = spawn_claude_for_autopilot(next_feature, settings, str(db_path.parent))
         state.active_process = proc

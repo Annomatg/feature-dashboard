@@ -2724,6 +2724,55 @@ class TestHandleAutopilotSuccess:
         assert state.last_skipped_feature_id == 4  # Feature 4 is next per seed data
         assert state.enabled is not False or state.current_feature_id is not None  # not aborted
 
+    def test_session_log_fields_reset_for_next_task(self, test_db_with_path, monkeypatch):
+        """Session log tracking fields are reset when transitioning to the next AutoPilot task.
+
+        Regression test for: Task Claude log shows old Task in Auto pilot.
+        When AutoPilot finishes Task A and starts Task B, session_start_time,
+        session_prompt_snippet, and session_jsonl_path must all be reset so the
+        /api/autopilot/session-log endpoint discovers Task B's JSONL instead of
+        returning Task A's cached log.
+        """
+        import asyncio
+        from datetime import datetime, timezone
+        from pathlib import Path as _Path
+        from backend.main import handle_autopilot_success, _AutoPilotState
+
+        session_maker, db_path = test_db_with_path
+
+        monkeypatch.setattr("backend.main.spawn_claude_for_autopilot",
+                            lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda s: 0})())
+        monkeypatch.setattr("asyncio.create_task", lambda coro: coro.close() or None)
+
+        # Simulate state as if Task A (feature 1) had already run:
+        # session fields are populated with Task A's data (the stale values)
+        old_start_time = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        old_jsonl_path = _Path("/some/stale/task_a.jsonl")
+
+        state = _AutoPilotState()
+        state.current_feature_id = 1
+        state.current_feature_name = "Task A"
+        state.session_start_time = old_start_time
+        state.session_prompt_snippet = "Feature #1 [Backend]"
+        state.session_jsonl_path = old_jsonl_path
+
+        before = datetime.now(timezone.utc)
+        asyncio.run(handle_autopilot_success(1, state, db_path))
+
+        # session_start_time must be a NEW timestamp (after 'before')
+        assert state.session_start_time is not None
+        assert state.session_start_time > old_start_time
+        assert state.session_start_time >= before
+
+        # session_jsonl_path must be cleared so the new JSONL is discovered on next poll
+        assert state.session_jsonl_path is None
+
+        # session_prompt_snippet must reference the NEW task (Feature 4 is next in seed data)
+        assert state.session_prompt_snippet is not None
+        assert state.session_prompt_snippet != "Feature #1 [Backend]"
+        # Snippet must contain the new feature id (4) and its category
+        assert "4" in state.session_prompt_snippet
+
 
 class TestHandleAutopilotFailure:
     """Unit tests for handle_autopilot_failure."""
