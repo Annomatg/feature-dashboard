@@ -97,6 +97,11 @@ const GhostTextInput = forwardRef(function GhostTextInput(
       } else if (e.key === 'ArrowUp') {
         e.preventDefault()
         setSuggestionIndex(i => (i - 1 + suggestions.length) % suggestions.length)
+      } else if (e.key === 'Escape') {
+        e.preventDefault()
+        setSuggestions([])
+        setSuggestionIndex(0)
+        setTokenLength(0)
       }
     }
     onKeyDown?.(e)

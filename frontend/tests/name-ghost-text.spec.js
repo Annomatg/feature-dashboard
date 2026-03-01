@@ -181,6 +181,22 @@ test.describe('Name field ghost text (desktop)', () => {
     await expect(ghost).not.toBeVisible()
   })
 
+  test('ESC dismisses ghost text without changing input value', async ({ page }) => {
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const titleInput = page.locator('input[placeholder*="Enter feature title"]')
+    await titleInput.fill('Fea')
+
+    const ghost = page.locator('[data-testid="name-ghost-text"]')
+    await expect(ghost).toBeVisible({ timeout: 3000 })
+
+    // Press ESC — ghost text should disappear, input value unchanged
+    await titleInput.press('Escape')
+
+    await expect(ghost).not.toBeVisible()
+    await expect(titleInput).toHaveValue('Fea')
+  })
+
   test('ghost text not visible on mobile viewport', async ({ page }) => {
     // Set a narrow (mobile) viewport — below the md breakpoint (768px)
     await page.setViewportSize({ width: 375, height: 812 })
