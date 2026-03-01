@@ -243,6 +243,88 @@ class TestUpdateFeature:
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
 
+    def test_update_feature_name_populates_name_tokens(self, client):
+        """Updating a feature's name inserts tokens from the new name into name_tokens."""
+        import backend.main as main_module
+
+        response = client.put("/api/features/1", json={
+            "name": "Updated Gamma Delta"
+        })
+        assert response.status_code == 200
+
+        session = main_module.get_session()
+        try:
+            tokens = {row.token: row.usage_count for row in session.query(NameToken).all()}
+        finally:
+            session.close()
+
+        assert "updated" in tokens
+        assert "gamma" in tokens
+        assert "delta" in tokens
+        assert tokens["updated"] >= 1
+        assert tokens["gamma"] >= 1
+        assert tokens["delta"] >= 1
+
+    def test_update_feature_name_does_not_decrement_old_tokens(self, client):
+        """Old tokens from the previous name are not decremented when name is updated (append-only)."""
+        import backend.main as main_module
+
+        # Seed a known token by creating a feature with a unique name
+        client.post("/api/features", json={
+            "category": "Testing",
+            "name": "Unique OldToken Name",
+            "description": "Token retention test",
+            "steps": ["s"],
+        })
+
+        session = main_module.get_session()
+        try:
+            old_row = session.query(NameToken).filter(NameToken.token == "oldtoken").first()
+            old_count = old_row.usage_count if old_row else 0
+        finally:
+            session.close()
+
+        assert old_count >= 1
+
+        # Now update that feature's name to something without "oldtoken"
+        response = client.get("/api/features")
+        feature_id = response.json()[-1]["id"]
+
+        client.put(f"/api/features/{feature_id}", json={"name": "Brand New Different Name"})
+
+        session = main_module.get_session()
+        try:
+            updated_row = session.query(NameToken).filter(NameToken.token == "oldtoken").first()
+            new_count = updated_row.usage_count if updated_row else 0
+        finally:
+            session.close()
+
+        # usage_count must not have decreased
+        assert new_count == old_count
+
+    def test_update_feature_without_name_does_not_touch_name_tokens(self, client):
+        """Updating fields other than name does not modify name_tokens."""
+        import backend.main as main_module
+
+        # Capture current token state
+        session = main_module.get_session()
+        try:
+            before = {row.token: row.usage_count for row in session.query(NameToken).all()}
+        finally:
+            session.close()
+
+        # Update description only (no name change)
+        response = client.put("/api/features/1", json={"description": "Updated description only"})
+        assert response.status_code == 200
+
+        session = main_module.get_session()
+        try:
+            after = {row.token: row.usage_count for row in session.query(NameToken).all()}
+        finally:
+            session.close()
+
+        assert before == after
+
 
 class TestDeleteFeature:
     """Tests for DELETE /api/features/{id}"""
