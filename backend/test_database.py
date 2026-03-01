@@ -592,3 +592,277 @@ def test_backfill_name_tokens_empty_features():
             shutil.rmtree(temp_dir)
         except PermissionError:
             pass
+
+
+# ---------------------------------------------------------------------------
+# tokenize_description unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_tokenize_description_basic():
+    """Simple description produces expected tokens."""
+    from api.migration import tokenize_description
+
+    assert tokenize_description("Populate tokens from description") == [
+        "populate", "tokens", "from", "description"
+    ]
+
+
+def test_tokenize_description_lowercase():
+    """Output tokens are always lowercase."""
+    from api.migration import tokenize_description
+
+    tokens = tokenize_description("FastAPI Backend Server")
+    assert tokens == ["fastapi", "backend", "server"]
+
+
+def test_tokenize_description_strips_punctuation():
+    """Punctuation is removed and does not merge adjacent words."""
+    from api.migration import tokenize_description
+
+    tokens = tokenize_description("reads all rows from features.description")
+    assert "reads" in tokens
+    assert "all" in tokens
+    assert "rows" in tokens
+    assert "from" in tokens
+    assert "features" in tokens
+    assert "description" in tokens
+    assert all("." not in t for t in tokens)
+
+
+def test_tokenize_description_drops_short_tokens():
+    """Tokens of length 1 are dropped; length 2 tokens are kept."""
+    from api.migration import tokenize_description
+
+    tokens = tokenize_description("a is ok to do")
+    assert "a" not in tokens
+    assert "is" in tokens
+    assert "ok" in tokens
+    assert "to" in tokens
+    assert "do" in tokens
+
+
+def test_tokenize_description_empty_string():
+    """Empty description returns empty list."""
+    from api.migration import tokenize_description
+
+    assert tokenize_description("") == []
+
+
+def test_tokenize_description_only_punctuation():
+    """Description containing only punctuation returns empty list."""
+    from api.migration import tokenize_description
+
+    assert tokenize_description("---!!!...") == []
+
+
+def test_tokenize_description_numbers_kept():
+    """Numeric tokens of length >= 2 are kept."""
+    from api.migration import tokenize_description
+
+    tokens = tokenize_description("schema version v2 migration step")
+    assert "v2" in tokens
+    assert "migration" in tokens
+
+
+def test_tokenize_description_long_text():
+    """Longer multi-sentence description is tokenized correctly."""
+    from api.migration import tokenize_description
+
+    desc = "One-time migration that tokenizes all existing features."
+    tokens = tokenize_description(desc)
+    assert "one" in tokens
+    assert "time" in tokens
+    assert "migration" in tokens
+    assert "tokenizes" in tokens
+    assert "all" in tokens
+    assert "existing" in tokens
+    assert "features" in tokens
+
+
+# ---------------------------------------------------------------------------
+# backfill_description_tokens integration tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def seeded_desc_db():
+    """Create an isolated DB seeded with features having meaningful descriptions."""
+    import shutil
+    import tempfile
+
+    from api.database import Feature, create_database
+
+    temp_dir = tempfile.mkdtemp()
+    engine, session_maker = create_database(Path(temp_dir))
+
+    session = session_maker()
+    try:
+        features = [
+            Feature(id=1, priority=1, category="Backend", name="Feature A",
+                    description="Populate tokens from feature description",
+                    steps=["step"], passes=False, in_progress=False),
+            Feature(id=2, priority=2, category="Backend", name="Feature B",
+                    description="Populate tokens from feature name field",
+                    steps=["step"], passes=False, in_progress=False),
+            Feature(id=3, priority=3, category="Frontend", name="Feature C",
+                    description="Run migration on startup",
+                    steps=["step"], passes=False, in_progress=False),
+        ]
+        for f in features:
+            session.add(f)
+        session.commit()
+    finally:
+        session.close()
+
+    yield engine, session_maker
+
+    engine.dispose()
+    try:
+        shutil.rmtree(temp_dir)
+    except PermissionError:
+        pass
+
+
+def test_backfill_description_tokens_populates_table(seeded_desc_db):
+    """backfill_description_tokens inserts tokens from all feature descriptions."""
+    from api.database import DescriptionToken
+    from api.migration import backfill_description_tokens
+
+    _, session_maker = seeded_desc_db
+    count = backfill_description_tokens(session_maker)
+    assert count > 0
+
+    session = session_maker()
+    try:
+        tokens = {row.token: row.usage_count for row in session.query(DescriptionToken).all()}
+    finally:
+        session.close()
+
+    # "populate" appears in descriptions 1 and 2
+    assert tokens.get("populate") == 2
+    # "tokens" appears in descriptions 1 and 2
+    assert tokens.get("tokens") == 2
+    # "from" appears in descriptions 1 and 2
+    assert tokens.get("from") == 2
+    # "feature" appears in descriptions 1 and 2 (not in "Run migration on startup")
+    assert tokens.get("feature") == 2
+    # "description" appears once (feature A)
+    assert tokens.get("description") == 1
+    # "migration" appears once (feature C)
+    assert tokens.get("migration") == 1
+
+
+def test_backfill_description_tokens_returns_distinct_count(seeded_desc_db):
+    """Return value equals the number of distinct tokens inserted."""
+    from api.database import DescriptionToken
+    from api.migration import backfill_description_tokens
+
+    _, session_maker = seeded_desc_db
+    returned = backfill_description_tokens(session_maker)
+
+    session = session_maker()
+    try:
+        db_count = session.query(DescriptionToken).count()
+    finally:
+        session.close()
+
+    assert returned == db_count
+
+
+def test_backfill_description_tokens_idempotent_guard(seeded_desc_db):
+    """Second call returns -1 and does not alter existing tokens."""
+    from api.database import DescriptionToken
+    from api.migration import backfill_description_tokens
+
+    _, session_maker = seeded_desc_db
+    first = backfill_description_tokens(session_maker)
+    assert first > 0
+
+    second = backfill_description_tokens(session_maker)
+    assert second == -1
+
+    session = session_maker()
+    try:
+        count_after = session.query(DescriptionToken).count()
+    finally:
+        session.close()
+
+    assert count_after == first  # unchanged
+
+
+def test_backfill_description_tokens_empty_features():
+    """Backfill on a DB with no features inserts 0 tokens and returns 0."""
+    import shutil
+    import tempfile
+
+    from api.database import DescriptionToken, create_database
+    from api.migration import backfill_description_tokens
+
+    temp_dir = tempfile.mkdtemp()
+    try:
+        engine, session_maker = create_database(Path(temp_dir))
+        try:
+            result = backfill_description_tokens(session_maker)
+            assert result == 0
+
+            session = session_maker()
+            try:
+                assert session.query(DescriptionToken).count() == 0
+            finally:
+                session.close()
+        finally:
+            engine.dispose()
+    finally:
+        try:
+            shutil.rmtree(temp_dir)
+        except PermissionError:
+            pass
+
+
+def test_backfill_description_tokens_aggregates_counts():
+    """Tokens shared across multiple descriptions have summed usage_count."""
+    import shutil
+    import tempfile
+
+    from api.database import DescriptionToken, Feature, create_database
+    from api.migration import backfill_description_tokens
+
+    temp_dir = tempfile.mkdtemp()
+    try:
+        engine, session_maker = create_database(Path(temp_dir))
+        session = session_maker()
+        try:
+            # "migration" appears in all three descriptions
+            features = [
+                Feature(id=1, priority=1, category="X", name="A",
+                        description="run migration step",
+                        steps=["s"], passes=False, in_progress=False),
+                Feature(id=2, priority=2, category="X", name="B",
+                        description="migration runs on startup",
+                        steps=["s"], passes=False, in_progress=False),
+                Feature(id=3, priority=3, category="X", name="C",
+                        description="apply migration to database",
+                        steps=["s"], passes=False, in_progress=False),
+            ]
+            for f in features:
+                session.add(f)
+            session.commit()
+        finally:
+            session.close()
+
+        backfill_description_tokens(session_maker)
+
+        session = session_maker()
+        try:
+            token = session.query(DescriptionToken).filter_by(token="migration").first()
+            assert token is not None
+            assert token.usage_count == 3
+        finally:
+            session.close()
+    finally:
+        engine.dispose()
+        try:
+            shutil.rmtree(temp_dir)
+        except PermissionError:
+            pass

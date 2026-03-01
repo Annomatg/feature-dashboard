@@ -15,7 +15,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from api.database import Feature, NameToken, create_database
+from api.database import DescriptionToken, Feature, NameToken, create_database
 
 
 def tokenize_name(name: str) -> list:
@@ -74,6 +74,70 @@ def backfill_name_tokens(session_maker: sessionmaker) -> int:
         session.commit()
         total = len(token_counts)
         print(f"Backfilled {total} distinct tokens into name_tokens")
+        return total
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def tokenize_description(description: str) -> list:
+    """Tokenize a feature description into normalized word tokens.
+
+    Steps:
+    1. Lowercase the description.
+    2. Replace non-alphanumeric characters with spaces (strips punctuation,
+       splits hyphenated/underscored words).
+    3. Split on whitespace.
+    4. Drop tokens shorter than 2 characters.
+
+    Args:
+        description: Raw feature description string.
+
+    Returns:
+        List of normalized token strings.
+    """
+    description = description.lower()
+    description = re.sub(r"[^a-z0-9\s]", " ", description)
+    return [t for t in description.split() if len(t) >= 2]
+
+
+def backfill_description_tokens(session_maker: sessionmaker) -> int:
+    """Populate description_tokens from all existing feature descriptions.
+
+    Reads every row from features.description, tokenizes the text, and upserts
+    the aggregated usage counts into description_tokens.
+
+    Idempotent: if description_tokens already contains rows the function returns
+    -1 and makes no changes.
+
+    Args:
+        session_maker: SQLAlchemy session factory bound to the target DB.
+
+    Returns:
+        Number of distinct tokens inserted, or -1 if the table was not empty
+        (guard skipped the backfill).
+    """
+    session: Session = session_maker()
+    try:
+        existing_count = session.query(DescriptionToken).count()
+        if existing_count > 0:
+            print(f"description_tokens already has {existing_count} tokens, skipping backfill")
+            return -1
+
+        descriptions = [row[0] for row in session.query(Feature.description).all()]
+
+        token_counts: Counter = Counter()
+        for desc in descriptions:
+            token_counts.update(tokenize_description(desc))
+
+        for token, count in token_counts.items():
+            session.add(DescriptionToken(token=token, usage_count=count))
+
+        session.commit()
+        total = len(token_counts)
+        print(f"Backfilled {total} distinct tokens into description_tokens")
         return total
     except Exception:
         session.rollback()
@@ -221,6 +285,7 @@ def migrate_all_dashboards(config_path: Optional[Path] = None) -> None:
             _, session_maker = create_database(db_path.parent, db_filename=db_path.name)
             print(f"  OK: {db_path}")
             backfill_name_tokens(session_maker)
+            backfill_description_tokens(session_maker)
         except Exception as e:
             print(f"  ERROR: {e}")
 
