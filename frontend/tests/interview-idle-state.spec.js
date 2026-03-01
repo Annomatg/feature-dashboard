@@ -24,23 +24,30 @@ test.describe('InterviewPage — idle state (no active session)', () => {
     await expect(page.getByTestId('interview-idle')).toBeVisible({ timeout: 6000 })
   })
 
-  test('idle message reads "Waiting for Claude to start an interview..."', async ({ page }) => {
+  test('idle state shows "Plan Features" heading and description textarea', async ({ page }) => {
     await page.route('**/api/interview/question/stream', () => {})
     await gotoInterview(page)
 
     await expect(page.getByTestId('interview-idle')).toBeVisible({ timeout: 6000 })
-    await expect(page.getByTestId('interview-idle')).toContainText(
-      'Waiting for Claude to start an interview...'
-    )
+    await expect(page.getByTestId('interview-idle')).toContainText('Plan Features')
+    await expect(page.getByTestId('interview-description')).toBeVisible()
   })
 
-  test('idle state includes /interview-feature skill instruction', async ({ page }) => {
+  test('idle state shows Start Planning button disabled when textarea is empty', async ({ page }) => {
     await page.route('**/api/interview/question/stream', () => {})
     await gotoInterview(page)
 
     await expect(page.getByTestId('interview-idle')).toBeVisible({ timeout: 6000 })
-    await expect(page.getByTestId('interview-idle')).toContainText('/interview-feature')
-    await expect(page.getByTestId('interview-idle')).toContainText('Claude Code')
+    await expect(page.getByTestId('interview-start-btn')).toBeDisabled()
+  })
+
+  test('Start Planning button enables when description is typed', async ({ page }) => {
+    await page.route('**/api/interview/question/stream', () => {})
+    await gotoInterview(page)
+
+    await expect(page.getByTestId('interview-idle')).toBeVisible({ timeout: 6000 })
+    await page.getByTestId('interview-description').fill('Add user login feature')
+    await expect(page.getByTestId('interview-start-btn')).toBeEnabled()
   })
 
   test('waiting spinner is shown initially (before 3 s idle timer fires)', async ({ page }) => {
@@ -59,6 +66,22 @@ test.describe('InterviewPage — idle state (no active session)', () => {
 
     await expect(page.getByTestId('interview-idle')).toBeVisible({ timeout: 6000 })
     await expect(page.getByTestId('interview-waiting')).not.toBeVisible()
+  })
+
+  test('submitting description calls /api/interview/start and transitions to waiting', async ({ page }) => {
+    await page.route('**/api/interview/question/stream', () => {})
+    await page.route('**/api/interview/start', (route) => {
+      route.fulfill({ status: 200, contentType: 'application/json', body: '{"launched":true}' })
+    })
+    await gotoInterview(page)
+
+    await expect(page.getByTestId('interview-idle')).toBeVisible({ timeout: 6000 })
+    await page.getByTestId('interview-description').fill('Add user login feature')
+    await page.getByTestId('interview-start-btn').click()
+
+    // Idle disappears; spinner appears
+    await expect(page.getByTestId('interview-idle')).not.toBeVisible({ timeout: 3000 })
+    await expect(page.getByTestId('interview-waiting')).toBeVisible({ timeout: 3000 })
   })
 })
 

@@ -2891,50 +2891,102 @@ async def get_interview_debug():
 
 
 # ---------------------------------------------------------------------------
-# Interview process launcher (opens a visible terminal with the real command)
+# Interview process launcher — description-driven dynamic interview
 # ---------------------------------------------------------------------------
 
-_interview_terminal_launched: bool = False
+# Appended to the plan-tasks template to redirect all interaction to the browser.
+_INTERVIEW_API_SUFFIX = """
+## IMPORTANT: Use the Browser Interview API for All Interaction
+
+You MUST NOT ask questions or await input in the terminal. The user is waiting
+in their browser at /interview. All conversation must happen through the
+following API.
+
+### API Quick Reference
+
+| Action | Command |
+|--------|---------|
+| Post question (first) | `curl -s -X POST http://localhost:8000/api/interview/question -H "Content-Type: application/json" -d '{"text":"...","options":[]}'` |
+| Post question (subsequent) | Add `-H "X-Interview-Token: $SESSION_TOKEN"` to every POST |
+| Poll for answer | `curl -s --max-time 310 http://localhost:8000/api/interview/answer` |
+| End session | `curl -s -X DELETE "http://localhost:8000/api/interview/session?features_created=<N>"` |
+
+Always use `--max-time 310` on the answer poll — the server long-polls up to 300 s.
+
+### Session Token
+
+Capture `session_token` from the **first** POST response and include it as
+`X-Interview-Token` in every subsequent POST.
+
+```bash
+RESPONSE=$(curl -s -X POST http://localhost:8000/api/interview/question \\
+  -H "Content-Type: application/json" \\
+  -d '{"text":"...","options":[]}')
+SESSION_TOKEN=$(echo "$RESPONSE" | python -c "import sys,json; print(json.load(sys.stdin)['session_token'])")
+```
+
+### Option Types
+
+- **Multiple choice**: `"options": ["Option A", "Option B"]`
+- **Free text**: `"options": ["(type in browser)"]` — renders a text input in the browser
+
+### Conversation Flow
+
+**Phase 1 — Clarify**: Post your first question greeting the user, summarising
+your understanding of their request, and asking one focused clarifying question.
+Continue asking follow-up questions until you have enough detail.
+
+**Phase 2 — Present Breakdown**: Post a question listing planned features
+grouped by category. Options: `["Approve and Create", "Revise"]`.
+If "Revise", ask what to change.
+
+**Phase 3 — Create Features**: Call `feature_create_bulk` with ALL features at once.
+Then post a final confirmation with options `["Done"]`.
+
+**Phase 4 — End**: Call `DELETE /api/interview/session?features_created=<N>`.
+Always call this on completion OR on error.
+
+### Error Handling
+
+| Error | Action |
+|-------|--------|
+| POST → 409 (answer pending) | Wait 1 s, retry with `$SESSION_TOKEN` |
+| GET answer → 408 | Re-post same question, poll again |
+| Any unrecoverable error | Call DELETE /api/interview/session, stop |
+"""
 
 
-@app.post("/api/interview/launch")
-async def launch_interview_process() -> dict:
-    """Open a terminal window running the same command used in production.
+class InterviewStartRequest(BaseModel):
+    description: str
 
-    Reads the interview-feature skill, builds the prompt, writes it to a temp
-    file, then opens a new terminal running:
 
-        claude --dangerously-skip-permissions --print <prompt-file>
+@app.post("/api/interview/start")
+async def start_interview(request: InterviewStartRequest):
+    """Launch a dynamic interview session driven by a user-supplied description.
 
-    After Claude exits the window stays open (Read-Host / exec bash) so the
-    user can read any error output before the window disappears.
+    Combines the plan-tasks prompt template (with the user's description) with
+    browser interview API instructions, then launches Claude in a terminal.
+    Claude uses the interview API to conduct a dynamic conversation in the
+    browser and creates features via feature_create_bulk.
     """
-    global _interview_terminal_launched
+    if not request.description.strip():
+        raise HTTPException(status_code=400, detail="Description cannot be empty")
 
-    skill_path = PROJECT_DIR / '.claude' / 'skills' / 'interview-feature.md'
-    if not skill_path.exists():
-        raise HTTPException(status_code=500, detail="interview-feature.md skill file not found")
+    settings = load_settings()
+    plan_template = settings.get("plan_tasks_prompt_template", PLAN_TASKS_PROMPT_TEMPLATE)
+    prompt = plan_template.format(description=request.description.strip())
+    prompt += _INTERVIEW_API_SUFFIX
 
-    skill_content = skill_path.read_text(encoding='utf-8')
-    skill_lines = skill_content.split('\n')
-    if skill_lines and skill_lines[0].strip() == '---':
-        try:
-            end_idx = skill_lines.index('---', 1)
-            skill_content = '\n'.join(skill_lines[end_idx + 1:]).lstrip('\n')
-        except ValueError:
-            pass
+    working_dir = str(_current_db_path.parent)
 
-    prompt = (
-        "Execute the Feature Planning Interview procedure below. "
-        "Follow all steps exactly as documented, using the Bash tool for curl commands "
-        "and the feature_create MCP tool to create features.\n\n"
-        + skill_content
-    )
+    try:
+        _launch_claude_terminal(prompt, working_dir)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to launch Claude: {str(e)}")
 
-    working_dir = str(PROJECT_DIR)
-    _launch_claude_terminal(prompt, working_dir)
-    _interview_terminal_launched = True
-    return {"launched": True, "message": "Terminal opened"}
+    return {"launched": True}
 
 
 if __name__ == "__main__":

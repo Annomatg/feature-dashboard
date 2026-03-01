@@ -42,7 +42,8 @@ function InterviewPage() {
   const [errorMsg, setErrorMsg] = useState('')
   const [featuresCreated, setFeaturesCreated] = useState(0)
   const [sessionKey, setSessionKey] = useState(0) // increment to reconnect SSE
-  const [launched, setLaunched] = useState(false)
+  const [description, setDescription] = useState('')
+  const [isLaunching, setIsLaunching] = useState(false)
 
   // Set page title on mount, restore on unmount
   useEffect(() => {
@@ -116,12 +117,27 @@ function InterviewPage() {
     }
   }, [sessionKey])
 
-  const handleLaunchClaude = async () => {
+  const handleStartInterview = async () => {
+    if (!description.trim() || isLaunching) return
+    setIsLaunching(true)
     try {
-      const res = await fetch('/api/interview/launch', { method: 'POST' })
-      if (res.ok) setLaunched(true)
+      const res = await fetch('/api/interview/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description: description.trim() }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        setErrorMsg(err.detail || 'Failed to start interview')
+        setStatus('error')
+        return
+      }
+      setStatus('waiting')
     } catch {
-      // silently ignore — user will notice if the terminal didn't open
+      setErrorMsg('Failed to connect to server. Is DevServer running?')
+      setStatus('error')
+    } finally {
+      setIsLaunching(false)
     }
   }
 
@@ -164,43 +180,41 @@ function InterviewPage() {
             </div>
           )}
 
-          {/* No active session — waiting for Claude to start */}
+          {/* No active session — user inputs their request */}
           {status === 'idle' && (
             <div
-              className="flex flex-col items-center gap-4 text-center px-2"
+              className="flex flex-col gap-4 w-full"
               data-testid="interview-idle"
             >
-              <p className="text-text-primary text-base font-semibold">
-                Waiting for Claude to start an interview...
-              </p>
-              {!launched ? (
-                <>
-                  <p className="text-text-secondary text-sm leading-relaxed">
-                    Run the <span className="font-mono text-primary">/interview-feature</span> skill in Claude Code on your PC,
-                    or launch a terminal session below.
-                  </p>
-                  <button
-                    onClick={handleLaunchClaude}
-                    className="px-6 py-3 rounded-lg bg-primary text-white text-sm font-mono font-semibold hover:opacity-80 transition-opacity"
-                    data-testid="interview-launch-btn"
-                  >
-                    Launch Claude Session
-                  </button>
-                </>
-              ) : (
-                <>
-                  <p className="text-success text-sm font-mono">
-                    Terminal opened — type <span className="font-semibold">/interview-feature</span> to start
-                  </p>
-                  <button
-                    onClick={handleLaunchClaude}
-                    className="px-4 py-2 rounded-lg border border-border text-text-secondary text-xs font-mono hover:border-text-secondary hover:text-text-primary transition-colors"
-                    data-testid="interview-launch-btn"
-                  >
-                    Launch Again
-                  </button>
-                </>
-              )}
+              <div className="text-center">
+                <p className="text-text-primary text-base font-semibold mb-1">Plan Features</p>
+                <p className="text-text-secondary text-sm leading-relaxed">
+                  Describe what you want to add. Claude will ask clarifying questions here,
+                  then create the features in your backlog.
+                </p>
+              </div>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleStartInterview()
+                }}
+                data-testid="interview-description"
+                placeholder="e.g. Add user authentication with JWT tokens, including login, logout, and session management..."
+                className="w-full bg-background border border-border rounded px-3 py-2.5 text-sm text-text-primary placeholder-text-secondary focus:outline-none focus:border-primary transition-colors resize-none custom-scrollbar"
+                rows={5}
+                spellCheck={false}
+                autoFocus
+              />
+              <p className="text-xs text-text-secondary -mt-2">Ctrl+Enter to start</p>
+              <button
+                onClick={handleStartInterview}
+                disabled={!description.trim() || isLaunching}
+                data-testid="interview-start-btn"
+                className="px-6 py-3 rounded-lg bg-primary text-white text-sm font-mono font-semibold hover:opacity-80 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isLaunching ? 'Starting…' : 'Start Planning'}
+              </button>
             </div>
           )}
 
