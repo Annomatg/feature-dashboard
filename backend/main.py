@@ -28,7 +28,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sqlalchemy import func as sa_func
 
-from api.database import Comment, Feature, create_database
+from api.database import Comment, Feature, NameToken, create_database
+from api.tokens import normalize_tokens
 from backend.providers import REGISTRY, get_provider
 
 # Initialize FastAPI app
@@ -1763,6 +1764,15 @@ async def create_feature(request: CreateFeatureRequest):
         session.add(new_feature)
         session.commit()
         session.refresh(new_feature)
+
+        # Upsert name_tokens for each token in the new feature's name
+        for token in normalize_tokens(new_feature.name):
+            existing = session.query(NameToken).filter(NameToken.token == token).first()
+            if existing:
+                existing.usage_count += 1
+            else:
+                session.add(NameToken(token=token, usage_count=1))
+        session.commit()
 
         return feature_to_response(new_feature, {})
     except HTTPException:

@@ -26,7 +26,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from backend.main import app, get_session
-from api.database import create_database, Feature
+from api.database import create_database, Feature, NameToken
 
 
 @pytest.fixture
@@ -152,6 +152,57 @@ class TestCreateFeature:
         })
 
         assert response.status_code == 422  # Validation error
+
+    def test_create_feature_populates_name_tokens(self, client):
+        """Creating a feature inserts tokens from its name into name_tokens."""
+        import backend.main as main_module
+
+        response = client.post("/api/features", json={
+            "category": "Testing",
+            "name": "Token Alpha Beta",
+            "description": "Token test",
+            "steps": ["Step 1"],
+        })
+        assert response.status_code == 201
+
+        session = main_module.get_session()
+        try:
+            tokens = {row.token: row.usage_count for row in session.query(NameToken).all()}
+        finally:
+            session.close()
+
+        assert "token" in tokens
+        assert "alpha" in tokens
+        assert "beta" in tokens
+        assert tokens["token"] >= 1
+        assert tokens["alpha"] >= 1
+        assert tokens["beta"] >= 1
+
+    def test_create_feature_increments_name_tokens_on_repeated_create(self, client):
+        """Creating two features with a shared token increments usage_count for that token."""
+        import backend.main as main_module
+
+        client.post("/api/features", json={
+            "category": "Testing",
+            "name": "Shared Token First",
+            "description": "d",
+            "steps": ["s"],
+        })
+        client.post("/api/features", json={
+            "category": "Testing",
+            "name": "Shared Token Second",
+            "description": "d",
+            "steps": ["s"],
+        })
+
+        session = main_module.get_session()
+        try:
+            row = session.query(NameToken).filter(NameToken.token == "shared").first()
+        finally:
+            session.close()
+
+        assert row is not None
+        assert row.usage_count == 2
 
 
 class TestUpdateFeature:
