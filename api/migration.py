@@ -6,14 +6,80 @@ Automatically migrates existing feature_list.json files to SQLite database.
 """
 
 import json
+import re
 import shutil
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from api.database import Feature, create_database
+from api.database import Feature, NameToken, create_database
+
+
+def tokenize_name(name: str) -> list:
+    """Tokenize a feature name into normalized word tokens.
+
+    Steps:
+    1. Lowercase the name.
+    2. Replace non-alphanumeric characters with spaces (strips punctuation,
+       splits hyphenated/underscored words).
+    3. Split on whitespace.
+    4. Drop tokens shorter than 2 characters.
+
+    Args:
+        name: Raw feature name string.
+
+    Returns:
+        List of normalized token strings.
+    """
+    name = name.lower()
+    name = re.sub(r"[^a-z0-9\s]", " ", name)
+    return [t for t in name.split() if len(t) >= 2]
+
+
+def backfill_name_tokens(session_maker: sessionmaker) -> int:
+    """Populate name_tokens from all existing feature names.
+
+    Reads every row from features.name, tokenizes the text, and upserts
+    the aggregated usage counts into name_tokens.
+
+    Idempotent: if name_tokens already contains rows the function returns -1
+    and makes no changes.
+
+    Args:
+        session_maker: SQLAlchemy session factory bound to the target DB.
+
+    Returns:
+        Number of distinct tokens inserted, or -1 if the table was not empty
+        (guard skipped the backfill).
+    """
+    session: Session = session_maker()
+    try:
+        existing_count = session.query(NameToken).count()
+        if existing_count > 0:
+            print(f"name_tokens already has {existing_count} tokens, skipping backfill")
+            return -1
+
+        names = [row[0] for row in session.query(Feature.name).all()]
+
+        token_counts: Counter = Counter()
+        for name in names:
+            token_counts.update(tokenize_name(name))
+
+        for token, count in token_counts.items():
+            session.add(NameToken(token=token, usage_count=count))
+
+        session.commit()
+        total = len(token_counts)
+        print(f"Backfilled {total} distinct tokens into name_tokens")
+        return total
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 def migrate_json_to_sqlite(
@@ -152,8 +218,9 @@ def migrate_all_dashboards(config_path: Optional[Path] = None) -> None:
 
         print(f"Migrating '{name}'...")
         try:
-            create_database(db_path.parent, db_filename=db_path.name)
+            _, session_maker = create_database(db_path.parent, db_filename=db_path.name)
             print(f"  OK: {db_path}")
+            backfill_name_tokens(session_maker)
         except Exception as e:
             print(f"  ERROR: {e}")
 

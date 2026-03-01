@@ -389,3 +389,206 @@ def test_schema_version_updated_to_7(temp_db):
         result = conn.execute(text("SELECT schema_version FROM db_meta"))
         version = result.fetchone()[0]
     assert version >= 7, f"Expected schema_version >= 7, got {version}"
+
+
+# ---------------------------------------------------------------------------
+# tokenize_name unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_tokenize_name_basic():
+    """Simple multi-word name produces expected tokens."""
+    from api.migration import tokenize_name
+
+    assert tokenize_name("Add login button") == ["add", "login", "button"]
+
+
+def test_tokenize_name_lowercase():
+    """Output tokens are always lowercase."""
+    from api.migration import tokenize_name
+
+    tokens = tokenize_name("FastAPI Backend")
+    assert tokens == ["fastapi", "backend"]
+
+
+def test_tokenize_name_strips_punctuation():
+    """Punctuation is removed and does not merge adjacent words."""
+    from api.migration import tokenize_name
+
+    tokens = tokenize_name("auto-reload: on startup")
+    assert "auto" in tokens
+    assert "reload" in tokens
+    assert "on" in tokens
+    assert "startup" in tokens
+    # No colons or hyphens remain
+    assert all(":" not in t and "-" not in t for t in tokens)
+
+
+def test_tokenize_name_drops_short_tokens():
+    """Tokens of length 1 are dropped; length 2 tokens are kept."""
+    from api.migration import tokenize_name
+
+    tokens = tokenize_name("a is ok go")
+    assert "a" not in tokens
+    assert "is" in tokens
+    assert "ok" in tokens
+    assert "go" in tokens
+
+
+def test_tokenize_name_empty_string():
+    """Empty name returns empty list."""
+    from api.migration import tokenize_name
+
+    assert tokenize_name("") == []
+
+
+def test_tokenize_name_only_punctuation():
+    """Name containing only punctuation returns empty list."""
+    from api.migration import tokenize_name
+
+    assert tokenize_name("---!!!") == []
+
+
+def test_tokenize_name_numbers_kept():
+    """Numeric tokens of length >= 2 are kept."""
+    from api.migration import tokenize_name
+
+    tokens = tokenize_name("v2 api endpoint")
+    assert "v2" in tokens
+    assert "api" in tokens
+
+
+# ---------------------------------------------------------------------------
+# backfill_name_tokens integration tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def seeded_db():
+    """Create an isolated DB seeded with known features for backfill tests."""
+    import shutil
+    import tempfile
+
+    from api.database import Feature, create_database
+
+    temp_dir = tempfile.mkdtemp()
+    engine, session_maker = create_database(Path(temp_dir))
+
+    session = session_maker()
+    try:
+        features = [
+            Feature(id=1, priority=1, category="Backend", name="Add login button",
+                    description="desc", steps=["step"], passes=False, in_progress=False),
+            Feature(id=2, priority=2, category="Backend", name="Add logout button",
+                    description="desc", steps=["step"], passes=False, in_progress=False),
+            Feature(id=3, priority=3, category="Frontend", name="Create dashboard",
+                    description="desc", steps=["step"], passes=False, in_progress=False),
+        ]
+        for f in features:
+            session.add(f)
+        session.commit()
+    finally:
+        session.close()
+
+    yield engine, session_maker
+
+    engine.dispose()
+    try:
+        shutil.rmtree(temp_dir)
+    except PermissionError:
+        pass
+
+
+def test_backfill_name_tokens_populates_table(seeded_db):
+    """backfill_name_tokens inserts tokens from all feature names."""
+    from api.database import NameToken
+    from api.migration import backfill_name_tokens
+
+    _, session_maker = seeded_db
+    count = backfill_name_tokens(session_maker)
+    assert count > 0
+
+    session = session_maker()
+    try:
+        tokens = {row.token: row.usage_count for row in session.query(NameToken).all()}
+    finally:
+        session.close()
+
+    # "add" appears in "Add login button" and "Add logout button"
+    assert tokens.get("add") == 2
+    # "button" appears twice
+    assert tokens.get("button") == 2
+    # "login" appears once
+    assert tokens.get("login") == 1
+    # "logout" appears once
+    assert tokens.get("logout") == 1
+    # "create" and "dashboard" appear once each
+    assert tokens.get("create") == 1
+    assert tokens.get("dashboard") == 1
+
+
+def test_backfill_name_tokens_returns_distinct_count(seeded_db):
+    """Return value equals the number of distinct tokens inserted."""
+    from api.database import NameToken
+    from api.migration import backfill_name_tokens
+
+    _, session_maker = seeded_db
+    returned = backfill_name_tokens(session_maker)
+
+    session = session_maker()
+    try:
+        db_count = session.query(NameToken).count()
+    finally:
+        session.close()
+
+    assert returned == db_count
+
+
+def test_backfill_name_tokens_idempotent_guard(seeded_db):
+    """Second call returns -1 and does not alter existing tokens."""
+    from api.database import NameToken
+    from api.migration import backfill_name_tokens
+
+    _, session_maker = seeded_db
+    first = backfill_name_tokens(session_maker)
+    assert first > 0
+
+    second = backfill_name_tokens(session_maker)
+    assert second == -1
+
+    session = session_maker()
+    try:
+        count_after = session.query(NameToken).count()
+    finally:
+        session.close()
+
+    assert count_after == first  # unchanged
+
+
+def test_backfill_name_tokens_empty_features():
+    """Backfill on a DB with no features inserts 0 tokens and returns 0."""
+    import shutil
+    import tempfile
+
+    from api.database import NameToken, create_database
+    from api.migration import backfill_name_tokens
+
+    temp_dir = tempfile.mkdtemp()
+    try:
+        engine, session_maker = create_database(Path(temp_dir))
+        try:
+            result = backfill_name_tokens(session_maker)
+            assert result == 0
+
+            session = session_maker()
+            try:
+                assert session.query(NameToken).count() == 0
+            finally:
+                session.close()
+        finally:
+            engine.dispose()
+    finally:
+        try:
+            shutil.rmtree(temp_dir)
+        except PermissionError:
+            pass
