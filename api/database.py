@@ -17,6 +17,22 @@ from sqlalchemy.types import JSON
 Base = declarative_base()
 
 
+class NameToken(Base):
+    """Normalized word tokens extracted from feature names with frequency counts."""
+
+    __tablename__ = "name_tokens"
+
+    token = Column(Text, primary_key=True)
+    usage_count = Column(Integer, nullable=False, default=0, server_default="0")
+
+    def to_dict(self) -> dict:
+        """Convert token to dictionary for JSON serialization."""
+        return {
+            "token": self.token,
+            "usage_count": self.usage_count,
+        }
+
+
 class Comment(Base):
     """Comment model for storing notes/results attached to a feature."""
 
@@ -93,7 +109,7 @@ def get_database_url(project_dir: Path, db_filename: str = "features.db") -> str
 # Numbered migrations
 # ---------------------------------------------------------------------------
 
-LATEST_SCHEMA_VERSION = 5
+LATEST_SCHEMA_VERSION = 6
 
 
 def _migration_v1(engine) -> None:
@@ -176,12 +192,29 @@ def _migration_v5(engine) -> None:
             conn.commit()
 
 
+def _migration_v6(engine) -> None:
+    """v6: Create name_tokens table for storing normalized word tokens from feature names."""
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='name_tokens'"))
+        if result.fetchone() is None:
+            conn.execute(text("""
+                CREATE TABLE name_tokens (
+                    token TEXT PRIMARY KEY,
+                    usage_count INTEGER NOT NULL DEFAULT 0
+                )
+            """))
+            conn.commit()
+
+
 _MIGRATIONS = [
     (1, _migration_v1),
     (2, _migration_v2),
     (3, _migration_v3),
     (4, _migration_v4),
     (5, _migration_v5),
+    (6, _migration_v6),
 ]
 
 
