@@ -706,8 +706,12 @@ class TestIntegrationScenarios:
 class TestLaunchClaude:
     """Tests for POST /api/features/{id}/launch-claude"""
 
-    def test_launch_todo_feature(self, client, monkeypatch):
+    def test_launch_todo_feature(self, client, monkeypatch, tmp_path):
         """Test launching Claude for a TODO feature succeeds."""
+        import backend.main as main_module
+        # Isolate from production settings.json so prompt assertions are stable
+        monkeypatch.setattr(main_module, 'SETTINGS_FILE', tmp_path / "settings.json")
+
         popen_calls = []
 
         def mock_popen(*args, **kwargs):
@@ -732,8 +736,12 @@ class TestLaunchClaude:
         assert "working_directory" in data
         assert len(popen_calls) == 1
 
-    def test_launch_in_progress_feature(self, client, monkeypatch):
+    def test_launch_in_progress_feature(self, client, monkeypatch, tmp_path):
         """Test launching Claude for an IN PROGRESS feature succeeds."""
+        import backend.main as main_module
+        # Isolate from production settings.json so prompt assertions are stable
+        monkeypatch.setattr(main_module, 'SETTINGS_FILE', tmp_path / "settings.json")
+
         monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         # Feature 4 is in_progress=True, passes=False
