@@ -83,6 +83,72 @@ test.describe('InterviewPage — idle state (no active session)', () => {
     await expect(page.getByTestId('interview-idle')).not.toBeVisible({ timeout: 3000 })
     await expect(page.getByTestId('interview-waiting')).toBeVisible({ timeout: 3000 })
   })
+
+  test('idle form does NOT re-appear after session started (waiting for first question)', async ({ page }) => {
+    // SSE never delivers a question — simulates Claude thinking
+    await page.route('**/api/interview/question/stream', () => {})
+    await page.route('**/api/interview/start', (route) => {
+      route.fulfill({ status: 200, contentType: 'application/json', body: '{"launched":true}' })
+    })
+    await gotoInterview(page)
+
+    // Wait for idle, fill, start
+    await expect(page.getByTestId('interview-idle')).toBeVisible({ timeout: 6000 })
+    await page.getByTestId('interview-description').fill('Add user login feature')
+    await page.getByTestId('interview-start-btn').click()
+
+    // Waiting state appears
+    await expect(page.getByTestId('interview-waiting')).toBeVisible({ timeout: 3000 })
+
+    // Wait well past the 3 s idle timer — idle must NOT reappear
+    await page.waitForTimeout(4000)
+    await expect(page.getByTestId('interview-idle')).not.toBeVisible()
+    await expect(page.getByTestId('interview-waiting')).toBeVisible()
+  })
+
+  test('idle form does NOT re-appear while waiting for next question after answer', async ({ page }) => {
+    // Strategy: stall the first SSE connection so idle appears, then manually
+    // fulfill it with a question after the user starts the session.
+    // This verifies that sessionStarted=true prevents idle from re-appearing
+    // while the user waits for Claude's follow-up question.
+    const sseRoutes = []
+    await page.route('**/api/interview/question/stream', (route) => {
+      sseRoutes.push(route)
+      // Stall all SSE requests — we will fulfill them manually
+    })
+    await page.route('**/api/interview/answer', (route) => {
+      route.fulfill({ status: 200, contentType: 'application/json', body: '{"status":"received"}' })
+    })
+    await page.route('**/api/interview/start', (route) => {
+      route.fulfill({ status: 200, contentType: 'application/json', body: '{"launched":true}' })
+    })
+    await gotoInterview(page)
+
+    // SSE stalls → idle appears after 3 s
+    await expect(page.getByTestId('interview-idle')).toBeVisible({ timeout: 6000 })
+
+    // User fills form and starts session (sessionStarted = true internally)
+    await page.getByTestId('interview-description').fill('Some feature')
+    await page.getByTestId('interview-start-btn').click()
+    await expect(page.getByTestId('interview-waiting')).toBeVisible({ timeout: 3000 })
+
+    // Deliver a question via the stalled SSE connection
+    sseRoutes[0].fulfill({
+      status: 200,
+      contentType: 'text/event-stream; charset=utf-8',
+      headers: { 'Cache-Control': 'no-cache' },
+      body: 'event: question\ndata: {"text":"What is your goal?","options":["A","B"]}\n\n',
+    })
+
+    // Question appears → user answers
+    await expect(page.getByTestId('survey-card')).toBeVisible({ timeout: 5000 })
+    await page.getByTestId('survey-option-0').click()
+
+    // Now waiting for Claude's next question — wait well past the 3 s idle timer.
+    // The idle form must NOT reappear (sessionStarted=true guards against this).
+    await page.waitForTimeout(4000)
+    await expect(page.getByTestId('interview-idle')).not.toBeVisible()
+  })
 })
 
 // ---------------------------------------------------------------------------

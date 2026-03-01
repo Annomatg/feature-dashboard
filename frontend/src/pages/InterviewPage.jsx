@@ -44,6 +44,7 @@ function InterviewPage() {
   const [sessionKey, setSessionKey] = useState(0) // increment to reconnect SSE
   const [description, setDescription] = useState('')
   const [isLaunching, setIsLaunching] = useState(false)
+  const [sessionStarted, setSessionStarted] = useState(false)
 
   // Set page title on mount, restore on unmount
   useEffect(() => {
@@ -52,16 +53,16 @@ function InterviewPage() {
     return () => { document.title = previous }
   }, [])
 
-  // Start a 3 s idle timer whenever we enter 'waiting' state.
-  // This covers both the initial load and post-reconnect transitions so the
-  // user always sees the idle instructions if no question arrives quickly.
+  // Start a 3 s idle timer whenever we enter 'waiting' state with no active session.
+  // Once a session has started (sessionStarted=true), the idle form must never
+  // re-appear — the user should see the spinner until the next question arrives.
   useEffect(() => {
-    if (status !== 'waiting') return
+    if (status !== 'waiting' || sessionStarted) return
     const idleTimer = setTimeout(() => {
       setStatus((prev) => (prev === 'waiting' ? 'idle' : prev))
     }, 3000)
     return () => clearTimeout(idleTimer)
-  }, [status])
+  }, [status, sessionStarted])
 
   useEffect(() => {
     const src = new EventSource('/api/interview/question/stream')
@@ -137,6 +138,7 @@ function InterviewPage() {
         setStatus('error')
         return
       }
+      setSessionStarted(true)
       setStatus('waiting')
     } catch {
       setErrorMsg('Failed to connect to server. Is DevServer running?')
@@ -316,6 +318,7 @@ function InterviewPage() {
               </div>
               <button
                 onClick={() => {
+                  setSessionStarted(false)
                   setStatus('waiting')
                   setQuestion(null)
                   setFeaturesCreated(0)
@@ -362,6 +365,7 @@ function InterviewPage() {
                 </button>
                 <button
                   onClick={() => {
+                    setSessionStarted(false)
                     setStatus('waiting')
                     setQuestion(null)
                     setFeaturesCreated(0)
