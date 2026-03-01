@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { X } from 'lucide-react'
 import EditableSteps from './EditableSteps'
+import GhostTextInput from './GhostTextInput'
 
 const MODEL_OPTIONS = [
   { value: 'haiku', label: 'Haiku', title: 'Fastest, most efficient' },
@@ -76,7 +77,7 @@ function NewFeatureCard({ lane, onSave, onCancel, accentColor }) {
         <label className="block text-xs font-mono text-text-secondary mb-1">
           Title <span className="text-error">*</span>
         </label>
-        <input
+        <GhostTextInput
           ref={titleInputRef}
           type="text"
           value={title}
