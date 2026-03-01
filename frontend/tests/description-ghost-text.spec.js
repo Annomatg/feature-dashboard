@@ -80,6 +80,25 @@ test.describe('Description field ghost text (desktop)', () => {
     await expect(ghost).not.toBeVisible()
   })
 
+  test('Tab key positions cursor after the inserted token in description field', async ({ page }) => {
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const descTextarea = page.locator('textarea[placeholder*="Describe"]')
+    await descTextarea.fill('fea')
+
+    const ghost = page.locator('[data-testid="description-ghost-text"]')
+    await expect(ghost).toBeVisible({ timeout: 3000 })
+
+    // Press Tab to accept the suggestion
+    await descTextarea.press('Tab')
+
+    await expect(descTextarea).toHaveValue('feature')
+
+    // Cursor should be positioned at the end of the accepted token
+    const cursorPos = await descTextarea.evaluate(el => el.selectionStart)
+    expect(cursorPos).toBe('feature'.length)
+  })
+
   test('ghost text not visible on mobile viewport in description field', async ({ page }) => {
     // Set a narrow (mobile) viewport — below the md breakpoint (768px)
     await page.setViewportSize({ width: 375, height: 812 })

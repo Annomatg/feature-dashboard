@@ -63,8 +63,15 @@ const GhostTextArea = forwardRef(function GhostTextArea(
   const handleKeyDown = (e) => {
     if (ghostSuffix && e.key === 'Tab') {
       e.preventDefault()
-      onChange({ target: { value: value + ghostSuffix } })
+      const newValue = value + ghostSuffix
+      onChange({ target: { value: newValue } })
       setGhostSuffix('')
+      // Position cursor after the inserted token once React has re-rendered
+      requestAnimationFrame(() => {
+        if (textareaRef.current) {
+          textareaRef.current.setSelectionRange(newValue.length, newValue.length)
+        }
+      })
     }
     onKeyDown?.(e)
   }
