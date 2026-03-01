@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sqlalchemy import func as sa_func
 
-from api.database import Comment, Feature, NameToken, create_database
+from api.database import Comment, DescriptionToken, Feature, NameToken, create_database
 from api.tokens import normalize_tokens
 from backend.providers import REGISTRY, get_provider
 
@@ -1772,6 +1772,14 @@ async def create_feature(request: CreateFeatureRequest):
                 existing.usage_count += 1
             else:
                 session.add(NameToken(token=token, usage_count=1))
+
+        # Upsert description_tokens for each token in the new feature's description
+        for token in normalize_tokens(new_feature.description):
+            existing = session.query(DescriptionToken).filter(DescriptionToken.token == token).first()
+            if existing:
+                existing.usage_count += 1
+            else:
+                session.add(DescriptionToken(token=token, usage_count=1))
         session.commit()
 
         return feature_to_response(new_feature, {})

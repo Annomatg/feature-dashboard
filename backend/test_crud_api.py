@@ -26,7 +26,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from backend.main import app, get_session
-from api.database import create_database, Feature, NameToken
+from api.database import create_database, DescriptionToken, Feature, NameToken
 
 
 @pytest.fixture
@@ -324,6 +324,58 @@ class TestUpdateFeature:
             session.close()
 
         assert before == after
+
+    def test_create_feature_populates_description_tokens(self, client):
+        """Creating a feature inserts tokens from its description into description_tokens."""
+        import backend.main as main_module
+
+        response = client.post("/api/features", json={
+            "category": "Testing",
+            "name": "Desc Token Feature",
+            "description": "unique descriptor phrase here",
+            "steps": ["step"],
+        })
+
+        assert response.status_code == 201
+
+        session = main_module.get_session()
+        try:
+            tokens = {row.token: row.usage_count for row in session.query(DescriptionToken).all()}
+        finally:
+            session.close()
+
+        assert "unique" in tokens
+        assert "descriptor" in tokens
+        assert "phrase" in tokens
+        assert tokens["unique"] >= 1
+        assert tokens["descriptor"] >= 1
+        assert tokens["phrase"] >= 1
+
+    def test_create_feature_increments_description_tokens_on_repeated_create(self, client):
+        """Creating two features with a shared description token increments usage_count."""
+        import backend.main as main_module
+
+        client.post("/api/features", json={
+            "category": "Testing",
+            "name": "First Feature",
+            "description": "sharedword in this description",
+            "steps": ["step"],
+        })
+        client.post("/api/features", json={
+            "category": "Testing",
+            "name": "Second Feature",
+            "description": "sharedword appears again here",
+            "steps": ["step"],
+        })
+
+        session = main_module.get_session()
+        try:
+            row = session.query(DescriptionToken).filter(DescriptionToken.token == "sharedword").first()
+        finally:
+            session.close()
+
+        assert row is not None
+        assert row.usage_count >= 2
 
 
 class TestDeleteFeature:
