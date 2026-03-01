@@ -31,6 +31,19 @@ const MOCK_SESSION_WITH_ENTRIES = {
   }),
 };
 
+// 20 entries — enough to overflow the 200px max-height container
+const MANY_ENTRIES = Array.from({ length: 20 }, (_, i) => ({
+  timestamp: `2026-02-27T10:00:${String(i).padStart(2, '0')}.000000+00:00`,
+  entry_type: 'text',
+  text: `Log line ${i + 1} — some content here`,
+}));
+
+const MOCK_SESSION_MANY = {
+  status: 200,
+  contentType: 'application/json',
+  body: JSON.stringify({ entries: MANY_ENTRIES, session_file: 'session.jsonl' }),
+};
+
 /** Open the detail panel for the seeded IN PROGRESS feature (id=2). */
 async function openInProgressPanel(page) {
   await page.goto('/');
@@ -201,5 +214,102 @@ test.describe('Claude Log Section', () => {
     const box = await section.boundingBox();
     expect(box).not.toBeNull();
     expect(box.x + box.width).toBeLessThanOrEqual(768 + 2);
+  });
+
+  test.describe('tail / scroll behaviour', () => {
+    test('log is scrolled to bottom on initial open', async ({ page }) => {
+      await page.route('**/api/autopilot/session-log**', route => route.fulfill(MOCK_SESSION_MANY));
+      await openInProgressPanel(page);
+
+      const logEl = page.getByTestId('claude-log-lines');
+      await expect(logEl).toBeVisible();
+      // Last entry must be visible without any manual scrolling
+      await expect(logEl.getByText('Log line 20 — some content here')).toBeVisible();
+
+      // scrollTop should be at the bottom (within a small tolerance)
+      const atBottom = await logEl.evaluate(el => el.scrollTop + el.clientHeight >= el.scrollHeight - 20);
+      expect(atBottom).toBe(true);
+    });
+
+    test('log stays at bottom when new entries arrive and user is pinned', async ({ page }) => {
+      // First response: 10 entries
+      const firstEntries = MANY_ENTRIES.slice(0, 10);
+      let callCount = 0;
+      await page.route('**/api/autopilot/session-log**', route => {
+        callCount++;
+        if (callCount === 1) {
+          route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ entries: firstEntries, session_file: 'session.jsonl' }),
+          });
+        } else {
+          route.fulfill(MOCK_SESSION_MANY); // 20 entries
+        }
+      });
+
+      await openInProgressPanel(page);
+      const logEl = page.getByTestId('claude-log-lines');
+      await expect(logEl.getByText('Log line 10 — some content here')).toBeVisible();
+
+      // Trigger the second fetch (click refresh to force it immediately)
+      await page.getByTestId('claude-log-refresh').click();
+      await expect(logEl.getByText('Log line 20 — some content here')).toBeVisible();
+
+      // Should still be at the bottom
+      const atBottom = await logEl.evaluate(el => el.scrollTop + el.clientHeight >= el.scrollHeight - 20);
+      expect(atBottom).toBe(true);
+    });
+
+    test('log does NOT auto-scroll when user has scrolled up', async ({ page }) => {
+      // First: 20 entries. Second: 20 entries (same, so no content change, but test scroll lock)
+      let callCount = 0;
+      await page.route('**/api/autopilot/session-log**', route => {
+        callCount++;
+        route.fulfill(MOCK_SESSION_MANY);
+      });
+
+      await openInProgressPanel(page);
+      const logEl = page.getByTestId('claude-log-lines');
+      await expect(logEl.getByText('Log line 20 — some content here')).toBeVisible();
+
+      // User scrolls to the top
+      await logEl.evaluate(el => { el.scrollTop = 0; });
+      // Fire a scroll event so the component tracks the position
+      await logEl.dispatchEvent('scroll');
+
+      // Capture scrollTop before the next fetch
+      const scrollTopBefore = await logEl.evaluate(el => el.scrollTop);
+
+      // Trigger another fetch
+      await page.getByTestId('claude-log-refresh').click();
+      await page.waitForTimeout(300);
+
+      // scrollTop should remain where user left it
+      const scrollTopAfter = await logEl.evaluate(el => el.scrollTop);
+      expect(scrollTopAfter).toBeLessThanOrEqual(scrollTopBefore + 5);
+    });
+
+    test('log scrolls to bottom when re-expanded after collapse', async ({ page }) => {
+      await page.route('**/api/autopilot/session-log**', route => route.fulfill(MOCK_SESSION_MANY));
+      await openInProgressPanel(page);
+
+      const logEl = page.getByTestId('claude-log-lines');
+      await expect(logEl.getByText('Log line 20 — some content here')).toBeVisible();
+
+      // User scrolls up
+      await logEl.evaluate(el => { el.scrollTop = 0; });
+      await logEl.dispatchEvent('scroll');
+
+      // Collapse then re-expand
+      await page.getByTestId('claude-log-toggle').click();
+      await expect(logEl).not.toBeVisible();
+      await page.getByTestId('claude-log-toggle').click();
+      await expect(logEl).toBeVisible();
+
+      // After re-expanding, should be at the bottom again
+      const atBottom = await logEl.evaluate(el => el.scrollTop + el.clientHeight >= el.scrollHeight - 20);
+      expect(atBottom).toBe(true);
+    });
   });
 });

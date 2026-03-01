@@ -159,6 +159,8 @@ function ClaudeLogSection({ featureId, inProgress }) {
   const [sessionData, setSessionData] = useState(null)
   const [fetchError, setFetchError] = useState(null)
   const intervalRef = useRef(null)
+  const logContainerRef = useRef(null)
+  const atBottomRef = useRef(true)
 
   const fetchLog = useCallback(async () => {
     try {
@@ -178,6 +180,31 @@ function ClaudeLogSection({ featureId, inProgress }) {
     return () => clearInterval(intervalRef.current)
   }, [featureId, inProgress, fetchLog])
 
+  const entries = sessionData?.entries ?? []
+
+  // Auto-scroll to bottom when new entries arrive — only if already pinned to bottom
+  useEffect(() => {
+    const el = logContainerRef.current
+    if (!el) return
+    if (atBottomRef.current) {
+      el.scrollTop = el.scrollHeight
+    }
+  }, [entries.length])
+
+  // When expanding the log, always jump to bottom and re-pin
+  useEffect(() => {
+    if (collapsed) return
+    atBottomRef.current = true
+    const el = logContainerRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [collapsed])
+
+  const handleScroll = useCallback(() => {
+    const el = logContainerRef.current
+    if (!el) return
+    atBottomRef.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 20
+  }, [])
+
   if (!inProgress) return null
 
   const formatTime = (iso) => {
@@ -187,8 +214,6 @@ function ClaudeLogSection({ featureId, inProgress }) {
       return iso
     }
   }
-
-  const entries = sessionData?.entries ?? []
 
   return (
     <div data-testid="claude-log-section">
@@ -213,6 +238,8 @@ function ClaudeLogSection({ featureId, inProgress }) {
       </div>
       {!collapsed && (
         <div
+          ref={logContainerRef}
+          onScroll={handleScroll}
           className="bg-background rounded border border-border overflow-y-auto max-h-[200px] custom-scrollbar"
           data-testid="claude-log-lines"
         >
