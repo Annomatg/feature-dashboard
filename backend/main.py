@@ -71,6 +71,11 @@ CLAUDE_RATE_LIMIT_PATTERNS: frozenset[str] = frozenset([
     "overloaded_error",
     "claude usage limit reached",
     "you've reached your usage limit",
+    # Context / token limit errors emitted by the Claude CLI or Anthropic API
+    "context_length_exceeded",
+    "prompt is too long",
+    "input_too_long",
+    "too many tokens",
 ])
 
 # Process exit codes that the Claude CLI uses to signal a session or rate limit.
@@ -717,6 +722,29 @@ async def handle_autopilot_success(
         _append_log(state, 'error', f"Failed to spawn Claude: {err}")
 
 
+def _extract_output_snippet(output_text: str, max_lines: int = 3, max_chars: int = 200) -> str:
+    """Extract the last few non-empty lines of process output for display in error messages.
+
+    This is used to surface the actual error reason (e.g. API error text, limit message)
+    when the auto-pilot process exits with a non-zero code and no recognised pattern is found.
+
+    Args:
+        output_text: Full concatenated stdout+stderr text from the Claude process.
+        max_lines:   Maximum number of trailing non-empty lines to include.
+        max_chars:   Total character limit for the returned snippet.
+
+    Returns:
+        A short string like ``"some error text | more text"`` or ``""`` when
+        *output_text* is blank.
+    """
+    lines = [line.strip() for line in output_text.splitlines() if line.strip()]
+    tail = lines[-max_lines:] if lines else []
+    snippet = " | ".join(tail)
+    if len(snippet) > max_chars:
+        snippet = snippet[:max_chars - 1] + "\u2026"  # ellipsis
+    return snippet
+
+
 async def handle_autopilot_failure(
     feature_id: int, exit_code: int, state: "_AutoPilotState", output_text: str = ""
 ) -> None:
@@ -725,7 +753,9 @@ async def handle_autopilot_failure(
     Checks the exit code and concatenated process output for known rate/session-limit
     signals.  If detected, sets budget_exhausted=True and emits a friendly info-level
     message so the info banner (not the red error banner) is shown in the UI.
-    Otherwise keeps the existing red error banner behaviour.
+    Otherwise keeps the existing red error banner behaviour.  For generic failures the
+    last few lines of process output are appended to the error message so the user can
+    see the actual reason rather than a bare exit code.
 
     The raw exit code is always appended to the log first for debugging purposes.
 
@@ -755,9 +785,11 @@ async def handle_autopilot_failure(
         _append_log(state, 'info', msg)
         state.budget_exhausted = True
     else:
+        snippet = _extract_output_snippet(output_text)
+        snippet_part = f" \u2014 {snippet}" if snippet else ""
         msg = (
             f"Feature #{feature_id} failed: process exited with code {exit_code}"
-            " and was not marked as passing"
+            f" and was not marked as passing{snippet_part}"
         )
         state.last_error = msg
         _append_log(state, 'error', msg)

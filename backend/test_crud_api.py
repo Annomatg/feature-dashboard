@@ -2990,6 +2990,94 @@ class TestHandleAutopilotFailureRateLimit:
         assert state.budget_exhausted is False
         assert "not marked as passing" in state.last_error
 
+    # ── context/token limit patterns ──────────────────────────────────────────
+
+    def test_context_length_exceeded_triggers_rate_limit_path(self):
+        """context_length_exceeded in output is treated as a limit."""
+        state = self._run(output_text='{"type":"context_length_exceeded","message":"too long"}')
+        assert state.budget_exhausted is True
+
+    def test_prompt_is_too_long_triggers_rate_limit_path(self):
+        """'prompt is too long' in output is treated as a limit."""
+        state = self._run(output_text="Error: prompt is too long for this model")
+        assert state.budget_exhausted is True
+
+    def test_input_too_long_triggers_rate_limit_path(self):
+        """'input_too_long' in output is treated as a limit."""
+        state = self._run(output_text='{"error":"input_too_long"}')
+        assert state.budget_exhausted is True
+
+    def test_too_many_tokens_triggers_rate_limit_path(self):
+        """'too many tokens' in output is treated as a limit."""
+        state = self._run(output_text="Request failed: too many tokens in input")
+        assert state.budget_exhausted is True
+
+    def test_context_limit_patterns_are_case_insensitive(self):
+        """Context limit patterns are matched case-insensitively."""
+        state = self._run(output_text="CONTEXT_LENGTH_EXCEEDED")
+        assert state.budget_exhausted is True
+
+    # ── output snippet in generic error ───────────────────────────────────────
+
+    def test_generic_failure_includes_output_snippet_in_last_error(self):
+        """When generic failure, last_error includes trailing process output."""
+        state = self._run(exit_code=1, output_text="line1\nfailed because of X\n")
+        assert state.last_error is not None
+        assert "not marked as passing" in state.last_error
+        assert "failed because of X" in state.last_error
+
+    def test_generic_failure_empty_output_no_snippet(self):
+        """When output_text is empty, no snippet separator is added."""
+        state = self._run(exit_code=1, output_text="")
+        assert state.last_error is not None
+        assert "\u2014" not in state.last_error  # em-dash separator absent
+
+    def test_generic_failure_snippet_truncated_to_max_chars(self):
+        """Snippet is truncated when output lines are very long."""
+        long_line = "x" * 500
+        state = self._run(exit_code=1, output_text=long_line)
+        assert state.last_error is not None
+        # last_error must contain the snippet but not the full 500-char line
+        snippet_start = state.last_error.find("\u2014")
+        if snippet_start != -1:
+            snippet_part = state.last_error[snippet_start:]
+            assert len(snippet_part) <= 210  # 200 chars + em-dash + space
+
+    def test_generic_failure_uses_last_lines_of_output(self):
+        """Only the trailing non-empty lines of output appear in the error."""
+        output = "early line\nmiddle line\nlast error line"
+        state = self._run(exit_code=1, output_text=output)
+        assert "last error line" in state.last_error
+
+    # ── _extract_output_snippet unit tests ────────────────────────────────────
+
+    def test_extract_output_snippet_empty(self):
+        from backend.main import _extract_output_snippet
+        assert _extract_output_snippet("") == ""
+
+    def test_extract_output_snippet_blank_lines_ignored(self):
+        from backend.main import _extract_output_snippet
+        assert _extract_output_snippet("\n\n\n") == ""
+
+    def test_extract_output_snippet_single_line(self):
+        from backend.main import _extract_output_snippet
+        assert _extract_output_snippet("hello world") == "hello world"
+
+    def test_extract_output_snippet_respects_max_lines(self):
+        from backend.main import _extract_output_snippet
+        out = "\n".join(f"line{i}" for i in range(10))
+        result = _extract_output_snippet(out, max_lines=3)
+        assert "line9" in result
+        assert "line8" in result
+        assert "line7" in result
+        assert "line6" not in result
+
+    def test_extract_output_snippet_truncates_long_output(self):
+        from backend.main import _extract_output_snippet
+        result = _extract_output_snippet("x" * 500, max_chars=50)
+        assert len(result) <= 50
+        assert result.endswith("\u2026")  # ellipsis
+
     # ── constants exported ─────────────────────────────────────────────────────
 
     def test_claude_session_limit_exit_codes_contains_130(self):
@@ -3003,6 +3091,14 @@ class TestHandleAutopilotFailureRateLimit:
     def test_claude_rate_limit_patterns_contains_usage_limit(self):
         from backend.main import CLAUDE_RATE_LIMIT_PATTERNS
         assert "usage limit" in CLAUDE_RATE_LIMIT_PATTERNS
+
+    def test_claude_rate_limit_patterns_contains_context_length_exceeded(self):
+        from backend.main import CLAUDE_RATE_LIMIT_PATTERNS
+        assert "context_length_exceeded" in CLAUDE_RATE_LIMIT_PATTERNS
+
+    def test_claude_rate_limit_patterns_contains_prompt_is_too_long(self):
+        from backend.main import CLAUDE_RATE_LIMIT_PATTERNS
+        assert "prompt is too long" in CLAUDE_RATE_LIMIT_PATTERNS
 
 
 class TestHandleAllComplete:
