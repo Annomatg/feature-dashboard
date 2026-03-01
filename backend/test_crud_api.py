@@ -325,6 +325,88 @@ class TestUpdateFeature:
 
         assert before == after
 
+    def test_update_feature_description_populates_description_tokens(self, client):
+        """Updating a feature's description inserts tokens from the new description into description_tokens."""
+        import backend.main as main_module
+
+        response = client.put("/api/features/1", json={
+            "description": "Zephyr Quartz Vortex updated description"
+        })
+        assert response.status_code == 200
+
+        session = main_module.get_session()
+        try:
+            tokens = {row.token: row.usage_count for row in session.query(DescriptionToken).all()}
+        finally:
+            session.close()
+
+        assert "zephyr" in tokens
+        assert "quartz" in tokens
+        assert "vortex" in tokens
+        assert tokens["zephyr"] >= 1
+        assert tokens["quartz"] >= 1
+        assert tokens["vortex"] >= 1
+
+    def test_update_feature_description_does_not_decrement_old_tokens(self, client):
+        """Old tokens from the previous description are not decremented when description is updated (append-only)."""
+        import backend.main as main_module
+
+        # Seed a known token by creating a feature with a unique description
+        client.post("/api/features", json={
+            "category": "Testing",
+            "name": "Retention Test Feature",
+            "description": "Unique OldDescToken retention test",
+            "steps": ["s"],
+        })
+
+        session = main_module.get_session()
+        try:
+            old_row = session.query(DescriptionToken).filter(DescriptionToken.token == "olddesctoken").first()
+            old_count = old_row.usage_count if old_row else 0
+        finally:
+            session.close()
+
+        assert old_count >= 1
+
+        # Now update that feature's description to something without "olddesctoken"
+        response = client.get("/api/features")
+        feature_id = response.json()[-1]["id"]
+
+        client.put(f"/api/features/{feature_id}", json={"description": "Brand new different description text"})
+
+        session = main_module.get_session()
+        try:
+            updated_row = session.query(DescriptionToken).filter(DescriptionToken.token == "olddesctoken").first()
+            new_count = updated_row.usage_count if updated_row else 0
+        finally:
+            session.close()
+
+        # usage_count must not have decreased
+        assert new_count == old_count
+
+    def test_update_feature_without_description_does_not_touch_description_tokens(self, client):
+        """Updating fields other than description does not modify description_tokens."""
+        import backend.main as main_module
+
+        # Capture current description_tokens state
+        session = main_module.get_session()
+        try:
+            before = {row.token: row.usage_count for row in session.query(DescriptionToken).all()}
+        finally:
+            session.close()
+
+        # Update name only (no description change)
+        response = client.put("/api/features/1", json={"name": "Only Name Updated Here"})
+        assert response.status_code == 200
+
+        session = main_module.get_session()
+        try:
+            after = {row.token: row.usage_count for row in session.query(DescriptionToken).all()}
+        finally:
+            session.close()
+
+        assert before == after
+
     def test_create_feature_populates_description_tokens(self, client):
         """Creating a feature inserts tokens from its description into description_tokens."""
         import backend.main as main_module

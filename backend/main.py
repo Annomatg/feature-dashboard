@@ -1837,6 +1837,16 @@ async def update_feature(feature_id: int, request: UpdateFeatureRequest):
                     session.add(NameToken(token=token, usage_count=1))
             session.commit()
 
+        # Upsert description_tokens if description was updated (append-only, no decrement)
+        if request.description is not None:
+            for token in normalize_tokens(feature.description):
+                existing = session.query(DescriptionToken).filter(DescriptionToken.token == token).first()
+                if existing:
+                    existing.usage_count += 1
+                else:
+                    session.add(DescriptionToken(token=token, usage_count=1))
+            session.commit()
+
         return feature_to_response(feature, get_comment_counts(session, [feature.id]))
     except HTTPException:
         raise
