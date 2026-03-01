@@ -3,10 +3,13 @@ import { useState, useRef, useCallback, forwardRef, useImperativeHandle } from '
 /**
  * GhostTextArea — wraps a <textarea> with inline ghost-text autocomplete.
  *
- * On desktop (>= md / 768 px) it fetches the top suggestion from
+ * On desktop (>= md / 768 px) it fetches up to 5 suggestions from
  * /api/autocomplete/description for the token currently being typed at the
  * cursor, then renders the suffix as a semi-transparent overlay so it looks
  * like an inline hint.  Pressing Tab accepts the suggestion.
+ *
+ * ArrowDown/ArrowUp cycle through alternative suggestions when multiple are
+ * available. The cycle wraps around.
  *
  * On mobile (< md) the overlay is hidden via Tailwind's `hidden md:block`.
  */
@@ -14,14 +17,20 @@ const GhostTextArea = forwardRef(function GhostTextArea(
   { value, onChange, className, onKeyDown, onBlur, rows = 4, ...props },
   ref
 ) {
-  const [ghostSuffix, setGhostSuffix] = useState('')
+  const [suggestions, setSuggestions] = useState([])
+  const [suggestionIndex, setSuggestionIndex] = useState(0)
+  const [tokenLength, setTokenLength] = useState(0)
   const textareaRef = useRef(null)
   const abortRef = useRef(null)
 
   // Forward the ref to the underlying textarea element
   useImperativeHandle(ref, () => textareaRef.current)
 
-  // Fetch the top autocomplete suggestion for a given token prefix
+  // Derive ghost suffix from the active suggestion
+  const activeSuggestion = suggestions[suggestionIndex] ?? ''
+  const ghostSuffix = activeSuggestion ? activeSuggestion.slice(tokenLength) : ''
+
+  // Fetch autocomplete suggestions for a given token prefix
   const fetchSuggestion = useCallback(async (token) => {
     if (abortRef.current) abortRef.current.abort()
     abortRef.current = new AbortController()
@@ -31,16 +40,18 @@ const GhostTextArea = forwardRef(function GhostTextArea(
         { signal: abortRef.current.signal }
       )
       const data = await res.json()
-      if (data.suggestions?.length > 0) {
-        const top = data.suggestions[0]
-        if (top.toLowerCase().startsWith(token.toLowerCase())) {
-          setGhostSuffix(top.slice(token.length))
-          return
-        }
-      }
-      setGhostSuffix('')
+      const valid = (data.suggestions ?? []).filter(s =>
+        s.toLowerCase().startsWith(token.toLowerCase())
+      )
+      setSuggestions(valid)
+      setSuggestionIndex(0)
+      setTokenLength(token.length)
     } catch (e) {
-      if (e.name !== 'AbortError') setGhostSuffix('')
+      if (e.name !== 'AbortError') {
+        setSuggestions([])
+        setSuggestionIndex(0)
+        setTokenLength(0)
+      }
     }
   }, [])
 
@@ -48,7 +59,9 @@ const GhostTextArea = forwardRef(function GhostTextArea(
     const newValue = e.target.value
     const cursorPos = e.target.selectionStart
     onChange(e)
-    setGhostSuffix('')
+    setSuggestions([])
+    setSuggestionIndex(0)
+    setTokenLength(0)
 
     // Extract the token immediately before the cursor (last non-whitespace run)
     const textBeforeCursor = newValue.slice(0, cursorPos)
@@ -61,23 +74,38 @@ const GhostTextArea = forwardRef(function GhostTextArea(
   }
 
   const handleKeyDown = (e) => {
-    if (ghostSuffix && e.key === 'Tab') {
-      e.preventDefault()
-      const newValue = value + ghostSuffix
-      onChange({ target: { value: newValue } })
-      setGhostSuffix('')
-      // Position cursor after the inserted token once React has re-rendered
-      requestAnimationFrame(() => {
-        if (textareaRef.current) {
-          textareaRef.current.setSelectionRange(newValue.length, newValue.length)
+    if (suggestions.length > 0) {
+      if (e.key === 'Tab') {
+        e.preventDefault()
+        const chosen = suggestions[suggestionIndex]
+        if (chosen) {
+          const newValue = value + ghostSuffix
+          onChange({ target: { value: newValue } })
+          setSuggestions([])
+          setSuggestionIndex(0)
+          setTokenLength(0)
+          // Position cursor after the inserted token once React has re-rendered
+          requestAnimationFrame(() => {
+            if (textareaRef.current) {
+              textareaRef.current.setSelectionRange(newValue.length, newValue.length)
+            }
+          })
         }
-      })
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setSuggestionIndex(i => (i + 1) % suggestions.length)
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setSuggestionIndex(i => (i - 1 + suggestions.length) % suggestions.length)
+      }
     }
     onKeyDown?.(e)
   }
 
   const handleBlur = (e) => {
-    setGhostSuffix('')
+    setSuggestions([])
+    setSuggestionIndex(0)
+    setTokenLength(0)
     onBlur?.(e)
   }
 

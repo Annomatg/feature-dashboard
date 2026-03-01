@@ -99,6 +99,63 @@ test.describe('Description field ghost text (desktop)', () => {
     expect(cursorPos).toBe('feature'.length)
   })
 
+  test('ArrowDown cycles to next suggestion in description field', async ({ page }) => {
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const descTextarea = page.locator('textarea[placeholder*="Describe"]')
+    await descTextarea.fill('imp')
+
+    const ghost = page.locator('[data-testid="description-ghost-text"]')
+    await expect(ghost).toBeVisible({ timeout: 3000 })
+
+    // First suggestion: "implement" → suffix "lement"
+    await expect(ghost).toContainText('lement')
+
+    // Press ArrowDown — should cycle to second suggestion "implementation" → suffix "lementation"
+    await descTextarea.press('ArrowDown')
+    await expect(ghost).toContainText('lementation')
+  })
+
+  test('ArrowUp cycles back to previous suggestion in description field', async ({ page }) => {
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const descTextarea = page.locator('textarea[placeholder*="Describe"]')
+    await descTextarea.fill('imp')
+
+    const ghost = page.locator('[data-testid="description-ghost-text"]')
+    await expect(ghost).toBeVisible({ timeout: 3000 })
+
+    // First suggestion: "implement"
+    await expect(ghost).toContainText('lement')
+
+    // ArrowDown to "implementation"
+    await descTextarea.press('ArrowDown')
+    await expect(ghost).toContainText('lementation')
+
+    // ArrowUp back to "implement"
+    await descTextarea.press('ArrowUp')
+    await expect(ghost).toContainText('lement')
+  })
+
+  test('Tab accepts the currently cycled suggestion in description field', async ({ page }) => {
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const descTextarea = page.locator('textarea[placeholder*="Describe"]')
+    await descTextarea.fill('imp')
+
+    const ghost = page.locator('[data-testid="description-ghost-text"]')
+    await expect(ghost).toBeVisible({ timeout: 3000 })
+
+    // Cycle to second suggestion "implementation"
+    await descTextarea.press('ArrowDown')
+    await expect(ghost).toContainText('lementation')
+
+    // Accept with Tab — textarea should contain "implementation"
+    await descTextarea.press('Tab')
+    await expect(descTextarea).toHaveValue('implementation')
+    await expect(ghost).not.toBeVisible()
+  })
+
   test('ghost text not visible on mobile viewport in description field', async ({ page }) => {
     // Set a narrow (mobile) viewport — below the md breakpoint (768px)
     await page.setViewportSize({ width: 375, height: 812 })

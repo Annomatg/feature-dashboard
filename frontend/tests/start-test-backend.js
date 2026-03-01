@@ -81,28 +81,35 @@ test_features = [
 for feature in test_features:
     session.add(feature)
 
-# Seed name tokens for autocomplete ghost-text tests
+# Seed name tokens for autocomplete ghost-text tests.
+# All tokens are lowercase — consistent with normalize_tokens() output so that
+# parallel tests creating features don't create duplicate mixed-case rows.
+# 'feature'/'features' share the 'fea' prefix — enables ArrowDown cycling tests.
 name_tokens = [
-    NameToken(token='Feature', usage_count=10),
-    NameToken(token='Frontend', usage_count=8),
-    NameToken(token='Backend', usage_count=7),
-    NameToken(token='Authentication', usage_count=6),
-    NameToken(token='Dashboard', usage_count=5),
-    NameToken(token='Configuration', usage_count=4),
-    NameToken(token='Management', usage_count=3),
+    NameToken(token='feature', usage_count=50),
+    NameToken(token='features', usage_count=40),
+    NameToken(token='frontend', usage_count=8),
+    NameToken(token='backend', usage_count=7),
+    NameToken(token='authentication', usage_count=6),
+    NameToken(token='dashboard', usage_count=5),
+    NameToken(token='configuration', usage_count=4),
+    NameToken(token='management', usage_count=3),
 ]
 for token in name_tokens:
     session.add(token)
 
-# Seed description tokens for autocomplete ghost-text tests
+# Seed description tokens for autocomplete ghost-text tests.
+# All tokens are lowercase — consistent with normalize_tokens() output.
+# 'implement'/'implementation' share the 'imp' prefix — enables ArrowDown cycling tests.
 description_tokens = [
-    DescriptionToken(token='feature', usage_count=10),
+    DescriptionToken(token='feature', usage_count=50),
     DescriptionToken(token='description', usage_count=8),
-    DescriptionToken(token='implement', usage_count=7),
-    DescriptionToken(token='integration', usage_count=6),
-    DescriptionToken(token='backend', usage_count=5),
-    DescriptionToken(token='frontend', usage_count=4),
-    DescriptionToken(token='authentication', usage_count=3),
+    DescriptionToken(token='implement', usage_count=40),
+    DescriptionToken(token='implementation', usage_count=30),
+    DescriptionToken(token='integration', usage_count=5),
+    DescriptionToken(token='backend', usage_count=4),
+    DescriptionToken(token='frontend', usage_count=3),
+    DescriptionToken(token='authentication', usage_count=2),
 ]
 for token in description_tokens:
     session.add(token)

@@ -98,6 +98,89 @@ test.describe('Name field ghost text (desktop)', () => {
     expect(cursorPos).toBe('Feature'.length)
   })
 
+  test('ArrowDown cycles to the next suggestion', async ({ page }) => {
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const titleInput = page.locator('input[placeholder*="Enter feature title"]')
+    await titleInput.fill('Fea')
+
+    const ghost = page.locator('[data-testid="name-ghost-text"]')
+    await expect(ghost).toBeVisible({ timeout: 3000 })
+
+    // First suggestion: "Feature" → suffix "ture"
+    await expect(ghost).toContainText('ture')
+
+    // Press ArrowDown — should cycle to second suggestion "Features" → suffix "tures"
+    await titleInput.press('ArrowDown')
+    await expect(ghost).toContainText('tures')
+  })
+
+  test('ArrowUp cycles back to the previous suggestion', async ({ page }) => {
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const titleInput = page.locator('input[placeholder*="Enter feature title"]')
+    await titleInput.fill('Fea')
+
+    const ghost = page.locator('[data-testid="name-ghost-text"]')
+    await expect(ghost).toBeVisible({ timeout: 3000 })
+
+    // First suggestion: "Feature"
+    await expect(ghost).toContainText('ture')
+
+    // ArrowDown to second suggestion "Features"
+    await titleInput.press('ArrowDown')
+    await expect(ghost).toContainText('tures')
+
+    // ArrowUp back to first suggestion "Feature"
+    await titleInput.press('ArrowUp')
+    await expect(ghost).toContainText('ture')
+  })
+
+  test('ArrowDown wraps around after last suggestion', async ({ page }) => {
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const titleInput = page.locator('input[placeholder*="Enter feature title"]')
+    await titleInput.fill('Fea')
+
+    const ghost = page.locator('[data-testid="name-ghost-text"]')
+    await expect(ghost).toBeVisible({ timeout: 3000 })
+
+    // Get the first ghost text content
+    await expect(ghost).toContainText('ture')
+
+    // Count suggestions by cycling until we wrap back to the first
+    // Cycle until we see "ture" again (without "s") after pressing ArrowDown multiple times
+    let wrappedBack = false
+    for (let i = 0; i < 10; i++) {
+      await titleInput.press('ArrowDown')
+      const text = await ghost.textContent()
+      if (text?.includes('ture') && !text?.includes('tures')) {
+        wrappedBack = true
+        break
+      }
+    }
+    expect(wrappedBack).toBe(true)
+  })
+
+  test('Tab accepts the currently cycled suggestion', async ({ page }) => {
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const titleInput = page.locator('input[placeholder*="Enter feature title"]')
+    await titleInput.fill('Fea')
+
+    const ghost = page.locator('[data-testid="name-ghost-text"]')
+    await expect(ghost).toBeVisible({ timeout: 3000 })
+
+    // Cycle to second suggestion "Features"
+    await titleInput.press('ArrowDown')
+    await expect(ghost).toContainText('tures')
+
+    // Accept with Tab — input should contain "Features"
+    await titleInput.press('Tab')
+    await expect(titleInput).toHaveValue('Features')
+    await expect(ghost).not.toBeVisible()
+  })
+
   test('ghost text not visible on mobile viewport', async ({ page }) => {
     // Set a narrow (mobile) viewport — below the md breakpoint (768px)
     await page.setViewportSize({ width: 375, height: 812 })
