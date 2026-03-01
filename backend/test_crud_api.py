@@ -5518,5 +5518,123 @@ class TestAutocompleteDescriptionEndpoint:
         assert response.json() == {"suggestions": []}
 
 
+class TestAutocompletePerformance:
+    """Performance tests ensuring autocomplete endpoints respond in < 20ms."""
+
+    @pytest.fixture
+    def perf_client(self, monkeypatch):
+        """Test client pre-loaded with 1000 tokens for performance testing."""
+        import backend.main as main_module
+
+        temp_dir = tempfile.mkdtemp()
+        temp_db_path = Path(temp_dir) / "features.db"
+        engine, session_maker = create_database(Path(temp_dir))
+
+        session = session_maker()
+        try:
+            session.add(Feature(id=1, priority=100, category="Test", name="Feature 1",
+                                description="Test", steps=["Step 1"], passes=False, in_progress=False))
+            for i in range(1000):
+                session.add(NameToken(token=f"perf{i:04d}", usage_count=i))
+            for i in range(1000):
+                session.add(DescriptionToken(token=f"desc{i:04d}", usage_count=i))
+            session.commit()
+        finally:
+            session.close()
+
+        monkeypatch.setattr(main_module, '_session_maker', session_maker)
+        monkeypatch.setattr(main_module, '_current_db_path', temp_db_path)
+        monkeypatch.setattr(main_module.asyncio, 'create_task',
+                            lambda coro: (coro.close(), None)[1])
+
+        yield TestClient(app), engine
+
+        engine.dispose()
+        try:
+            shutil.rmtree(temp_dir)
+        except PermissionError:
+            pass
+
+    def test_name_endpoint_executes_single_query(self, perf_client):
+        """Name autocomplete endpoint executes exactly one SQL SELECT query."""
+        from sqlalchemy import event as sa_event
+
+        client, engine = perf_client
+        query_count = [0]
+
+        def count_selects(conn, cursor, statement, parameters, context, executemany):
+            if statement.strip().upper().startswith('SELECT'):
+                query_count[0] += 1
+
+        sa_event.listen(engine, 'before_cursor_execute', count_selects)
+        try:
+            response = client.get("/api/autocomplete/name?prefix=per")
+            assert response.status_code == 200
+        finally:
+            sa_event.remove(engine, 'before_cursor_execute', count_selects)
+
+        assert query_count[0] == 1, f"Expected 1 SELECT query, got {query_count[0]}"
+
+    def test_description_endpoint_executes_single_query(self, perf_client):
+        """Description autocomplete endpoint executes exactly one SQL SELECT query."""
+        from sqlalchemy import event as sa_event
+
+        client, engine = perf_client
+        query_count = [0]
+
+        def count_selects(conn, cursor, statement, parameters, context, executemany):
+            if statement.strip().upper().startswith('SELECT'):
+                query_count[0] += 1
+
+        sa_event.listen(engine, 'before_cursor_execute', count_selects)
+        try:
+            response = client.get("/api/autocomplete/description?prefix=des")
+            assert response.status_code == 200
+        finally:
+            sa_event.remove(engine, 'before_cursor_execute', count_selects)
+
+        assert query_count[0] == 1, f"Expected 1 SELECT query, got {query_count[0]}"
+
+    def test_name_endpoint_responds_under_20ms(self, perf_client):
+        """Name autocomplete endpoint responds in < 20ms for warm requests."""
+        import time
+
+        client, _ = perf_client
+
+        # Warm-up to prime SQLite page cache and Python import caches
+        client.get("/api/autocomplete/name?prefix=per")
+
+        times = []
+        for _ in range(5):
+            start = time.perf_counter()
+            response = client.get("/api/autocomplete/name?prefix=per")
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            times.append(elapsed_ms)
+            assert response.status_code == 200
+
+        avg_ms = sum(times) / len(times)
+        assert avg_ms < 20, f"Average response time {avg_ms:.1f}ms exceeds 20ms limit"
+
+    def test_description_endpoint_responds_under_20ms(self, perf_client):
+        """Description autocomplete endpoint responds in < 20ms for warm requests."""
+        import time
+
+        client, _ = perf_client
+
+        # Warm-up to prime SQLite page cache and Python import caches
+        client.get("/api/autocomplete/description?prefix=des")
+
+        times = []
+        for _ in range(5):
+            start = time.perf_counter()
+            response = client.get("/api/autocomplete/description?prefix=des")
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            times.append(elapsed_ms)
+            assert response.status_code == 200
+
+        avg_ms = sum(times) / len(times)
+        assert avg_ms < 20, f"Average response time {avg_ms:.1f}ms exceeds 20ms limit"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
