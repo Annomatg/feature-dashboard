@@ -216,3 +216,147 @@ test.describe('Name field ghost text (desktop)', () => {
     await expect(ghost).not.toBeVisible()
   })
 })
+
+test.describe('Name field mobile suggestion list', () => {
+  test('shows suggestion list below input on mobile when typing 3+ chars', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 })
+    await page.goto('/')
+    await page.waitForSelector('text=FEATURE DASHBOARD')
+
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const titleInput = page.locator('input[placeholder*="Enter feature title"]')
+    await expect(titleInput).toBeVisible()
+
+    // Type "Fea" — matches seeded tokens "feature" and "features"
+    await titleInput.fill('Fea')
+
+    // Suggestion list should appear below the input on mobile
+    const suggestionList = page.locator('[data-testid="name-suggestion-list"]')
+    await expect(suggestionList).toBeVisible({ timeout: 3000 })
+
+    // Should show at least one suggestion chip
+    const chips = suggestionList.locator('button')
+    expect(await chips.count()).toBeGreaterThanOrEqual(1)
+  })
+
+  test('suggestion list shows up to 5 chips on mobile', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 })
+    await page.goto('/')
+    await page.waitForSelector('text=FEATURE DASHBOARD')
+
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const titleInput = page.locator('input[placeholder*="Enter feature title"]')
+    await titleInput.fill('Fea')
+
+    const suggestionList = page.locator('[data-testid="name-suggestion-list"]')
+    await expect(suggestionList).toBeVisible({ timeout: 3000 })
+
+    // At most 5 chips should be shown
+    const chips = suggestionList.locator('button')
+    expect(await chips.count()).toBeLessThanOrEqual(5)
+  })
+
+  test('tapping a suggestion chip fills the name input on mobile', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 })
+    await page.goto('/')
+    await page.waitForSelector('text=FEATURE DASHBOARD')
+
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const titleInput = page.locator('input[placeholder*="Enter feature title"]')
+    await titleInput.fill('Fea')
+
+    const suggestionList = page.locator('[data-testid="name-suggestion-list"]')
+    await expect(suggestionList).toBeVisible({ timeout: 3000 })
+
+    // Read the first chip's text before clicking
+    const firstChip = suggestionList.locator('button').first()
+    const chipText = await firstChip.textContent()
+
+    // Click the chip
+    await firstChip.click()
+
+    // Input should now contain the suggestion text (case-insensitive — the DB token
+    // is lowercase but typed prefix retains original case, so comparison is case-insensitive)
+    const inputValue = await titleInput.inputValue()
+    expect(inputValue.toLowerCase()).toContain(chipText.toLowerCase())
+
+    // Suggestion list should be gone after selection
+    await expect(suggestionList).not.toBeVisible()
+  })
+
+  test('suggestion list disappears when input is cleared on mobile', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 })
+    await page.goto('/')
+    await page.waitForSelector('text=FEATURE DASHBOARD')
+
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const titleInput = page.locator('input[placeholder*="Enter feature title"]')
+    await titleInput.fill('Fea')
+
+    const suggestionList = page.locator('[data-testid="name-suggestion-list"]')
+    await expect(suggestionList).toBeVisible({ timeout: 3000 })
+
+    // Clear the input
+    await titleInput.fill('')
+
+    // Suggestion list should disappear
+    await expect(suggestionList).not.toBeVisible()
+  })
+
+  test('suggestion list does not appear when prefix is shorter than 3 chars on mobile', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 })
+    await page.goto('/')
+    await page.waitForSelector('text=FEATURE DASHBOARD')
+
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const titleInput = page.locator('input[placeholder*="Enter feature title"]')
+    // Only 2 chars — should not trigger suggestions
+    await titleInput.fill('Fe')
+
+    await page.waitForTimeout(300)
+
+    const suggestionList = page.locator('[data-testid="name-suggestion-list"]')
+    await expect(suggestionList).not.toBeVisible()
+  })
+
+  test('suggestion list is hidden on desktop viewport', async ({ page }) => {
+    // Desktop viewport — suggestion list uses md:hidden
+    await page.goto('/')
+    await page.waitForSelector('text=FEATURE DASHBOARD')
+
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const titleInput = page.locator('input[placeholder*="Enter feature title"]')
+    await titleInput.fill('Fea')
+
+    await page.waitForTimeout(500)
+
+    const suggestionList = page.locator('[data-testid="name-suggestion-list"]')
+    await expect(suggestionList).not.toBeVisible()
+  })
+
+  test('suggestion list is positioned below the input on mobile', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 })
+    await page.goto('/')
+    await page.waitForSelector('text=FEATURE DASHBOARD')
+
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const titleInput = page.locator('input[placeholder*="Enter feature title"]')
+    await titleInput.fill('Fea')
+
+    const suggestionList = page.locator('[data-testid="name-suggestion-list"]')
+    await expect(suggestionList).toBeVisible({ timeout: 3000 })
+
+    // Verify the suggestion list is below (higher Y coordinate) the input
+    const inputBox = await titleInput.boundingBox()
+    const listBox = await suggestionList.boundingBox()
+
+    expect(listBox.y).toBeGreaterThan(inputBox.y + inputBox.height - 5)
+  })
+})
