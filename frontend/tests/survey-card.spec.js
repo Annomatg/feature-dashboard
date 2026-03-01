@@ -207,3 +207,44 @@ test.describe('SurveyCard — mixed options with (type in browser)', () => {
     await expect(page.getByTestId('last-answer')).not.toContainText('type in browser')
   })
 })
+
+test.describe('SurveyCard — markdown rendering', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/survey-card-test?q=markdown')
+    await page.waitForSelector('[data-testid="survey-card"]', { timeout: 10000 })
+  })
+
+  test('renders **bold** text as <strong> elements', async ({ page }) => {
+    const heading = page.getByTestId('survey-question')
+    // Bold words should be wrapped in <strong> tags
+    const strongTags = heading.locator('strong')
+    await expect(strongTags).toHaveCount(3)
+    await expect(strongTags.nth(0)).toContainText('Easy deployment')
+    await expect(strongTags.nth(1)).toContainText('Refactoring plan')
+    await expect(strongTags.nth(2)).toContainText('New code checker')
+  })
+
+  test('renders newlines as <br> elements', async ({ page }) => {
+    const heading = page.getByTestId('survey-question')
+    // The text contains multiple \n — verify <br> tags are present
+    const brCount = await heading.locator('br').count()
+    expect(brCount).toBeGreaterThanOrEqual(4)
+  })
+
+  test('question text is not rendered as a flat single line', async ({ page }) => {
+    // The raw text has \n separators — confirm the heading does NOT show all
+    // text crammed together on one line by checking that "1." and "2." appear
+    // in the rendered output (they would be present even if newlines collapse)
+    // but more importantly that <br> elements are present (tested above).
+    const heading = page.getByTestId('survey-question')
+    await expect(heading).toContainText('1.')
+    await expect(heading).toContainText('2.')
+    await expect(heading).toContainText('3.')
+  })
+
+  test('options are still selectable after markdown question is rendered', async ({ page }) => {
+    await page.getByTestId('survey-option-0').click()
+    await expect(page.getByTestId('survey-option-0')).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByTestId('last-answer')).toContainText('Easy deployment')
+  })
+})

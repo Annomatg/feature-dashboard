@@ -14,6 +14,10 @@ const QUESTIONS = {
     text: 'Choose a category or describe your own:',
     options: ['Backend', 'Frontend', '(type in browser)'],
   },
+  'markdown': {
+    text: 'Here are three directions:\n\n1. **Easy deployment** - Roll out this MCP\n2. **Refactoring plan** - Analyze your project\n3. **New code checker** - Check new changes\n\nWhich direction interests you most?',
+    options: ['Easy deployment', 'Refactoring plan', 'New code checker'],
+  },
 }
 
 /**

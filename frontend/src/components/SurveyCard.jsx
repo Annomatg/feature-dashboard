@@ -12,6 +12,31 @@ import { useState, useRef, useEffect } from 'react'
 /** Options matching this pattern are free-text prompts, not real choices. */
 const isTypeInOption = (opt) => /^\(type/i.test(opt.trim())
 
+/**
+ * Render a minimal subset of Markdown inline:
+ *   **text**  → <strong>text</strong>
+ *   \n        → <br />
+ *
+ * Returns an array of React nodes suitable for use as children.
+ */
+function renderMarkdown(text) {
+  if (!text) return null
+  return text.split('\n').map((line, lineIdx, lines) => {
+    const segments = line.split(/(\*\*[^*\n]+\*\*)/g)
+    const rendered = segments.map((seg, segIdx) =>
+      seg.startsWith('**') && seg.endsWith('**') && seg.length > 4
+        ? <strong key={segIdx}>{seg.slice(2, -2)}</strong>
+        : seg
+    )
+    return (
+      <span key={lineIdx}>
+        {rendered}
+        {lineIdx < lines.length - 1 && <br />}
+      </span>
+    )
+  })
+}
+
 function SurveyCard({ question, onAnswer, accentColor = '#3b82f6' }) {
   const options = question?.options ?? []
 
@@ -68,7 +93,7 @@ function SurveyCard({ question, onAnswer, accentColor = '#3b82f6' }) {
         className="text-xl font-semibold text-text-primary mb-6 leading-snug"
         data-testid="survey-question"
       >
-        {question?.text}
+        {renderMarkdown(question?.text)}
       </h2>
 
       {/* Option cards — hidden when all options are free-text placeholders */}
