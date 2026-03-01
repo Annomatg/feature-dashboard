@@ -1549,6 +1549,30 @@ def get_autocomplete_name(prefix: str = ""):
         session.close()
 
 
+@app.get("/api/autocomplete/description")
+def get_autocomplete_description(prefix: str = ""):
+    """Return up to 5 description token suggestions matching the given prefix.
+
+    Returns an empty suggestion list if the prefix is shorter than 3 characters.
+    Results are ordered by usage_count descending.
+    """
+    if len(prefix) < 3:
+        return {"suggestions": []}
+
+    session = get_session()
+    try:
+        rows = (
+            session.query(DescriptionToken.token)
+            .filter(DescriptionToken.token.like(f"{prefix}%"))
+            .order_by(DescriptionToken.usage_count.desc())
+            .limit(5)
+            .all()
+        )
+        return {"suggestions": [row.token for row in rows]}
+    finally:
+        session.close()
+
+
 # ---------------------------------------------------------------------------
 # Feature stream — SSE endpoint for immediate board refresh
 # ---------------------------------------------------------------------------

@@ -5438,5 +5438,85 @@ class TestAutocompleteNameEndpoint:
         assert response.json() == {"suggestions": []}
 
 
+class TestAutocompleteDescriptionEndpoint:
+    """Tests for GET /api/autocomplete/description"""
+
+    def test_prefix_too_short_returns_empty(self, client):
+        """Returns empty suggestions when prefix is shorter than 3 characters."""
+        for prefix in ["", "a", "de"]:
+            response = client.get(f"/api/autocomplete/description?prefix={prefix}")
+            assert response.status_code == 200
+            assert response.json() == {"suggestions": []}
+
+    def test_prefix_exact_three_chars_returns_results(self, client):
+        """Returns suggestions when prefix is exactly 3 characters."""
+        import backend.main as main_module
+
+        session = main_module.get_session()
+        try:
+            session.add(DescriptionToken(token="description", usage_count=5))
+            session.add(DescriptionToken(token="descending", usage_count=3))
+            session.add(DescriptionToken(token="desktop", usage_count=1))
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/autocomplete/description?prefix=des")
+        assert response.status_code == 200
+        data = response.json()
+        assert "suggestions" in data
+        assert "description" in data["suggestions"]
+        assert "descending" in data["suggestions"]
+        assert "desktop" in data["suggestions"]
+
+    def test_no_match_returns_empty_array(self, client):
+        """Returns empty suggestions when no token matches the prefix."""
+        response = client.get("/api/autocomplete/description?prefix=xyz")
+        assert response.status_code == 200
+        assert response.json() == {"suggestions": []}
+
+    def test_results_ordered_by_usage_count_desc(self, client):
+        """Suggestions are ordered by usage_count descending."""
+        import backend.main as main_module
+
+        session = main_module.get_session()
+        try:
+            session.add(DescriptionToken(token="implement", usage_count=10))
+            session.add(DescriptionToken(token="improvement", usage_count=20))
+            session.add(DescriptionToken(token="import", usage_count=5))
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/autocomplete/description?prefix=imp")
+        assert response.status_code == 200
+        suggestions = response.json()["suggestions"]
+        # improvement(20) > implement(10) > import(5)
+        assert suggestions.index("improvement") < suggestions.index("implement")
+        assert suggestions.index("implement") < suggestions.index("import")
+
+    def test_returns_at_most_five_suggestions(self, client):
+        """Returns no more than 5 suggestions."""
+        import backend.main as main_module
+
+        session = main_module.get_session()
+        try:
+            for i in range(8):
+                session.add(DescriptionToken(token=f"word{i:02d}x", usage_count=i))
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/autocomplete/description?prefix=wor")
+        assert response.status_code == 200
+        assert len(response.json()["suggestions"]) <= 5
+
+    def test_missing_prefix_returns_empty(self, client):
+        """Returns empty suggestions when prefix parameter is omitted."""
+        response = client.get("/api/autocomplete/description")
+        assert response.status_code == 200
+        assert response.json() == {"suggestions": []}
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
