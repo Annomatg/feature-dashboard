@@ -2764,6 +2764,8 @@ async def interview_question_stream():
                     )
                 elif event["type"] == "answer_received":
                     yield "event: answer_received\ndata: {}\n\n"
+                elif event["type"] == "session_paused":
+                    yield "event: session-paused\ndata: {}\n\n"
                 elif event["type"] == "session_timeout":
                     yield "event: session-timeout\ndata: {}\n\n"
                     break
@@ -2785,9 +2787,12 @@ async def interview_question_stream():
     )
 
 
-# Timeout for GET /api/interview/answer long-poll (seconds).
+# Timeouts for GET /api/interview/answer long-poll (seconds).
 # Override in tests to avoid multi-minute waits.
-_ANSWER_POLL_TIMEOUT_SECONDS: float = 300.0
+#   Soft timeout: no answer yet → broadcast session_paused to browser (session stays alive)
+#   Hard timeout: still no answer → kill session, return 408 to Claude
+_SOFT_TIMEOUT_SECONDS: float = 300.0   # 5 minutes
+_HARD_TIMEOUT_SECONDS: float = 600.0   # 10 minutes
 
 
 @app.get("/api/interview/answer")
@@ -2795,18 +2800,27 @@ async def get_interview_answer():
     """
     Long-polling endpoint that blocks until the user submits an answer.
 
-    Called by Claude Code immediately after posting a question. Waits up to
-    _ANSWER_POLL_TIMEOUT_SECONDS for the browser to submit an answer via
-    POST /api/interview/answer, then returns the value and clears it from
-    session state (consume-once semantics).
+    Called by Claude immediately after posting a question.  Two-phase timeout:
 
-    Returns 408 Request Timeout if no answer arrives within the timeout period.
+    • Soft timeout (_SOFT_TIMEOUT_SECONDS, default 5 min): no answer yet → the
+      server broadcasts a ``session_paused`` SSE event so the browser shows a
+      Revive button.  Session state is preserved; Claude continues blocking on
+      this endpoint.
+
+    • Hard timeout (_HARD_TIMEOUT_SECONDS, default 10 min total): still no
+      answer → session is cleared, ``session_timeout`` is broadcast, and 408 is
+      returned to Claude.
+
+    Returns 408 Request Timeout if no answer arrives within the hard timeout.
     """
     session = get_interview_session()
-    answer = await session.wait_for_answer(timeout=_ANSWER_POLL_TIMEOUT_SECONDS)
+    answer = await session.wait_for_answer(
+        soft_timeout=_SOFT_TIMEOUT_SECONDS,
+        hard_timeout=_HARD_TIMEOUT_SECONDS,
+    )
 
     if answer is None:
-        # Broadcast session-timeout to SSE subscribers and clear state
+        # Hard timeout: broadcast session-timeout and clear state
         await session.timeout()
         raise HTTPException(
             status_code=408,
@@ -2874,6 +2888,30 @@ async def delete_interview_session(features_created: int = 0):
     return {"message": "Session ended"}
 
 
+@app.post("/api/interview/revive", status_code=200)
+async def revive_interview_session():
+    """
+    Revive a paused interview session by re-broadcasting the current question.
+
+    Called by the browser when the user clicks the Revive button after a soft
+    timeout has fired.  Re-sends the active question to all SSE subscribers so
+    the browser can transition back to the active state.
+
+    Returns 404 if no question is currently active (e.g. the hard timeout has
+    already fired and cleared session state).
+    """
+    session = get_interview_session()
+    question = await session.revive()
+
+    if question is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No active question to revive. The session may have timed out.",
+        )
+
+    return {"status": "revived", "question": question}
+
+
 @app.get("/api/interview/debug")
 async def get_interview_debug():
     """
@@ -2908,10 +2946,11 @@ following API.
 |--------|---------|
 | Post question (first) | `curl -s -X POST http://localhost:8000/api/interview/question -H "Content-Type: application/json" -d '{"text":"...","options":[]}'` |
 | Post question (subsequent) | Add `-H "X-Interview-Token: $SESSION_TOKEN"` to every POST |
-| Poll for answer | `curl -s --max-time 310 http://localhost:8000/api/interview/answer` |
+| Poll for answer | `curl -s --max-time 610 http://localhost:8000/api/interview/answer` |
 | End session | `curl -s -X DELETE "http://localhost:8000/api/interview/session?features_created=<N>"` |
 
-Always use `--max-time 310` on the answer poll — the server long-polls up to 300 s.
+Always use `--max-time 610` on the answer poll — the server long-polls up to 600 s total
+(soft pause at 5 min, hard kill at 10 min).
 
 ### Session Token
 

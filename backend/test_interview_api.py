@@ -383,12 +383,15 @@ class TestSessionTokenGuard:
         session = state_module.get_interview_session()
         assert session.owner_token is not None
 
-        original = main_module._ANSWER_POLL_TIMEOUT_SECONDS
-        main_module._ANSWER_POLL_TIMEOUT_SECONDS = 0.05
+        original_soft = main_module._SOFT_TIMEOUT_SECONDS
+        original_hard = main_module._HARD_TIMEOUT_SECONDS
+        main_module._SOFT_TIMEOUT_SECONDS = 0.02
+        main_module._HARD_TIMEOUT_SECONDS = 0.05
         try:
             client.get("/api/interview/answer")  # triggers timeout
         finally:
-            main_module._ANSWER_POLL_TIMEOUT_SECONDS = original
+            main_module._SOFT_TIMEOUT_SECONDS = original_soft
+            main_module._HARD_TIMEOUT_SECONDS = original_hard
 
         assert session.owner_token is None
 
@@ -853,37 +856,46 @@ class TestGetInterviewAnswer:
         # A second call should time out (not return "A" again).
         # Override timeout to 0.05 s so the test finishes quickly.
         import backend.main as main_module
-        original = main_module._ANSWER_POLL_TIMEOUT_SECONDS
-        main_module._ANSWER_POLL_TIMEOUT_SECONDS = 0.05
+        original_soft = main_module._SOFT_TIMEOUT_SECONDS
+        original_hard = main_module._HARD_TIMEOUT_SECONDS
+        main_module._SOFT_TIMEOUT_SECONDS = 0.02
+        main_module._HARD_TIMEOUT_SECONDS = 0.05
         try:
             response = client.get("/api/interview/answer")
             assert response.status_code == 408
         finally:
-            main_module._ANSWER_POLL_TIMEOUT_SECONDS = original
+            main_module._SOFT_TIMEOUT_SECONDS = original_soft
+            main_module._HARD_TIMEOUT_SECONDS = original_hard
 
     def test_get_answer_returns_408_on_timeout(self, client):
-        """Returns 408 when no answer arrives within the timeout."""
+        """Returns 408 when no answer arrives within the hard timeout."""
         import backend.main as main_module
-        original = main_module._ANSWER_POLL_TIMEOUT_SECONDS
-        main_module._ANSWER_POLL_TIMEOUT_SECONDS = 0.05
+        original_soft = main_module._SOFT_TIMEOUT_SECONDS
+        original_hard = main_module._HARD_TIMEOUT_SECONDS
+        main_module._SOFT_TIMEOUT_SECONDS = 0.02
+        main_module._HARD_TIMEOUT_SECONDS = 0.05
         try:
             response = client.get("/api/interview/answer")
             assert response.status_code == 408
             assert "timeout" in response.json()["detail"].lower()
         finally:
-            main_module._ANSWER_POLL_TIMEOUT_SECONDS = original
+            main_module._SOFT_TIMEOUT_SECONDS = original_soft
+            main_module._HARD_TIMEOUT_SECONDS = original_hard
 
     def test_get_answer_timeout_clears_session_state(self, client):
-        """When GET /answer times out, session state is cleared."""
+        """When GET /answer hard-times out, session state is cleared."""
         import backend.main as main_module
         session = state_module.get_interview_session()
         session.active_question = {"text": "Q?", "options": ["A"]}
-        original = main_module._ANSWER_POLL_TIMEOUT_SECONDS
-        main_module._ANSWER_POLL_TIMEOUT_SECONDS = 0.05
+        original_soft = main_module._SOFT_TIMEOUT_SECONDS
+        original_hard = main_module._HARD_TIMEOUT_SECONDS
+        main_module._SOFT_TIMEOUT_SECONDS = 0.02
+        main_module._HARD_TIMEOUT_SECONDS = 0.05
         try:
             client.get("/api/interview/answer")
         finally:
-            main_module._ANSWER_POLL_TIMEOUT_SECONDS = original
+            main_module._SOFT_TIMEOUT_SECONDS = original_soft
+            main_module._HARD_TIMEOUT_SECONDS = original_hard
 
         assert session.active_question is None
         assert session.pending_answer is None
@@ -895,7 +907,8 @@ class TestGetInterviewAnswer:
         """
         import backend.main as main_module
         base_url, _ = live_server
-        main_module._ANSWER_POLL_TIMEOUT_SECONDS = 0.1
+        main_module._SOFT_TIMEOUT_SECONDS = 0.05
+        main_module._HARD_TIMEOUT_SECONDS = 0.1
 
         received: list[tuple[str, dict]] = []
         sse_ready = threading.Event()
@@ -905,7 +918,8 @@ class TestGetInterviewAnswer:
             with httpx.Client(timeout=10.0) as c:
                 with c.stream("GET", f"{base_url}/api/interview/question/stream") as resp:
                     sse_ready.set()
-                    events = _read_sse_events(resp, stop_after=1)
+                    # Soft timeout → session-paused; hard timeout → session-timeout (stream closes)
+                    events = _read_sse_events(resp, stop_after=2)
                     received.extend(events)
             sse_done.set()
 
@@ -914,7 +928,7 @@ class TestGetInterviewAnswer:
         assert sse_ready.wait(timeout=5.0), "SSE stream did not connect"
         time.sleep(0.05)
 
-        # Trigger timeout by calling GET /answer with the short timeout
+        # Trigger hard timeout by calling GET /answer (soft fires first, then hard)
         with httpx.Client(timeout=5.0) as c:
             resp = c.get(f"{base_url}/api/interview/answer")
             assert resp.status_code == 408
@@ -922,8 +936,10 @@ class TestGetInterviewAnswer:
         assert sse_done.wait(timeout=5.0), "SSE stream did not receive session-timeout"
         t.join(timeout=2.0)
 
-        assert len(received) == 1
-        assert received[0][0] == "session-timeout"
+        # Soft timeout fires first (session-paused), then hard timeout (session-timeout)
+        event_types = [e[0] for e in received]
+        assert "session-paused" in event_types
+        assert "session-timeout" in event_types
 
     def test_get_answer_blocks_until_browser_posts_answer(self, live_server):
         """
@@ -932,7 +948,8 @@ class TestGetInterviewAnswer:
         """
         import backend.main as main_module
         base_url, _ = live_server
-        main_module._ANSWER_POLL_TIMEOUT_SECONDS = 10.0
+        main_module._SOFT_TIMEOUT_SECONDS = 10.0
+        main_module._HARD_TIMEOUT_SECONDS = 20.0
 
         # Set up an active question
         with httpx.Client() as c:
@@ -976,7 +993,8 @@ class TestGetInterviewAnswer:
         """
         import backend.main as main_module
         base_url, _ = live_server
-        main_module._ANSWER_POLL_TIMEOUT_SECONDS = 0.1
+        main_module._SOFT_TIMEOUT_SECONDS = 0.05
+        main_module._HARD_TIMEOUT_SECONDS = 0.1
 
         try:
             with httpx.Client(timeout=5.0) as c:
@@ -984,7 +1002,173 @@ class TestGetInterviewAnswer:
 
             assert resp.status_code == 408
         finally:
-            main_module._ANSWER_POLL_TIMEOUT_SECONDS = 300.0
+            main_module._SOFT_TIMEOUT_SECONDS = 300.0
+            main_module._HARD_TIMEOUT_SECONDS = 600.0
+
+
+# ---------------------------------------------------------------------------
+# POST /api/interview/revive tests
+# ---------------------------------------------------------------------------
+
+class TestPostInterviewRevive:
+    """Tests for POST /api/interview/revive."""
+
+    def test_revive_returns_404_when_no_active_question(self, client):
+        """Returns 404 when there is no active question (no session started)."""
+        response = client.post("/api/interview/revive")
+        assert response.status_code == 404
+        assert "active" in response.json()["detail"].lower()
+
+    def test_revive_returns_200_with_question(self, client):
+        """Returns 200 with the current question when an active question exists."""
+        client.post("/api/interview/question", json={
+            "text": "Which approach?",
+            "options": ["Option A", "Option B"],
+        })
+
+        response = client.post("/api/interview/revive")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "revived"
+        assert data["question"]["text"] == "Which approach?"
+        assert data["question"]["options"] == ["Option A", "Option B"]
+
+    def test_revive_does_not_modify_session_state(self, client):
+        """Reviving does not clear or modify the active question."""
+        client.post("/api/interview/question", json={
+            "text": "Stable question",
+            "options": ["Yes", "No"],
+        })
+        session = state_module.get_interview_session()
+        assert session.active_question is not None
+        original_question = dict(session.active_question)
+
+        client.post("/api/interview/revive")
+
+        assert session.active_question == original_question
+
+    def test_revive_re_broadcasts_question_via_sse(self, live_server):
+        """
+        POST /api/interview/revive re-broadcasts the active question to all
+        SSE subscribers (simulating the browser receiving the question after revive).
+        """
+        base_url, _ = live_server
+
+        # Post a question first
+        with httpx.Client() as c:
+            c.post(f"{base_url}/api/interview/question", json={
+                "text": "Revive me!",
+                "options": ["Yes", "No"],
+            })
+
+        received: list[tuple[str, dict]] = []
+        sse_ready = threading.Event()
+        sse_done = threading.Event()
+
+        def read_stream():
+            with httpx.Client(timeout=10.0) as c:
+                with c.stream("GET", f"{base_url}/api/interview/question/stream") as resp:
+                    sse_ready.set()
+                    # Expect: the initial question re-send + the revive question event
+                    events = _read_sse_events(resp, stop_after=2)
+                    received.extend(events)
+            sse_done.set()
+
+        t = threading.Thread(target=read_stream, daemon=True)
+        t.start()
+        assert sse_ready.wait(timeout=5.0), "SSE stream did not connect"
+        time.sleep(0.05)
+
+        # Call revive — should re-broadcast the question
+        with httpx.Client(timeout=5.0) as c:
+            resp = c.post(f"{base_url}/api/interview/revive")
+            assert resp.status_code == 200
+
+        assert sse_done.wait(timeout=5.0), "SSE stream did not receive revived question"
+        t.join(timeout=2.0)
+
+        question_events = [e for e in received if e[0] == "question"]
+        assert len(question_events) >= 1
+        assert question_events[-1][1]["text"] == "Revive me!"
+
+    def test_soft_timeout_broadcasts_session_paused_sse_event(self, live_server):
+        """
+        When the soft timeout fires, a session-paused SSE event is broadcast
+        without terminating the session.
+        """
+        import backend.main as main_module
+        base_url, _ = live_server
+        main_module._SOFT_TIMEOUT_SECONDS = 0.05
+        main_module._HARD_TIMEOUT_SECONDS = 10.0  # keep hard timeout long
+
+        # Post a question to start a session
+        with httpx.Client() as c:
+            c.post(f"{base_url}/api/interview/question", json={
+                "text": "Soft timeout test?",
+                "options": ["A"],
+            })
+
+        received: list[tuple[str, dict]] = []
+        sse_ready = threading.Event()
+        sse_done = threading.Event()
+
+        def read_stream():
+            with httpx.Client(timeout=10.0) as c:
+                with c.stream("GET", f"{base_url}/api/interview/question/stream") as resp:
+                    sse_ready.set()
+                    events = _read_sse_events(resp, stop_after=2)  # initial question + paused
+                    received.extend(events)
+            sse_done.set()
+
+        t = threading.Thread(target=read_stream, daemon=True)
+        t.start()
+        assert sse_ready.wait(timeout=5.0), "SSE stream did not connect"
+
+        # Trigger soft timeout (no answer within 0.05 s)
+        poll_done = threading.Event()
+
+        def do_poll():
+            with httpx.Client(timeout=15.0) as c:
+                c.get(f"{base_url}/api/interview/answer")
+            poll_done.set()
+
+        poll_thread = threading.Thread(target=do_poll, daemon=True)
+        poll_thread.start()
+
+        # Wait for the session-paused event
+        assert sse_done.wait(timeout=5.0), "SSE stream did not receive session-paused"
+        t.join(timeout=2.0)
+
+        paused_events = [e for e in received if e[0] == "session-paused"]
+        assert len(paused_events) >= 1
+
+        # Cleanup: answer the question so the poll thread can finish
+        with httpx.Client() as c:
+            c.post(f"{base_url}/api/interview/answer", json={"value": "A"})
+        poll_thread.join(timeout=5.0)
+        main_module._SOFT_TIMEOUT_SECONDS = 300.0
+        main_module._HARD_TIMEOUT_SECONDS = 600.0
+
+    def test_session_state_preserved_after_soft_timeout(self, client):
+        """
+        After a soft timeout, the session's active question and token are NOT
+        cleared — only a broadcast is sent.
+        """
+        import backend.main as main_module
+        resp = client.post("/api/interview/question", json={
+            "text": "Still here?",
+            "options": ["Yes", "No"],
+        })
+        token = resp.json()["session_token"]
+
+        session = state_module.get_interview_session()
+
+        # Trigger the soft timeout path by awaiting the pause directly
+        asyncio.run(session.pause())
+
+        # State must still be intact after pause
+        assert session.active_question is not None
+        assert session.owner_token == token
 
 
 # ---------------------------------------------------------------------------

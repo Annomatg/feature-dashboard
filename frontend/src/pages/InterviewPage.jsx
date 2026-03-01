@@ -83,6 +83,10 @@ function InterviewPage() {
       }
     })
 
+    src.addEventListener('session-paused', () => {
+      setStatus('paused')
+    })
+
     src.addEventListener('session-timeout', () => {
       setStatus('timedout')
       src.close()
@@ -105,9 +109,10 @@ function InterviewPage() {
     src.onerror = () => {
       // EventSource reconnects automatically — show transient "Reconnecting…" state.
       // Do not interrupt an active question (user still needs to answer it), and
-      // do not overwrite terminal states (ended / error).
+      // do not overwrite terminal states (ended / error / paused — paused keeps
+      // the Revive button visible while the SSE reconnects in the background).
       setStatus((prev) => {
-        if (prev === 'active' || prev === 'ended' || prev === 'error') return prev
+        if (prev === 'active' || prev === 'ended' || prev === 'error' || prev === 'paused') return prev
         return 'reconnecting'
       })
     }
@@ -138,6 +143,24 @@ function InterviewPage() {
       setStatus('error')
     } finally {
       setIsLaunching(false)
+    }
+  }
+
+  const handleRevive = async () => {
+    try {
+      const res = await fetch('/api/interview/revive', { method: 'POST' })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        setErrorMsg(err.detail || 'Failed to revive session. It may have timed out.')
+        setStatus('error')
+        return
+      }
+      // Revive re-broadcasts the current question — SSE 'question' event will
+      // transition us to 'active'. Show 'waiting' in the meantime.
+      setStatus('waiting')
+    } catch {
+      setErrorMsg('Failed to connect to server. Is DevServer running?')
+      setStatus('error')
     }
   }
 
@@ -250,6 +273,30 @@ function InterviewPage() {
               <p className="text-warning text-base font-medium">
                 Reconnecting…
               </p>
+            </div>
+          )}
+
+          {/* Session paused (soft timeout) — show Revive button */}
+          {status === 'paused' && (
+            <div
+              className="flex flex-col items-center gap-6 text-center"
+              data-testid="interview-paused"
+            >
+              <div>
+                <h2 className="text-xl font-bold text-text-primary mb-2">
+                  Session paused
+                </h2>
+                <p className="text-text-secondary text-base">
+                  No answer received. The session stays active for up to 10 minutes total.
+                </p>
+              </div>
+              <button
+                onClick={handleRevive}
+                data-testid="interview-revive-btn"
+                className="px-6 py-3 rounded-lg bg-primary text-white text-sm font-mono font-semibold hover:opacity-80 transition-opacity"
+              >
+                Revive Session
+              </button>
             </div>
           )}
 

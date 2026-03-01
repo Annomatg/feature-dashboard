@@ -107,23 +107,75 @@ class InterviewSession:
         _log_event(self, "answer_submitted", {"value": value})
         await self.broadcast({"type": "answer_received"})
 
-    async def wait_for_answer(self, timeout: float = 300.0) -> Optional[str]:
+    async def wait_for_answer(
+        self,
+        soft_timeout: float = 300.0,
+        hard_timeout: float = 600.0,
+    ) -> Optional[str]:
         """
-        Block until an answer is available or *timeout* seconds elapse.
+        Block until an answer is available or the hard timeout elapses.
 
-        Returns the answer string, or None on timeout.
+        Two-phase timeout:
+          1. Wait up to *soft_timeout* seconds.  If no answer arrives, broadcast
+             a ``session_paused`` event so the browser can show a Revive button.
+             Session state is NOT cleared — Claude continues polling.
+          2. Wait up to ``hard_timeout - soft_timeout`` additional seconds.  If
+             still no answer, return None (caller handles the hard kill).
+
+        Returns the answer string on success, or None on hard timeout.
         Clears the answer from state (consume-once semantics).
         """
+        # Phase 1 — soft timeout
         try:
-            await asyncio.wait_for(self._answer_ready.wait(), timeout=timeout)
+            await asyncio.wait_for(self._answer_ready.wait(), timeout=soft_timeout)
         except asyncio.TimeoutError:
-            return None
+            # Soft timeout: warn the browser but keep session alive
+            await self.pause()
+            # Phase 2 — hard timeout (remaining window)
+            remaining = max(hard_timeout - soft_timeout, 0.0)
+            try:
+                await asyncio.wait_for(self._answer_ready.wait(), timeout=remaining)
+            except asyncio.TimeoutError:
+                return None
 
         async with self._lock:
             answer = self.pending_answer
             self.pending_answer = None
             self._answer_ready.clear()
             return answer
+
+    # ------------------------------------------------------------------
+    # Pause / revive (soft-timeout path)
+    # ------------------------------------------------------------------
+
+    async def pause(self) -> None:
+        """
+        Broadcast a ``session_paused`` event without clearing session state.
+
+        Called automatically by wait_for_answer when the soft timeout fires.
+        The browser shows a Revive button; the session remains alive until the
+        hard timeout or until the user submits an answer after reviving.
+        """
+        _log_event(self, "session_paused", {})
+        await self.broadcast({"type": "session_paused"})
+
+    async def revive(self) -> Optional[dict]:
+        """
+        Re-broadcast the current active question to all SSE subscribers.
+
+        Called by POST /api/interview/revive when the browser user clicks
+        "Revive Session".  Returns the re-broadcast question dict, or None
+        if no question is currently active (e.g. hard timeout already fired).
+        """
+        async with self._lock:
+            question = self.active_question
+
+        if question is None:
+            return None
+
+        _log_event(self, "session_revived", {})
+        await self.broadcast({"type": "question", "text": question["text"], "options": question["options"]})
+        return question
 
     # ------------------------------------------------------------------
     # Session lifecycle
