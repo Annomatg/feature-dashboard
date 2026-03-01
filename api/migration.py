@@ -6,7 +6,6 @@ Automatically migrates existing feature_list.json files to SQLite database.
 """
 
 import json
-import re
 import shutil
 from collections import Counter
 from datetime import datetime
@@ -16,17 +15,13 @@ from typing import Optional
 from sqlalchemy.orm import Session, sessionmaker
 
 from api.database import DescriptionToken, Feature, NameToken, create_database
+from api.tokens import normalize_tokens
 
 
 def tokenize_name(name: str) -> list:
     """Tokenize a feature name into normalized word tokens.
 
-    Steps:
-    1. Lowercase the name.
-    2. Replace non-alphanumeric characters with spaces (strips punctuation,
-       splits hyphenated/underscored words).
-    3. Split on whitespace.
-    4. Drop tokens shorter than 2 characters.
+    Delegates to the shared :func:`api.tokens.normalize_tokens` function.
 
     Args:
         name: Raw feature name string.
@@ -34,9 +29,7 @@ def tokenize_name(name: str) -> list:
     Returns:
         List of normalized token strings.
     """
-    name = name.lower()
-    name = re.sub(r"[^a-z0-9\s]", " ", name)
-    return [t for t in name.split() if len(t) >= 2]
+    return normalize_tokens(name)
 
 
 def backfill_name_tokens(session_maker: sessionmaker) -> int:
@@ -85,12 +78,7 @@ def backfill_name_tokens(session_maker: sessionmaker) -> int:
 def tokenize_description(description: str) -> list:
     """Tokenize a feature description into normalized word tokens.
 
-    Steps:
-    1. Lowercase the description.
-    2. Replace non-alphanumeric characters with spaces (strips punctuation,
-       splits hyphenated/underscored words).
-    3. Split on whitespace.
-    4. Drop tokens shorter than 2 characters.
+    Delegates to the shared :func:`api.tokens.normalize_tokens` function.
 
     Args:
         description: Raw feature description string.
@@ -98,9 +86,7 @@ def tokenize_description(description: str) -> list:
     Returns:
         List of normalized token strings.
     """
-    description = description.lower()
-    description = re.sub(r"[^a-z0-9\s]", " ", description)
-    return [t for t in description.split() if len(t) >= 2]
+    return normalize_tokens(description)
 
 
 def backfill_description_tokens(session_maker: sessionmaker) -> int:
