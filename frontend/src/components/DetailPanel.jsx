@@ -1,6 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import { X, Trash2, Check, RotateCcw, Terminal, MessageSquare, ChevronDown, RefreshCw } from 'lucide-react'
 import EditableSteps from './EditableSteps'
+import GhostTextArea from './GhostTextArea'
 
 async function fetchComments(featureId) {
   const response = await fetch(`/api/features/${featureId}/comments`)
@@ -100,7 +101,7 @@ function EditableField({ value, onSave, multiline = false, className = '', place
     return (
       <div className="relative">
         {multiline ? (
-          <textarea
+          <GhostTextArea
             ref={inputRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}

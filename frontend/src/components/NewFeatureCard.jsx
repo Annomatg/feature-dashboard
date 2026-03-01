@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { X } from 'lucide-react'
 import EditableSteps from './EditableSteps'
 import GhostTextInput from './GhostTextInput'
+import GhostTextArea from './GhostTextArea'
 
 const MODEL_OPTIONS = [
   { value: 'haiku', label: 'Haiku', title: 'Fastest, most efficient' },
@@ -108,7 +109,7 @@ function NewFeatureCard({ lane, onSave, onCancel, accentColor }) {
         <label className="block text-xs font-mono text-text-secondary mb-1">
           Description
         </label>
-        <textarea
+        <GhostTextArea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="Describe what this feature should do..."

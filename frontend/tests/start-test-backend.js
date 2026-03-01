@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, r'${projectRoot}')
 
-from api.database import Feature, NameToken
+from api.database import Feature, NameToken, DescriptionToken
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from api.database import Base
@@ -92,6 +92,19 @@ name_tokens = [
     NameToken(token='Management', usage_count=3),
 ]
 for token in name_tokens:
+    session.add(token)
+
+# Seed description tokens for autocomplete ghost-text tests
+description_tokens = [
+    DescriptionToken(token='feature', usage_count=10),
+    DescriptionToken(token='description', usage_count=8),
+    DescriptionToken(token='implement', usage_count=7),
+    DescriptionToken(token='integration', usage_count=6),
+    DescriptionToken(token='backend', usage_count=5),
+    DescriptionToken(token='frontend', usage_count=4),
+    DescriptionToken(token='authentication', usage_count=3),
+]
+for token in description_tokens:
     session.add(token)
 
 session.commit()
