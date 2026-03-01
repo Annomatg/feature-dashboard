@@ -69,8 +69,8 @@ test.describe('Settings Panel', () => {
     const textarea = page.getByTestId('prompt-template-input');
     await textarea.waitFor({ state: 'visible' });
 
-    // Change the template
-    const newTemplate = 'Test template: {name} - {description} - {steps}';
+    // Change the template — use a unique value so it always differs from whatever is saved
+    const newTemplate = `Test template ${Date.now()}: {name} - {description} - {steps}`;
     await textarea.fill(newTemplate);
 
     // Save button should be enabled now

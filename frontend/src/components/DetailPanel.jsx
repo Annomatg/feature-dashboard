@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import { X, Trash2, Check, RotateCcw, Terminal, MessageSquare, ChevronDown, RefreshCw } from 'lucide-react'
 import EditableSteps from './EditableSteps'
 
@@ -182,8 +182,10 @@ function ClaudeLogSection({ featureId, inProgress }) {
 
   const entries = sessionData?.entries ?? []
 
-  // Auto-scroll to bottom when new entries arrive — only if already pinned to bottom
-  useEffect(() => {
+  // Auto-scroll to bottom when new entries arrive — only if already pinned to bottom.
+  // useLayoutEffect ensures the scroll fires synchronously after the DOM update and
+  // before the browser paints, so tests and users never see a flash of un-scrolled content.
+  useLayoutEffect(() => {
     const el = logContainerRef.current
     if (!el) return
     if (atBottomRef.current) {
