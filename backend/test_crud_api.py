@@ -5724,5 +5724,203 @@ class TestRecentLog:
         assert r2.json()["recent_log"] == "Updated log"
 
 
+# ==============================================================================
+# GET /api/budget tests
+# ==============================================================================
+
+class TestGetBudget:
+    """Tests for the GET /api/budget endpoint."""
+
+    def test_budget_returns_error_when_credentials_missing(self, client, monkeypatch, tmp_path):
+        """Returns error field when credentials file does not exist."""
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        response = client.get("/api/budget")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["error"] is not None
+        assert "credentials" in data["error"].lower() or "not found" in data["error"].lower()
+
+    def test_budget_returns_data_with_valid_api_response(self, client, monkeypatch, tmp_path):
+        """Returns five_hour and seven_day data when API responds successfully."""
+        import json
+
+        # Create fake credentials
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        cred_file = claude_dir / ".credentials.json"
+        cred_file.write_text(json.dumps({
+            "claudeAiOauth": {"accessToken": "fake-token"}
+        }))
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+        fake_usage = {
+            "five_hour": {"utilization": 42.5, "resets_at": "2025-01-01T12:00:00Z"},
+            "seven_day": {"utilization": 75.0, "resets_at": "2025-01-07T00:00:00Z"},
+        }
+
+        def fake_fetch():
+            import urllib.request
+            import io
+            payload = json.dumps(fake_usage).encode()
+            class FakeResponse:
+                def read(self): return payload
+                def __enter__(self): return self
+                def __exit__(self, *a): pass
+            return FakeResponse()
+
+        import unittest.mock as mock
+        with mock.patch("urllib.request.urlopen", return_value=fake_fetch()):
+            response = client.get("/api/budget")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["error"] is None
+        assert data["five_hour"]["utilization"] == 42.5
+        assert data["seven_day"]["utilization"] == 75.0
+
+    def test_budget_handles_null_five_hour_in_api_response(self, client, monkeypatch, tmp_path):
+        """Does not crash when API returns null for five_hour period."""
+        import json
+
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        cred_file = claude_dir / ".credentials.json"
+        cred_file.write_text(json.dumps({
+            "claudeAiOauth": {"accessToken": "fake-token"}
+        }))
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+        fake_usage = {
+            "five_hour": None,
+            "seven_day": {"utilization": 60.0, "resets_at": "2025-01-07T00:00:00Z"},
+        }
+
+        class FakeResponse:
+            def read(self): return json.dumps(fake_usage).encode()
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+
+        import unittest.mock as mock
+        with mock.patch("urllib.request.urlopen", return_value=FakeResponse()):
+            response = client.get("/api/budget")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["five_hour"] is None
+        assert data["seven_day"]["utilization"] == 60.0
+
+    def test_budget_handles_null_seven_day_in_api_response(self, client, monkeypatch, tmp_path):
+        """Does not crash when API returns null for seven_day period."""
+        import json
+
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        cred_file = claude_dir / ".credentials.json"
+        cred_file.write_text(json.dumps({
+            "claudeAiOauth": {"accessToken": "fake-token"}
+        }))
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+        fake_usage = {
+            "five_hour": {"utilization": 30.0, "resets_at": "2025-01-01T12:00:00Z"},
+            "seven_day": None,
+        }
+
+        class FakeResponse:
+            def read(self): return json.dumps(fake_usage).encode()
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+
+        import unittest.mock as mock
+        with mock.patch("urllib.request.urlopen", return_value=FakeResponse()):
+            response = client.get("/api/budget")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["five_hour"]["utilization"] == 30.0
+        assert data["seven_day"] is None
+
+    def test_budget_handles_both_periods_null(self, client, monkeypatch, tmp_path):
+        """Does not crash when API returns null for both periods."""
+        import json
+
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        cred_file = claude_dir / ".credentials.json"
+        cred_file.write_text(json.dumps({
+            "claudeAiOauth": {"accessToken": "fake-token"}
+        }))
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+        fake_usage = {"five_hour": None, "seven_day": None}
+
+        class FakeResponse:
+            def read(self): return json.dumps(fake_usage).encode()
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+
+        import unittest.mock as mock
+        with mock.patch("urllib.request.urlopen", return_value=FakeResponse()):
+            response = client.get("/api/budget")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["five_hour"] is None
+        assert data["seven_day"] is None
+        assert data["error"] is None
+
+    def test_budget_returns_error_on_http_error(self, client, monkeypatch, tmp_path):
+        """Returns error field when API returns an HTTP error."""
+        import json
+        import urllib.error
+
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        cred_file = claude_dir / ".credentials.json"
+        cred_file.write_text(json.dumps({
+            "claudeAiOauth": {"accessToken": "fake-token"}
+        }))
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+        import unittest.mock as mock
+        http_error = urllib.error.HTTPError(
+            url="https://api.anthropic.com/api/oauth/usage",
+            code=401,
+            msg="Unauthorized",
+            hdrs=None,
+            fp=None,
+        )
+        with mock.patch("urllib.request.urlopen", side_effect=http_error):
+            response = client.get("/api/budget")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["error"] is not None
+        assert "401" in data["error"]
+
+    def test_budget_returns_error_when_no_oauth_token(self, client, monkeypatch, tmp_path):
+        """Returns error field when credentials have no OAuth access token."""
+        import json
+
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        cred_file = claude_dir / ".credentials.json"
+        cred_file.write_text(json.dumps({"claudeAiOauth": {}}))
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+        response = client.get("/api/budget")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["error"] is not None
+        assert "token" in data["error"].lower()
+
+    def test_budget_provider_is_anthropic(self, client, monkeypatch, tmp_path):
+        """Response always includes provider=anthropic."""
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        response = client.get("/api/budget")
+        assert response.status_code == 200
+        assert response.json()["provider"] == "anthropic"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

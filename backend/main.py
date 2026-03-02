@@ -2280,15 +2280,15 @@ async def get_budget():
         return BudgetResponse(error=error)
 
     result = BudgetResponse()
-    if 'five_hour' in data:
-        fh = data['five_hour']
+    fh = data.get('five_hour')
+    if fh is not None:
         result.five_hour = BudgetPeriodData(
             utilization=round(float(fh.get('utilization', 0)), 1),
             resets_at=fh.get('resets_at', ''),
             resets_formatted=_format_reset_time(fh.get('resets_at', '')),
         )
-    if 'seven_day' in data:
-        sd = data['seven_day']
+    sd = data.get('seven_day')
+    if sd is not None:
         result.seven_day = BudgetPeriodData(
             utilization=round(float(sd.get('utilization', 0)), 1),
             resets_at=sd.get('resets_at', ''),
