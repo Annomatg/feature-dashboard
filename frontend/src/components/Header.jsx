@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom'
 import DatabaseSelector from './DatabaseSelector'
 import AutoPilotToggle from './AutoPilotToggle'
 import ManualRunIndicator from './ManualRunIndicator'
+import AiBudgetBadge from './AiBudgetBadge'
 
 function StatPill({ label, value, color }) {
   return (
@@ -52,6 +53,11 @@ function Header({ totalFeatures, inProgressCount, doneCount, onSettingsClick, on
 
           {/* Spacer */}
           <div className="flex-1" />
+
+          {/* AI Budget badge — desktop only in title row */}
+          <div className="hidden md:block">
+            <AiBudgetBadge testId="ai-budget-badge-desktop" />
+          </div>
 
           {/* Database selector — desktop only (shown in title row) */}
           <div className="hidden md:block">
@@ -115,6 +121,7 @@ function Header({ totalFeatures, inProgressCount, doneCount, onSettingsClick, on
             <StatPill label="Total"       value={totalFeatures}                  color="#6b7280" />
             <StatPill label="In Progress" value={inProgressCount}                color="#3b82f6" />
             <StatPill label="Done"        value={`${doneCount} (${donePercentage}%)`} color="#22c55e" />
+            <AiBudgetBadge testId="ai-budget-badge-mobile" />
           </div>
 
           {/* Database selector */}

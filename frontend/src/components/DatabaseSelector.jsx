@@ -53,7 +53,10 @@ function DatabaseSelector() {
     try {
       await selectDatabase(db.path)
       // Invalidate all feature-related caches so they reload from new DB
-      await queryClient.invalidateQueries()
+      // Exclude 'ai-budget' — it's provider-scoped, not database-scoped
+      await queryClient.invalidateQueries({
+        predicate: query => query.queryKey[0] !== 'ai-budget',
+      })
     } catch (err) {
       console.error('Failed to switch database:', err)
     } finally {
