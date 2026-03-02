@@ -31,6 +31,8 @@ function KanbanCard({
   onMobileDragStart,
   /** True while this specific card is being touch-dragged (dims the card in-place) */
   isMobileDragging = false,
+  /** Latest Claude session log text shown instead of recent_log for in-progress features */
+  claudeLogSnippet = null,
 }) {
   const hasDescription = feature.description && feature.description.trim().length > 0
 
@@ -186,27 +188,41 @@ function KanbanCard({
         </div>
       </div>
 
-      {/* Footer: recent log (left) + steps count (right) */}
-      {(feature.recent_log || (feature.steps && feature.steps.length > 0)) && (
-        <div className="flex items-center gap-2 mt-3">
-          {feature.recent_log ? (
-            <span
-              className="text-xs text-text-secondary truncate flex-1 min-w-0 italic"
-              title={feature.recent_log}
-              data-testid="recent-log"
-            >
-              {feature.recent_log}
-            </span>
-          ) : (
-            <div className="flex-1 h-px bg-surface-light" />
-          )}
-          {feature.steps && feature.steps.length > 0 && (
-            <span className="text-xs font-mono text-text-secondary flex-shrink-0">
-              {feature.steps.length} {feature.steps.length === 1 ? 'step' : 'steps'}
-            </span>
-          )}
-        </div>
-      )}
+      {/* Footer: recent log / claude log (left) + steps count (right) */}
+      {(() => {
+        const activeSnippet = feature.in_progress && claudeLogSnippet ? claudeLogSnippet : null
+        const displayText = activeSnippet || feature.recent_log
+        const hasFooter = displayText || (feature.steps && feature.steps.length > 0)
+        if (!hasFooter) return null
+        return (
+          <div className="flex items-center gap-2 mt-3">
+            {activeSnippet ? (
+              <span
+                className="text-xs text-blue-400 truncate flex-1 min-w-0 italic"
+                title={activeSnippet}
+                data-testid="claude-log-snippet"
+              >
+                {activeSnippet}
+              </span>
+            ) : feature.recent_log ? (
+              <span
+                className="text-xs text-text-secondary truncate flex-1 min-w-0 italic"
+                title={feature.recent_log}
+                data-testid="recent-log"
+              >
+                {feature.recent_log}
+              </span>
+            ) : (
+              <div className="flex-1 h-px bg-surface-light" />
+            )}
+            {feature.steps && feature.steps.length > 0 && (
+              <span className="text-xs font-mono text-text-secondary flex-shrink-0">
+                {feature.steps.length} {feature.steps.length === 1 ? 'step' : 'steps'}
+              </span>
+            )}
+          </div>
+        )
+      })()}
     </div>
   )
 }

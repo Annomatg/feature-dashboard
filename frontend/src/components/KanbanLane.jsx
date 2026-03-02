@@ -77,6 +77,8 @@ function KanbanLane({
   onShowMore,
   isLoadingMore = false,
   onPlanClick,
+  /** Latest Claude session log text to show in in-progress cards (null when no active session) */
+  claudeLogSnippet = null,
 }) {
   const [isDragOver, setIsDragOver] = useState(false)
   // featureId being hovered over during same-lane drag (for drop indicator)
@@ -323,6 +325,7 @@ function KanbanLane({
                           onDragEnd={onDragEnd}
                           onMobileDragStart={onMobileDragStart}
                           isMobileDragging={mobileDragFeatureId === feature.id}
+                          claudeLogSnippet={claudeLogSnippet}
                         />
                         {/* Desktop drop indicator (after) */}
                         {dropTargetId === feature.id && dropPosition === 'after' && (
@@ -414,6 +417,7 @@ function KanbanLane({
                     onDragEnd={onDragEnd}
                     onMobileDragStart={onMobileDragStart}
                     isMobileDragging={mobileDragFeatureId === feature.id}
+                    claudeLogSnippet={claudeLogSnippet}
                   />
                   {/* Desktop drop indicator (after) */}
                   {dropTargetId === feature.id && dropPosition === 'after' && (

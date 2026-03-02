@@ -95,6 +95,12 @@ async function fetchDatabases() {
   return response.json()
 }
 
+async function fetchSessionLogSnippet() {
+  const response = await fetch('/api/autopilot/session-log?limit=1')
+  if (!response.ok) return { active: false, entries: [] }
+  return response.json()
+}
+
 async function reorderFeature(featureId, targetId, insertBefore) {
   const response = await fetch(`/api/features/${featureId}/reorder`, {
     method: 'PATCH',
@@ -156,6 +162,16 @@ function KanbanBoard() {
     queryFn: fetchDatabases,
     staleTime: 30000,
   })
+
+  // Poll session log to show latest Claude activity in in-progress cards
+  const { data: sessionLogData } = useQuery({
+    queryKey: ['autopilot', 'session-log-snippet'],
+    queryFn: fetchSessionLogSnippet,
+    refetchInterval: 3000,
+  })
+  const claudeLogSnippet = sessionLogData?.active && sessionLogData?.entries?.length > 0
+    ? sessionLogData.entries[0].text
+    : null
 
   // Fetch done features separately with pagination
   const { data: doneData, isLoading: isDoneLoading } = useQuery({
@@ -489,6 +505,7 @@ function KanbanBoard() {
               onMobileDragStart={(feature, tx, ty) => mobileDrag.startDrag(feature, 'inProgress', tx, ty)}
               mobileDragInsertBeforeId={mobileInsertFor('inProgress')}
               mobileDragFeatureId={mobileDrag.dragFeature?.id}
+              claudeLogSnippet={claudeLogSnippet}
             />
           </div>
 
