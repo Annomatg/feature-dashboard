@@ -384,9 +384,6 @@ function KanbanBoard() {
     setIsDragging(false)
   }
 
-  const totalFeatures = features.length + doneTotalCount
-  const inProgressCount = inProgressFeatures.length
-
   // Show info bar when a non-default database is active
   const activeDb = databases.find(db => db.is_active)
   const defaultDb = databases[0]
@@ -403,9 +400,6 @@ function KanbanBoard() {
   return (
     <div className="h-screen bg-background flex flex-col">
       <Header
-        totalFeatures={totalFeatures}
-        inProgressCount={inProgressCount}
-        doneCount={doneTotalCount}
         onSettingsClick={() => setSettingsOpen(true)}
         onPlanTasksClick={() => setPlanTasksOpen(true)}
       />

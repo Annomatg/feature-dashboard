@@ -61,15 +61,7 @@ test.describe('Responsive Header', () => {
       await expect(textSpan).toBeHidden();
     });
 
-    test('mobile stats row is visible', async ({ page }) => {
-      await expect(page.getByTestId('header-stats-mobile')).toBeVisible();
-    });
-
-    test('desktop stats row is hidden', async ({ page }) => {
-      await expect(page.getByTestId('header-stats-desktop')).toBeHidden();
-    });
-
-    test('mobile row is visible', async ({ page }) => {
+    test('mobile row (AI budget + DB selector) is visible', async ({ page }) => {
       await expect(page.getByTestId('header-mobile-row')).toBeVisible();
     });
 
@@ -134,10 +126,6 @@ test.describe('Responsive Header', () => {
 
     test('title is visible', async ({ page }) => {
       await expect(page.getByText('FEATURE DASHBOARD')).toBeVisible();
-    });
-
-    test('desktop stats row is visible', async ({ page }) => {
-      await expect(page.getByTestId('header-stats-desktop')).toBeVisible();
     });
 
     test('mobile row is hidden on desktop', async ({ page }) => {

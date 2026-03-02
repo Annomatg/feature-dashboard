@@ -77,9 +77,8 @@ test.describe('Header at 390px portrait', () => {
     await expect(textSpan).toBeHidden();
   });
 
-  test('mobile stats row is shown, desktop stats row is hidden', async ({ page }) => {
-    await expect(page.getByTestId('header-stats-mobile')).toBeVisible();
-    await expect(page.getByTestId('header-stats-desktop')).toBeHidden();
+  test('mobile row (AI budget + DB selector) is visible', async ({ page }) => {
+    await expect(page.getByTestId('header-mobile-row')).toBeVisible();
   });
 });
 

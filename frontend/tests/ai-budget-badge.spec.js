@@ -8,8 +8,11 @@ import { test, expect } from '@playwright/test';
  * mobile viewport without causing horizontal overflow.
  *
  * Two instances are rendered:
- *   ai-budget-badge-desktop  — shown only at md+ (hidden on mobile)
- *   ai-budget-badge-mobile   — shown only in the mobile stats row (hidden on desktop)
+ *   ai-budget-badge-desktop  — shown only at md+ (hidden on mobile, in title row)
+ *   ai-budget-badge-mobile   — shown only in the mobile second row (hidden on desktop)
+ *
+ * Both instances render the same content: full period labels (5h + week),
+ * not a simplified dot indicator.
  */
 
 // Shared mock for budget API with healthy utilization
@@ -89,11 +92,6 @@ test.describe('AiBudgetBadge — Desktop (1280px)', () => {
     await expect(badge).toContainText('30%');
   });
 
-  test('desktop dot is hidden on desktop', async ({ page }) => {
-    // md:hidden — the dot inside the desktop badge is hidden at 1280px
-    await expect(page.getByTestId('ai-budget-badge-desktop-dot')).toBeHidden();
-  });
-
   test('mobile badge row is hidden on desktop', async ({ page }) => {
     await expect(page.getByTestId('ai-budget-badge-mobile')).toBeHidden();
   });
@@ -107,12 +105,20 @@ test.describe('AiBudgetBadge — Mobile (375px)', () => {
     await setupPage(page, HEALTHY_BUDGET);
   });
 
-  test('mobile badge is visible at 375px (in scrollable stats row)', async ({ page }) => {
+  test('mobile badge is visible at 375px (in mobile row)', async ({ page }) => {
     await expect(page.getByTestId('ai-budget-badge-mobile')).toBeVisible();
   });
 
-  test('mobile dot is visible at 375px', async ({ page }) => {
-    await expect(page.getByTestId('ai-budget-badge-mobile-dot')).toBeVisible();
+  test('mobile badge shows 5h percentage label (same as desktop)', async ({ page }) => {
+    const badge = page.getByTestId('ai-budget-badge-mobile');
+    await expect(badge).toContainText('5h');
+    await expect(badge).toContainText('45%');
+  });
+
+  test('mobile badge shows week percentage label (same as desktop)', async ({ page }) => {
+    const badge = page.getByTestId('ai-budget-badge-mobile');
+    await expect(badge).toContainText('week');
+    await expect(badge).toContainText('30%');
   });
 
   test('desktop badge is hidden on mobile', async ({ page }) => {

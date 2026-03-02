@@ -34,8 +34,7 @@ function PeriodLabel({ label, data }) {
 /**
  * AiBudgetBadge — shows Anthropic 5-hour and weekly usage in the header.
  *
- * Desktop: icon + "5h: XX%  week: XX%" labels.
- * Mobile:  icon + colored dot for worst-case utilization.
+ * Displays "5h: XX%  week: XX%" labels on all screen sizes.
  *
  * Renders nothing when credentials are unavailable or the API call fails.
  *
@@ -70,15 +69,7 @@ function AiBudgetBadge({ testId = 'ai-budget-badge' }) {
     >
       <Activity size={14} className="flex-shrink-0 text-text-secondary" />
 
-      {/* Mobile: single colored dot for worst utilization */}
-      <span
-        data-testid={`${testId}-dot`}
-        className="md:hidden w-2 h-2 rounded-full flex-shrink-0"
-        style={{ backgroundColor: utilColor(maxPct) }}
-      />
-
-      {/* Desktop: full period labels */}
-      <span className="hidden md:flex items-center gap-2">
+      <span className="flex items-center gap-2">
         <PeriodLabel label="5h"   data={data.five_hour} />
         <PeriodLabel label="week" data={data.seven_day} />
       </span>

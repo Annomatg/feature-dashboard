@@ -51,15 +51,9 @@ test.describe('Kanban Board', () => {
     await expect(firstCard.locator('.text-text-primary.font-semibold')).toBeVisible(); // Name
   });
 
-  test('should show total feature count in header', async ({ page }) => {
+  test('should show the header title', async ({ page }) => {
     await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
-
-    // Check for stats in header — use desktop stats row to avoid ambiguity
-    // (both desktop and mobile stat rows exist in DOM; desktop is always visible)
-    const statsRow = page.getByTestId('header-stats-desktop');
-    await expect(statsRow.getByText('Total')).toBeVisible();
-    await expect(statsRow.getByText('In Progress')).toBeVisible();
-    await expect(statsRow.getByText('Done')).toBeVisible();
+    await expect(page.getByText('FEATURE DASHBOARD')).toBeVisible();
   });
 
   test('lanes should be scrollable', async ({ page }) => {

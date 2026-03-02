@@ -5,26 +5,9 @@ import AutoPilotToggle from './AutoPilotToggle'
 import ManualRunIndicator from './ManualRunIndicator'
 import AiBudgetBadge from './AiBudgetBadge'
 
-function StatPill({ label, value, color }) {
-  return (
-    <div className="flex items-center gap-2 flex-shrink-0">
-      <span
-        className="w-2 h-2 rounded-full flex-shrink-0"
-        style={{ backgroundColor: color }}
-      />
-      <span className="text-text-secondary font-mono text-xs uppercase tracking-wider">{label}</span>
-      <span className="text-text-primary font-mono text-sm font-semibold tabular-nums">{value}</span>
-    </div>
-  )
-}
-
-function Header({ totalFeatures, inProgressCount, doneCount, onSettingsClick, onPlanTasksClick }) {
+function Header({ onSettingsClick, onPlanTasksClick }) {
   const location = useLocation()
   const isInterviewActive = location.pathname === '/interview'
-
-  const donePercentage = totalFeatures > 0
-    ? Math.round((doneCount / totalFeatures) * 100)
-    : 0
 
   return (
     <header className="flex-shrink-0 bg-background border-b border-border px-4 py-3 md:px-6 md:py-4">
@@ -39,16 +22,6 @@ function Header({ totalFeatures, inProgressCount, doneCount, onSettingsClick, on
             <h1 className="text-xl font-bold font-mono text-text-primary tracking-tight">
               FEATURE DASHBOARD
             </h1>
-          </div>
-
-          {/* Stats — desktop only (shown inline with title row) */}
-          <div
-            data-testid="header-stats-desktop"
-            className="hidden md:flex items-center gap-5 ml-4 pl-4 border-l border-border"
-          >
-            <StatPill label="Total"       value={totalFeatures}                  color="#6b7280" />
-            <StatPill label="In Progress" value={inProgressCount}                color="#3b82f6" />
-            <StatPill label="Done"        value={`${doneCount} (${donePercentage}%)`} color="#22c55e" />
           </div>
 
           {/* Spacer */}
@@ -108,24 +81,15 @@ function Header({ totalFeatures, inProgressCount, doneCount, onSettingsClick, on
           </button>
         </div>
 
-        {/* Row 2: stats + DB selector — mobile only */}
+        {/* Row 2: AI Budget + DB selector — mobile only */}
         <div
           data-testid="header-mobile-row"
           className="flex md:hidden items-center gap-3 mt-2"
         >
-          {/* Stats pills — horizontally scrollable */}
-          <div
-            data-testid="header-stats-mobile"
-            className="flex items-center gap-4 flex-1 min-w-0 overflow-x-auto"
-          >
-            <StatPill label="Total"       value={totalFeatures}                  color="#6b7280" />
-            <StatPill label="In Progress" value={inProgressCount}                color="#3b82f6" />
-            <StatPill label="Done"        value={`${doneCount} (${donePercentage}%)`} color="#22c55e" />
-            <AiBudgetBadge testId="ai-budget-badge-mobile" />
-          </div>
+          <AiBudgetBadge testId="ai-budget-badge-mobile" />
 
           {/* Database selector */}
-          <div className="flex-shrink-0">
+          <div className="flex-shrink-0 ml-auto">
             <DatabaseSelector />
           </div>
         </div>
