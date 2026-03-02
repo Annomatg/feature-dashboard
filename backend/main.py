@@ -1043,10 +1043,37 @@ def get_comment_counts(session, feature_ids: list[int]) -> dict[int, int]:
     return {fid: count for fid, count in rows}
 
 
-def feature_to_response(feature, comment_counts: dict[int, int]) -> "FeatureResponse":
-    """Convert a Feature ORM object to FeatureResponse including comment_count."""
+def get_recent_logs(session, feature_ids: list[int]) -> dict[int, str]:
+    """Return a mapping of feature_id -> most recent comment content for the given feature IDs."""
+    if not feature_ids:
+        return {}
+    # Subquery: latest comment id per feature
+    subq = (
+        session.query(
+            Comment.feature_id,
+            sa_func.max(Comment.id).label("max_id"),
+        )
+        .filter(Comment.feature_id.in_(feature_ids))
+        .group_by(Comment.feature_id)
+        .subquery()
+    )
+    rows = (
+        session.query(Comment.feature_id, Comment.content)
+        .join(subq, Comment.id == subq.c.max_id)
+        .all()
+    )
+    return {fid: content for fid, content in rows}
+
+
+def feature_to_response(
+    feature,
+    comment_counts: dict[int, int],
+    recent_logs: dict[int, str] | None = None,
+) -> "FeatureResponse":
+    """Convert a Feature ORM object to FeatureResponse including comment_count and recent_log."""
     d = feature.to_dict()
     d["comment_count"] = comment_counts.get(feature.id, 0)
+    d["recent_log"] = (recent_logs or {}).get(feature.id)
     return FeatureResponse(**d)
 
 
@@ -1145,6 +1172,7 @@ class FeatureResponse(BaseModel):
     modified_at: Optional[str] = None
     completed_at: Optional[str] = None
     comment_count: int = 0
+    recent_log: Optional[str] = None
 
 
 class StatsResponse(BaseModel):
@@ -1484,10 +1512,12 @@ async def get_features(
             actual_offset = offset if offset is not None else 0
 
             features = query.limit(actual_limit).offset(actual_offset).all()
-            counts = get_comment_counts(session, [f.id for f in features])
+            fids = [f.id for f in features]
+            counts = get_comment_counts(session, fids)
+            logs = get_recent_logs(session, fids)
 
             return PaginatedFeaturesResponse(
-                features=[feature_to_response(f, counts) for f in features],
+                features=[feature_to_response(f, counts, logs) for f in features],
                 total=total,
                 limit=actual_limit,
                 offset=actual_offset
@@ -1495,8 +1525,10 @@ async def get_features(
 
         # Otherwise return simple list (backward compatible)
         features = query.all()
-        counts = get_comment_counts(session, [f.id for f in features])
-        return [feature_to_response(f, counts) for f in features]
+        fids = [f.id for f in features]
+        counts = get_comment_counts(session, fids)
+        logs = get_recent_logs(session, fids)
+        return [feature_to_response(f, counts, logs) for f in features]
     finally:
         session.close()
 
@@ -1674,7 +1706,8 @@ async def get_feature(feature_id: int):
             raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
 
         counts = get_comment_counts(session, [feature_id])
-        return feature_to_response(feature, counts)
+        logs = get_recent_logs(session, [feature_id])
+        return feature_to_response(feature, counts, logs)
     finally:
         session.close()
 
@@ -1899,7 +1932,7 @@ async def update_feature(feature_id: int, request: UpdateFeatureRequest):
                     session.add(DescriptionToken(token=token, usage_count=1))
             session.commit()
 
-        return feature_to_response(feature, get_comment_counts(session, [feature.id]))
+        return feature_to_response(feature, get_comment_counts(session, [feature.id]), get_recent_logs(session, [feature.id]))
     except HTTPException:
         raise
     except Exception as e:
@@ -1969,7 +2002,7 @@ async def update_feature_state(feature_id: int, request: UpdateFeatureStateReque
         session.commit()
         session.refresh(feature)
 
-        return feature_to_response(feature, get_comment_counts(session, [feature.id]))
+        return feature_to_response(feature, get_comment_counts(session, [feature.id]), get_recent_logs(session, [feature.id]))
     except HTTPException:
         raise
     except Exception as e:
@@ -2001,7 +2034,7 @@ async def update_feature_priority(feature_id: int, request: UpdateFeaturePriorit
         session.commit()
         session.refresh(feature)
 
-        return feature_to_response(feature, get_comment_counts(session, [feature.id]))
+        return feature_to_response(feature, get_comment_counts(session, [feature.id]), get_recent_logs(session, [feature.id]))
     except HTTPException:
         raise
     except Exception as e:
@@ -2073,7 +2106,7 @@ async def move_feature(feature_id: int, request: MoveFeatureRequest):
         session.commit()
         session.refresh(feature)
 
-        return feature_to_response(feature, get_comment_counts(session, [feature.id]))
+        return feature_to_response(feature, get_comment_counts(session, [feature.id]), get_recent_logs(session, [feature.id]))
     except HTTPException:
         raise
     except Exception as e:
@@ -2128,7 +2161,7 @@ async def reorder_feature(feature_id: int, request: ReorderFeatureRequest):
         session.commit()
         session.refresh(feature)
 
-        return feature_to_response(feature, get_comment_counts(session, [feature.id]))
+        return feature_to_response(feature, get_comment_counts(session, [feature.id]), get_recent_logs(session, [feature.id]))
     except HTTPException:
         raise
     except Exception as e:

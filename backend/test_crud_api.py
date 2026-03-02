@@ -5636,5 +5636,64 @@ class TestAutocompletePerformance:
         assert avg_ms < 20, f"Average response time {avg_ms:.1f}ms exceeds 20ms limit"
 
 
+class TestRecentLog:
+    """Tests for recent_log field in feature responses (Feature #148)."""
+
+    def test_feature_without_comments_has_null_recent_log(self, client):
+        """A feature with no comments should return recent_log=null."""
+        response = client.get("/api/features/1")
+        assert response.status_code == 200
+        data = response.json()
+        assert "recent_log" in data
+        assert data["recent_log"] is None
+
+    def test_feature_with_comment_returns_recent_log(self, client):
+        """A feature with at least one comment should return its content as recent_log."""
+        # Add a comment to feature 1
+        comment_res = client.post("/api/features/1/comments", json={"content": "First log entry"})
+        assert comment_res.status_code == 201
+
+        response = client.get("/api/features/1")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["recent_log"] == "First log entry"
+
+    def test_recent_log_is_the_latest_comment(self, client):
+        """When multiple comments exist, recent_log should be the most recent one."""
+        client.post("/api/features/2/comments", json={"content": "Older entry"})
+        client.post("/api/features/2/comments", json={"content": "Newer entry"})
+
+        response = client.get("/api/features/2")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["recent_log"] == "Newer entry"
+
+    def test_list_endpoint_includes_recent_log(self, client):
+        """GET /api/features should include recent_log for each feature."""
+        # Add a comment to feature 3
+        client.post("/api/features/3/comments", json={"content": "Progress note"})
+
+        response = client.get("/api/features")
+        assert response.status_code == 200
+        features = response.json()
+
+        feature3 = next(f for f in features if f["id"] == 3)
+        assert feature3["recent_log"] == "Progress note"
+
+        # Features without comments should have null recent_log
+        feature4 = next(f for f in features if f["id"] == 4)
+        assert feature4["recent_log"] is None
+
+    def test_recent_log_updates_after_new_comment(self, client):
+        """Adding a new comment should update recent_log on next fetch."""
+        client.post("/api/features/1/comments", json={"content": "Initial log"})
+        r1 = client.get("/api/features/1")
+        assert r1.json()["recent_log"] == "Initial log"
+
+        client.post("/api/features/1/comments", json={"content": "Updated log"})
+        r2 = client.get("/api/features/1")
+        assert r2.json()["recent_log"] == "Updated log"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

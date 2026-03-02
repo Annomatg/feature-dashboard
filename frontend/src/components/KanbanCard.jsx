@@ -186,13 +186,25 @@ function KanbanCard({
         </div>
       </div>
 
-      {/* Steps count */}
-      {feature.steps && feature.steps.length > 0 && (
+      {/* Footer: recent log (left) + steps count (right) */}
+      {(feature.recent_log || (feature.steps && feature.steps.length > 0)) && (
         <div className="flex items-center gap-2 mt-3">
-          <div className="flex-1 h-px bg-surface-light" />
-          <span className="text-xs font-mono text-text-secondary">
-            {feature.steps.length} {feature.steps.length === 1 ? 'step' : 'steps'}
-          </span>
+          {feature.recent_log ? (
+            <span
+              className="text-xs text-text-secondary truncate flex-1 min-w-0 italic"
+              title={feature.recent_log}
+              data-testid="recent-log"
+            >
+              {feature.recent_log}
+            </span>
+          ) : (
+            <div className="flex-1 h-px bg-surface-light" />
+          )}
+          {feature.steps && feature.steps.length > 0 && (
+            <span className="text-xs font-mono text-text-secondary flex-shrink-0">
+              {feature.steps.length} {feature.steps.length === 1 ? 'step' : 'steps'}
+            </span>
+          )}
         </div>
       )}
     </div>
