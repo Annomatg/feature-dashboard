@@ -3270,9 +3270,10 @@ async def start_interview(request: InterviewStartRequest):
     """Launch a dynamic interview session driven by a user-supplied description.
 
     Combines the plan-tasks prompt template (with the user's description) with
-    browser interview API instructions, then launches Claude in a terminal.
-    Claude uses the interview API to conduct a dynamic conversation in the
-    browser and creates features via feature_create_bulk.
+    browser interview API instructions, then launches Claude as a hidden background
+    process (no terminal window, stdout/stderr captured via pipes). Claude uses the
+    interview API to conduct a dynamic conversation in the browser and creates
+    features via feature_create_bulk.
     """
     if not request.description.strip():
         raise HTTPException(status_code=400, detail="Description cannot be empty")
@@ -3285,7 +3286,48 @@ async def start_interview(request: InterviewStartRequest):
     working_dir = str(_current_db_path.parent)
 
     try:
-        _launch_claude_terminal(prompt, working_dir)
+        if sys.platform == "win32":
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".txt", delete=False, encoding="utf-8"
+            ) as f:
+                f.write(prompt)
+                prompt_file = f.name
+
+            ps_cmd = (
+                f'claude --dangerously-skip-permissions --print '
+                f'(Get-Content -LiteralPath "{prompt_file}" -Raw)'
+            )
+            launched = False
+            for ps_exe in ["pwsh", "powershell"]:
+                try:
+                    subprocess.Popen(
+                        [ps_exe, "-Command", ps_cmd],
+                        cwd=working_dir,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                    )
+                    launched = True
+                    break
+                except FileNotFoundError:
+                    continue
+            if not launched:
+                raise HTTPException(
+                    status_code=500,
+                    detail="No PowerShell found. Install PowerShell 7 (pwsh) or ensure powershell.exe is available.",
+                )
+        else:
+            try:
+                subprocess.Popen(
+                    ["claude", "--dangerously-skip-permissions", "--print", prompt],
+                    cwd=working_dir,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+            except FileNotFoundError:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Claude CLI not found. Make sure 'claude' is in your PATH.",
+                )
     except HTTPException:
         raise
     except Exception as e:
