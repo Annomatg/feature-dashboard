@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
+import { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } from 'react'
 
 /**
  * GhostTextArea — wraps a <textarea> with inline ghost-text autocomplete.
@@ -11,7 +11,9 @@ import { useState, useRef, useCallback, forwardRef, useImperativeHandle } from '
  * ArrowDown/ArrowUp cycle through alternative suggestions when multiple are
  * available. The cycle wraps around.
  *
- * On mobile (< md) the overlay is hidden via Tailwind's `hidden md:block`.
+ * On mobile (< md) the ghost overlay is hidden via Tailwind's `hidden md:block`,
+ * and instead a horizontal chip list (data-testid="description-suggestion-list")
+ * is rendered below the textarea.  Tapping a chip accepts the suggestion.
  */
 const GhostTextArea = forwardRef(function GhostTextArea(
   { value, onChange, className, onKeyDown, onBlur, rows = 4, ...props },
@@ -22,6 +24,14 @@ const GhostTextArea = forwardRef(function GhostTextArea(
   const [tokenLength, setTokenLength] = useState(0)
   const textareaRef = useRef(null)
   const abortRef = useRef(null)
+  const blurTimerRef = useRef(null)
+
+  // Cancel blur timer on unmount to avoid state-update-after-unmount
+  useEffect(() => {
+    return () => {
+      if (blurTimerRef.current) clearTimeout(blurTimerRef.current)
+    }
+  }, [])
 
   // Forward the ref to the underlying textarea element
   useImperativeHandle(ref, () => textareaRef.current)
@@ -62,6 +72,12 @@ const GhostTextArea = forwardRef(function GhostTextArea(
     setSuggestions([])
     setSuggestionIndex(0)
     setTokenLength(0)
+
+    // Cancel any pending blur-clear so new suggestions can appear
+    if (blurTimerRef.current) {
+      clearTimeout(blurTimerRef.current)
+      blurTimerRef.current = null
+    }
 
     // Extract the token immediately before the cursor (last non-whitespace run)
     const textBeforeCursor = newValue.slice(0, cursorPos)
@@ -108,10 +124,37 @@ const GhostTextArea = forwardRef(function GhostTextArea(
   }
 
   const handleBlur = (e) => {
+    // On mobile the chip list needs time to receive a tap before we clear
+    // suggestions — use a short delay so the click handler can fire first.
+    // On desktop the list is hidden (md:hidden) so the delay is harmless.
+    blurTimerRef.current = setTimeout(() => {
+      setSuggestions([])
+      setSuggestionIndex(0)
+      setTokenLength(0)
+      blurTimerRef.current = null
+      onBlur?.(e)
+    }, 200)
+  }
+
+  // Accept a suggestion from the mobile chip list
+  const handleSuggestionClick = (suggestion) => {
+    // Cancel the blur timer so suggestions aren't cleared before we apply
+    if (blurTimerRef.current) {
+      clearTimeout(blurTimerRef.current)
+      blurTimerRef.current = null
+    }
+    const suffix = suggestion.slice(tokenLength)
+    const newValue = value + suffix
+    onChange({ target: { value: newValue } })
     setSuggestions([])
     setSuggestionIndex(0)
     setTokenLength(0)
-    onBlur?.(e)
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        textareaRef.current.setSelectionRange(newValue.length, newValue.length)
+        textareaRef.current.focus()
+      }
+    })
   }
 
   // Only show ghost text when cursor is at the very end of the value
@@ -143,6 +186,33 @@ const GhostTextArea = forwardRef(function GhostTextArea(
         rows={rows}
         {...props}
       />
+      {/* Mobile suggestion chips — hidden on desktop via md:hidden */}
+      {suggestions.length > 0 && (
+        <div
+          data-testid="description-suggestion-list"
+          className="flex flex-wrap gap-1 mt-1 md:hidden"
+          role="listbox"
+          aria-label="Description suggestions"
+        >
+          {suggestions.slice(0, 5).map((suggestion, i) => (
+            <button
+              key={suggestion}
+              type="button"
+              role="option"
+              aria-selected={i === suggestionIndex}
+              className={`px-2 py-1 text-xs font-mono rounded border transition-colors ${
+                i === suggestionIndex
+                  ? 'bg-primary text-black border-primary'
+                  : 'bg-surface border-border text-text-primary'
+              }`}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => handleSuggestionClick(suggestion)}
+            >
+              {suggestion}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 })

@@ -191,6 +191,21 @@ test.describe('Description field ghost text (desktop)', () => {
     await expect(ghost).not.toBeVisible()
   })
 
+  test('ghost text not shown on mobile when description prefix is shorter than 3 chars', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 })
+    await page.goto('/')
+    await page.waitForSelector('text=FEATURE DASHBOARD')
+
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const descTextarea = page.locator('textarea[placeholder*="Describe"]')
+    await descTextarea.fill('fe')
+
+    await page.waitForTimeout(300)
+    const suggestionList = page.locator('[data-testid="description-suggestion-list"]')
+    await expect(suggestionList).not.toBeVisible()
+  })
+
   test('ghost text appears in DetailPanel description edit mode', async ({ page }) => {
     // Click on the first feature card to open the detail panel
     const firstCard = page.locator('[data-testid="kanban-card"]').first()
@@ -218,5 +233,148 @@ test.describe('Description field ghost text (desktop)', () => {
 
     // The overlay should contain the suffix "lement" (completing "implement")
     await expect(ghost).toContainText('lement')
+  })
+})
+
+test.describe('Description field mobile suggestion list', () => {
+  test('shows suggestion list below textarea on mobile when typing 3+ chars', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 })
+    await page.goto('/')
+    await page.waitForSelector('text=FEATURE DASHBOARD')
+
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const descTextarea = page.locator('textarea[placeholder*="Describe"]')
+    await expect(descTextarea).toBeVisible()
+
+    // Type "fea" — matches seeded description tokens
+    await descTextarea.fill('fea')
+
+    // Suggestion list should appear below the textarea on mobile
+    const suggestionList = page.locator('[data-testid="description-suggestion-list"]')
+    await expect(suggestionList).toBeVisible({ timeout: 3000 })
+
+    // Should show at least one suggestion chip
+    const chips = suggestionList.locator('button')
+    expect(await chips.count()).toBeGreaterThanOrEqual(1)
+  })
+
+  test('suggestion list shows up to 5 chips on mobile', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 })
+    await page.goto('/')
+    await page.waitForSelector('text=FEATURE DASHBOARD')
+
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const descTextarea = page.locator('textarea[placeholder*="Describe"]')
+    await descTextarea.fill('fea')
+
+    const suggestionList = page.locator('[data-testid="description-suggestion-list"]')
+    await expect(suggestionList).toBeVisible({ timeout: 3000 })
+
+    // At most 5 chips should be shown
+    const chips = suggestionList.locator('button')
+    expect(await chips.count()).toBeLessThanOrEqual(5)
+  })
+
+  test('tapping a suggestion chip fills the description textarea on mobile', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 })
+    await page.goto('/')
+    await page.waitForSelector('text=FEATURE DASHBOARD')
+
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const descTextarea = page.locator('textarea[placeholder*="Describe"]')
+    await descTextarea.fill('fea')
+
+    const suggestionList = page.locator('[data-testid="description-suggestion-list"]')
+    await expect(suggestionList).toBeVisible({ timeout: 3000 })
+
+    // Read the first chip's text before clicking
+    const firstChip = suggestionList.locator('button').first()
+    const chipText = await firstChip.textContent()
+
+    // Click the chip
+    await firstChip.click()
+
+    // Textarea should now contain the suggestion text
+    const textareaValue = await descTextarea.inputValue()
+    expect(textareaValue.toLowerCase()).toContain(chipText.toLowerCase())
+
+    // Suggestion list should be gone after selection
+    await expect(suggestionList).not.toBeVisible()
+  })
+
+  test('suggestion list disappears when textarea is cleared on mobile', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 })
+    await page.goto('/')
+    await page.waitForSelector('text=FEATURE DASHBOARD')
+
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const descTextarea = page.locator('textarea[placeholder*="Describe"]')
+    await descTextarea.fill('fea')
+
+    const suggestionList = page.locator('[data-testid="description-suggestion-list"]')
+    await expect(suggestionList).toBeVisible({ timeout: 3000 })
+
+    // Clear the textarea
+    await descTextarea.fill('')
+
+    // Suggestion list should disappear
+    await expect(suggestionList).not.toBeVisible()
+  })
+
+  test('suggestion list does not appear when prefix is shorter than 3 chars on mobile', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 })
+    await page.goto('/')
+    await page.waitForSelector('text=FEATURE DASHBOARD')
+
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const descTextarea = page.locator('textarea[placeholder*="Describe"]')
+    // Only 2 chars — should not trigger suggestions
+    await descTextarea.fill('fe')
+
+    await page.waitForTimeout(300)
+
+    const suggestionList = page.locator('[data-testid="description-suggestion-list"]')
+    await expect(suggestionList).not.toBeVisible()
+  })
+
+  test('suggestion list is hidden on desktop viewport', async ({ page }) => {
+    // Desktop viewport — suggestion list uses md:hidden
+    await page.goto('/')
+    await page.waitForSelector('text=FEATURE DASHBOARD')
+
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const descTextarea = page.locator('textarea[placeholder*="Describe"]')
+    await descTextarea.fill('fea')
+
+    await page.waitForTimeout(500)
+
+    const suggestionList = page.locator('[data-testid="description-suggestion-list"]')
+    await expect(suggestionList).not.toBeVisible()
+  })
+
+  test('suggestion list is positioned below the textarea on mobile', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 })
+    await page.goto('/')
+    await page.waitForSelector('text=FEATURE DASHBOARD')
+
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const descTextarea = page.locator('textarea[placeholder*="Describe"]')
+    await descTextarea.fill('fea')
+
+    const suggestionList = page.locator('[data-testid="description-suggestion-list"]')
+    await expect(suggestionList).toBeVisible({ timeout: 3000 })
+
+    // Verify the suggestion list is below (higher Y coordinate) the textarea
+    const textareaBox = await descTextarea.boundingBox()
+    const listBox = await suggestionList.boundingBox()
+
+    expect(listBox.y).toBeGreaterThan(textareaBox.y + textareaBox.height - 5)
   })
 })
