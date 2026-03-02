@@ -1,7 +1,12 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Plus, Sparkles } from 'lucide-react'
 import KanbanCard from './KanbanCard'
 import NewFeatureCard from './NewFeatureCard'
+
+// Pixels from the top/bottom edge of the scroll container that activate auto-scroll
+const DRAG_SCROLL_ZONE = 80
+// Maximum scroll speed in pixels per animation frame
+const DRAG_SCROLL_MAX_SPEED = 14
 
 // Format a date string into a human-readable group label
 function getDateGroupLabel(dateStr) {
@@ -90,10 +95,75 @@ function KanbanLane({
   const dropTargetIdRef = useRef(null)
   const dropPositionRef = useRef(null)
 
+  // Refs for auto-scroll during drag
+  const scrollContainerRef = useRef(null)
+  const scrollRafRef = useRef(null)
+  // { direction: -1|1, speed: number } while scrolling, null when idle
+  const scrollStateRef = useRef(null)
+
+  // Cancel any running scroll animation
+  const stopAutoScroll = () => {
+    scrollStateRef.current = null
+    if (scrollRafRef.current) {
+      cancelAnimationFrame(scrollRafRef.current)
+      scrollRafRef.current = null
+    }
+  }
+
+  // Start the scroll RAF loop (idempotent — safe to call repeatedly)
+  const ensureScrollLoop = () => {
+    if (scrollRafRef.current) return
+    const step = () => {
+      const state = scrollStateRef.current
+      if (!state || !scrollContainerRef.current) {
+        scrollRafRef.current = null
+        return
+      }
+      scrollContainerRef.current.scrollTop += state.direction * state.speed
+      scrollRafRef.current = requestAnimationFrame(step)
+    }
+    scrollRafRef.current = requestAnimationFrame(step)
+  }
+
+  // Update scroll speed/direction based on mouse Y position during drag
+  const updateAutoScroll = (mouseY) => {
+    const container = scrollContainerRef.current
+    if (!container) return
+
+    const rect = container.getBoundingClientRect()
+
+    if (mouseY <= rect.top) {
+      // Cursor is above the scroll container (e.g. in the lane header) — scroll up at max speed
+      scrollStateRef.current = { direction: -1, speed: DRAG_SCROLL_MAX_SPEED }
+      ensureScrollLoop()
+    } else if (mouseY < rect.top + DRAG_SCROLL_ZONE) {
+      // Near the top — scroll up, faster the closer to the edge
+      const ratio = 1 - (mouseY - rect.top) / DRAG_SCROLL_ZONE
+      scrollStateRef.current = { direction: -1, speed: Math.max(1, ratio * DRAG_SCROLL_MAX_SPEED) }
+      ensureScrollLoop()
+    } else if (mouseY >= rect.bottom) {
+      // Cursor is below the scroll container — scroll down at max speed
+      scrollStateRef.current = { direction: 1, speed: DRAG_SCROLL_MAX_SPEED }
+      ensureScrollLoop()
+    } else if (mouseY > rect.bottom - DRAG_SCROLL_ZONE) {
+      // Near the bottom — scroll down, faster the closer to the edge
+      const ratio = 1 - (rect.bottom - mouseY) / DRAG_SCROLL_ZONE
+      scrollStateRef.current = { direction: 1, speed: Math.max(1, ratio * DRAG_SCROLL_MAX_SPEED) }
+      ensureScrollLoop()
+    } else {
+      // Middle of the container — stop any active scroll
+      stopAutoScroll()
+    }
+  }
+
+  // Clean up RAF on unmount to avoid memory leaks
+  useEffect(() => () => stopAutoScroll(), [])
+
   const handleDragOver = (e) => {
     e.preventDefault()
     e.dataTransfer.dropEffect = 'move'
     setIsDragOver(true)
+    updateAutoScroll(e.clientY)
   }
 
   const handleDragLeave = (e) => {
@@ -104,11 +174,13 @@ function KanbanLane({
       setDropPosition(null)
       dropTargetIdRef.current = null
       dropPositionRef.current = null
+      stopAutoScroll()
     }
   }
 
   const handleDrop = (e) => {
     e.preventDefault()
+    stopAutoScroll()
 
     // Read refs before clearing state
     const currentDropTargetId = dropTargetIdRef.current
@@ -240,6 +312,7 @@ function KanbanLane({
 
       {/* Scrollable Feature List */}
       <div
+        ref={scrollContainerRef}
         className="flex-1 overflow-y-auto custom-scrollbar pr-2 rounded-lg transition-all duration-150"
         data-scroll
         style={{
