@@ -459,6 +459,35 @@ class TestUpdateFeature:
         assert row is not None
         assert row.usage_count >= 2
 
+    def test_create_feature_with_duplicate_words_in_description_succeeds(self, client):
+        """Creating a feature whose description contains a repeated word must not raise a
+        UNIQUE constraint error. Regression test for the autoflush=False + duplicate token bug."""
+        response = client.post("/api/features", json={
+            "category": "Testing",
+            "name": "Duplicate Word Feature",
+            "description": "above and somehow above it reacts very above somehow",
+            "steps": ["step"],
+        })
+        assert response.status_code == 201
+
+    def test_create_feature_with_duplicate_words_in_name_succeeds(self, client):
+        """Creating a feature whose name contains a repeated word must not raise a
+        UNIQUE constraint error. Regression test for the same autoflush=False issue."""
+        response = client.post("/api/features", json={
+            "category": "Testing",
+            "name": "test test feature",
+            "description": "Some description",
+            "steps": ["step"],
+        })
+        assert response.status_code == 201
+
+    def test_update_feature_with_duplicate_words_in_description_succeeds(self, client):
+        """Updating a feature description with repeated words must not raise UNIQUE constraint."""
+        response = client.put("/api/features/1", json={
+            "description": "very very complicated issue above above the normal range",
+        })
+        assert response.status_code == 200
+
 
 class TestDeleteFeature:
     """Tests for DELETE /api/features/{id}"""

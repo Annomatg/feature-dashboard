@@ -1868,7 +1868,7 @@ async def create_feature(request: CreateFeatureRequest):
         session.refresh(new_feature)
 
         # Upsert name_tokens for each token in the new feature's name
-        for token in normalize_tokens(new_feature.name):
+        for token in set(normalize_tokens(new_feature.name)):
             existing = session.query(NameToken).filter(NameToken.token == token).first()
             if existing:
                 existing.usage_count += 1
@@ -1876,7 +1876,7 @@ async def create_feature(request: CreateFeatureRequest):
                 session.add(NameToken(token=token, usage_count=1))
 
         # Upsert description_tokens for each token in the new feature's description
-        for token in normalize_tokens(new_feature.description):
+        for token in set(normalize_tokens(new_feature.description)):
             existing = session.query(DescriptionToken).filter(DescriptionToken.token == token).first()
             if existing:
                 existing.usage_count += 1
@@ -1931,7 +1931,7 @@ async def update_feature(feature_id: int, request: UpdateFeatureRequest):
 
         # Upsert name_tokens if name was updated (append-only, no decrement)
         if request.name is not None:
-            for token in normalize_tokens(feature.name):
+            for token in set(normalize_tokens(feature.name)):
                 existing = session.query(NameToken).filter(NameToken.token == token).first()
                 if existing:
                     existing.usage_count += 1
@@ -1941,7 +1941,7 @@ async def update_feature(feature_id: int, request: UpdateFeatureRequest):
 
         # Upsert description_tokens if description was updated (append-only, no decrement)
         if request.description is not None:
-            for token in normalize_tokens(feature.description):
+            for token in set(normalize_tokens(feature.description)):
                 existing = session.query(DescriptionToken).filter(DescriptionToken.token == token).first()
                 if existing:
                     existing.usage_count += 1
