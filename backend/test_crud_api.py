@@ -1981,6 +1981,194 @@ class TestSpawnClaudeForAutopilot:
         assert "Step two" in rendered
 
 
+class TestSpawnAndMonitor:
+    """Unit tests for the _spawn_and_monitor() helper."""
+
+    def _make_feature(self, feature_id=5, model="sonnet"):
+        import types
+        return types.SimpleNamespace(
+            id=feature_id,
+            category="Testing",
+            name="Test Feature",
+            description="A test feature",
+            steps=["Step 1"],
+            model=model,
+        )
+
+    def _make_state(self):
+        import backend.main as m
+        # Use the same _AutoPilotState class; get a fresh instance via the module
+        state = m._AutoPilotState()
+        state.enabled = True
+        return state
+
+    def _default_settings(self):
+        from backend.main import DEFAULT_PROMPT_TEMPLATE
+        return {"claude_prompt_template": DEFAULT_PROMPT_TEMPLATE}
+
+    def test_returns_true_on_success(self, monkeypatch):
+        """_spawn_and_monitor returns True when spawning succeeds."""
+        import asyncio
+        import tempfile, types
+        from backend.main import _spawn_and_monitor
+        import backend.main as m
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: types.SimpleNamespace(pid=1))
+        monkeypatch.setattr(asyncio, "create_task", lambda coro: coro.close() or None)
+
+        state = self._make_state()
+        tmp = tempfile.mkdtemp()
+        db_path = Path(tmp) / "features.db"
+
+        result = asyncio.get_event_loop().run_until_complete(
+            _spawn_and_monitor(self._make_feature(), state, db_path, self._default_settings())
+        )
+        assert result is True
+
+    def test_stores_active_process_on_success(self, monkeypatch):
+        """On success, state.active_process is set to the spawned Popen handle."""
+        import asyncio, types, tempfile
+        from backend.main import _spawn_and_monitor
+
+        mock_proc = types.SimpleNamespace(pid=42)
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: mock_proc)
+        monkeypatch.setattr(asyncio, "create_task", lambda coro: coro.close() or None)
+
+        state = self._make_state()
+        tmp = tempfile.mkdtemp()
+        db_path = Path(tmp) / "features.db"
+
+        asyncio.get_event_loop().run_until_complete(
+            _spawn_and_monitor(self._make_feature(), state, db_path, self._default_settings())
+        )
+        assert state.active_process is mock_proc
+
+    def test_file_not_found_returns_false(self, monkeypatch):
+        """FileNotFoundError during spawn returns False and resets state."""
+        import asyncio, tempfile
+        from backend.main import _spawn_and_monitor
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("not found")))
+
+        state = self._make_state()
+        tmp = tempfile.mkdtemp()
+        db_path = Path(tmp) / "features.db"
+
+        result = asyncio.get_event_loop().run_until_complete(
+            _spawn_and_monitor(self._make_feature(), state, db_path, self._default_settings())
+        )
+        assert result is False
+        assert state.enabled is False
+        assert state.active_process is None
+
+    def test_file_not_found_sets_last_error(self, monkeypatch):
+        """Spawn failure stores a non-empty error string in state.last_error."""
+        import asyncio, tempfile
+        from backend.main import _spawn_and_monitor
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("missing claude")))
+
+        state = self._make_state()
+        tmp = tempfile.mkdtemp()
+        db_path = Path(tmp) / "features.db"
+
+        asyncio.get_event_loop().run_until_complete(
+            _spawn_and_monitor(self._make_feature(), state, db_path, self._default_settings())
+        )
+        # Error message wording varies by platform (Windows transforms to PowerShell message),
+        # so only check that some error was recorded
+        assert state.last_error is not None
+        assert len(state.last_error) > 0
+
+    def test_file_not_found_appends_error_log(self, monkeypatch):
+        """FileNotFoundError appends an error-level log entry."""
+        import asyncio, tempfile
+        from backend.main import _spawn_and_monitor
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("not found")))
+
+        state = self._make_state()
+        tmp = tempfile.mkdtemp()
+        db_path = Path(tmp) / "features.db"
+
+        asyncio.get_event_loop().run_until_complete(
+            _spawn_and_monitor(self._make_feature(), state, db_path, self._default_settings())
+        )
+        error_entries = [e for e in state.log if e.level == "error"]
+        assert len(error_entries) >= 1
+
+    def test_raise_on_error_raises_http_exception(self, monkeypatch):
+        """With raise_on_error=True, FileNotFoundError raises HTTPException(500)."""
+        import asyncio, tempfile
+        from backend.main import _spawn_and_monitor
+        from fastapi import HTTPException
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("gone")))
+
+        state = self._make_state()
+        tmp = tempfile.mkdtemp()
+        db_path = Path(tmp) / "features.db"
+
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.get_event_loop().run_until_complete(
+                _spawn_and_monitor(self._make_feature(), state, db_path, self._default_settings(), raise_on_error=True)
+            )
+        assert exc_info.value.status_code == 500
+
+    def test_generic_exception_returns_false(self, monkeypatch):
+        """An unexpected exception during spawn returns False and resets state."""
+        import asyncio, tempfile
+        from backend.main import _spawn_and_monitor
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(ValueError("unexpected")))
+
+        state = self._make_state()
+        tmp = tempfile.mkdtemp()
+        db_path = Path(tmp) / "features.db"
+
+        result = asyncio.get_event_loop().run_until_complete(
+            _spawn_and_monitor(self._make_feature(), state, db_path, self._default_settings())
+        )
+        assert result is False
+        assert state.enabled is False
+
+    def test_generic_exception_with_raise_on_error(self, monkeypatch):
+        """With raise_on_error=True, a generic exception raises HTTPException(500)."""
+        import asyncio, tempfile
+        from backend.main import _spawn_and_monitor
+        from fastapi import HTTPException
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(ValueError("boom")))
+
+        state = self._make_state()
+        tmp = tempfile.mkdtemp()
+        db_path = Path(tmp) / "features.db"
+
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.get_event_loop().run_until_complete(
+                _spawn_and_monitor(self._make_feature(), state, db_path, self._default_settings(), raise_on_error=True)
+            )
+        assert exc_info.value.status_code == 500
+        assert "Failed to launch Claude" in exc_info.value.detail
+
+    def test_generic_exception_appends_error_log(self, monkeypatch):
+        """A generic exception appends an error-level log entry."""
+        import asyncio, tempfile
+        from backend.main import _spawn_and_monitor
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("something went wrong")))
+
+        state = self._make_state()
+        tmp = tempfile.mkdtemp()
+        db_path = Path(tmp) / "features.db"
+
+        asyncio.get_event_loop().run_until_complete(
+            _spawn_and_monitor(self._make_feature(), state, db_path, self._default_settings())
+        )
+        error_entries = [e for e in state.log if e.level == "error"]
+        assert len(error_entries) >= 1
+
+
 class TestGetNextAutopilotFeature:
     """Unit tests for get_next_autopilot_feature(session) sequencer function."""
 

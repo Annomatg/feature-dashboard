@@ -640,6 +640,56 @@ def spawn_claude_for_autopilot(feature, settings: dict, working_dir: str) -> "su
     return provider.spawn_process(feature, settings, working_dir)
 
 
+async def _spawn_and_monitor(
+    feature,
+    state: "_AutoPilotState",
+    db_path: "Path",
+    settings: dict,
+    raise_on_error: bool = False,
+) -> bool:
+    """Spawn a Claude process for *feature*, store it in *state*, and start the monitor task.
+
+    This helper owns the full spawn → store → error-reset → create-monitor-task sequence
+    that was previously duplicated between enable_autopilot() and handle_autopilot_success().
+
+    Args:
+        feature:       Feature ORM object with id, name, category, model attributes.
+        state:         Shared _AutoPilotState instance to update.
+        db_path:       Path to the active SQLite database (parent dir used as working_dir).
+        settings:      Settings dict passed to spawn_claude_for_autopilot.
+        raise_on_error: When True (HTTP context), raises HTTPException(500) on spawn failure
+                        so the caller receives a proper error response.
+
+    Returns:
+        True when the process was spawned and the monitor task was created.
+        False when spawning failed and raise_on_error is False.
+    """
+    working_dir = str(db_path.parent)
+    try:
+        proc = spawn_claude_for_autopilot(feature, settings, working_dir)
+        state.active_process = proc
+        state.monitor_task = asyncio.create_task(
+            monitor_claude_process(feature.id, proc, db_path, state)
+        )
+        return True
+    except (FileNotFoundError, RuntimeError) as e:
+        _disable_autopilot_state(state)
+        err = str(e)
+        state.last_error = err
+        _append_log(state, 'error', f"Failed to spawn Claude: {err}")
+        if raise_on_error:
+            raise HTTPException(status_code=500, detail=err)
+        return False
+    except Exception as e:
+        _disable_autopilot_state(state)
+        err = f"Failed to launch Claude: {str(e)}"
+        state.last_error = err
+        _append_log(state, 'error', err)
+        if raise_on_error:
+            raise HTTPException(status_code=500, detail=err)
+        return False
+
+
 def handle_budget_exhausted(state: "_AutoPilotState") -> None:
     """Stop auto-pilot because the session budget limit has been reached."""
     limit = state.features_completed
@@ -707,18 +757,8 @@ async def handle_autopilot_success(
     state.session_start_time = datetime.now(timezone.utc)
     state.session_prompt_snippet = f"Feature #{next_feature.id} [{next_feature.category}]"
     state.session_jsonl_path = None
-    try:
-        proc = spawn_claude_for_autopilot(next_feature, settings, str(db_path.parent))
-        state.active_process = proc
-        _append_log(state, 'info', f"Starting feature #{next_feature.id}: {next_feature.name}")
-        state.monitor_task = asyncio.create_task(
-            monitor_claude_process(next_feature.id, proc, db_path, state)
-        )
-    except (FileNotFoundError, RuntimeError) as e:
-        _disable_autopilot_state(state)
-        err = str(e)
-        state.last_error = err
-        _append_log(state, 'error', f"Failed to spawn Claude: {err}")
+    _append_log(state, 'info', f"Starting feature #{next_feature.id}: {next_feature.name}")
+    await _spawn_and_monitor(next_feature, state, db_path, settings)
 
 
 def _extract_output_snippet(output_text: str, max_lines: int = 3, max_chars: int = 200) -> str:
@@ -2525,28 +2565,10 @@ async def enable_autopilot():
         _append_log(state, 'info', f"Starting feature #{feature.id}: {feature.name}")
 
         settings = load_settings()
-        working_dir = str(_current_db_path.parent)
         feature_model = feature.model or "sonnet"
 
-        try:
-            proc = spawn_claude_for_autopilot(feature, settings, working_dir)
-            state.active_process = proc
-        except (FileNotFoundError, RuntimeError) as e:
-            _disable_autopilot_state(state)
-            err = str(e)
-            state.last_error = err
-            _append_log(state, 'error', err)
-            raise HTTPException(status_code=500, detail=err)
-        except Exception as e:
-            _disable_autopilot_state(state)
-            err = f"Failed to launch Claude: {str(e)}"
-            state.last_error = err
-            raise HTTPException(status_code=500, detail=err)
-
+        await _spawn_and_monitor(feature, state, _current_db_path, settings, raise_on_error=True)
         _append_log(state, 'info', f"Claude launched for feature #{feature.id} with model {feature_model}")
-        state.monitor_task = asyncio.create_task(
-            monitor_claude_process(feature.id, proc, _current_db_path, state)
-        )
         _write_autopilot_to_config(True)
 
         return AutoPilotStatusResponse(
