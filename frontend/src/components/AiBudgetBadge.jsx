@@ -14,10 +14,9 @@ function utilColor(pct) {
   return '#22c55e'                   // green-500
 }
 
-/** Render one usage period (5h or 7d). */
+/** Render one usage period (5h or 7d). Shows 0% when data is absent (no usage yet). */
 function PeriodLabel({ label, data }) {
-  if (!data) return null
-  const pct = Math.round(data.utilization)
+  const pct = data ? Math.round(data.utilization) : 0
   const exhausted = pct >= 100
   return (
     <span className="flex items-center gap-0.5">
@@ -52,10 +51,10 @@ function AiBudgetBadge({ testId = 'ai-budget-badge' }) {
     throwOnError: false,
   })
 
-  // Degrade silently when no data, API error, or both periods absent
-  if (!data || data.error || (!data.five_hour && !data.seven_day)) return null
+  // Degrade silently only when no data at all or API returns an error (e.g. missing credentials)
+  if (!data || data.error) return null
 
-  // Worst utilization across periods (for mobile dot color)
+  // Worst utilization across periods (for title tooltip color)
   const maxPct = Math.max(
     data.five_hour ? Math.round(data.five_hour.utilization) : 0,
     data.seven_day ? Math.round(data.seven_day.utilization) : 0,
@@ -65,7 +64,7 @@ function AiBudgetBadge({ testId = 'ai-budget-badge' }) {
     <div
       data-testid={testId}
       className="flex-shrink-0 flex items-center gap-1.5 px-2 py-1 rounded border border-border font-mono text-xs"
-      title={`AI Usage — 5h: ${data.five_hour ? Math.round(data.five_hour.utilization) + '%' : 'n/a'} | week: ${data.seven_day ? Math.round(data.seven_day.utilization) + '%' : 'n/a'}`}
+      title={`AI Usage — 5h: ${data.five_hour ? Math.round(data.five_hour.utilization) + '%' : '0%'} | week: ${data.seven_day ? Math.round(data.seven_day.utilization) + '%' : '0%'}`}
     >
       <Activity size={14} className="flex-shrink-0 text-text-secondary" />
 

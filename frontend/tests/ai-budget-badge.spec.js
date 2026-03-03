@@ -44,6 +44,14 @@ const ERROR_BUDGET = {
   error: 'Credentials not found',
 };
 
+// Represents a fresh session where credentials are valid but no usage has occurred yet
+const ZERO_BUDGET = {
+  provider: 'anthropic',
+  five_hour: null,
+  seven_day: null,
+  error: null,
+};
+
 async function setupPage(page, budgetResponse) {
   await page.route('**/api/autopilot/status', route => {
     route.fulfill({
@@ -164,6 +172,49 @@ test.describe('AiBudgetBadge — Color states', () => {
     await expect(badge).toBeVisible();
     await expect(badge).toContainText('resets');
     await expect(badge).toContainText('15:00');
+  });
+});
+
+// ── Zero utilization (valid credentials, no usage yet) ────────────────────────
+
+test.describe('AiBudgetBadge — Zero utilization (null periods, no error)', () => {
+  test('desktop badge is visible even when both periods are null', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await setupPage(page, ZERO_BUDGET);
+
+    await expect(page.getByTestId('ai-budget-badge-desktop')).toBeVisible();
+  });
+
+  test('shows "5h: 0%" when five_hour period is absent', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await setupPage(page, ZERO_BUDGET);
+
+    const badge = page.getByTestId('ai-budget-badge-desktop');
+    await expect(badge).toContainText('5h');
+    await expect(badge).toContainText('0%');
+  });
+
+  test('shows "week: 0%" when seven_day period is absent', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await setupPage(page, ZERO_BUDGET);
+
+    const badge = page.getByTestId('ai-budget-badge-desktop');
+    await expect(badge).toContainText('week');
+  });
+
+  test('mobile badge is visible at 375px with zero utilization', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await setupPage(page, ZERO_BUDGET);
+
+    await expect(page.getByTestId('ai-budget-badge-mobile')).toBeVisible();
+  });
+
+  test('no horizontal overflow at 375px with zero utilization badge', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await setupPage(page, ZERO_BUDGET);
+
+    const scrollWidth = await page.evaluate(() => document.body.scrollWidth);
+    expect(scrollWidth).toBeLessThanOrEqual(375);
   });
 });
 
