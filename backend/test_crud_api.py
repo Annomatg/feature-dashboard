@@ -3397,6 +3397,97 @@ class TestHandleAutopilotFailureRateLimit:
         assert "prompt is too long" in CLAUDE_RATE_LIMIT_PATTERNS
 
 
+class TestDisableAutopilotState:
+    """Unit tests for _disable_autopilot_state() helper."""
+
+    def test_sets_enabled_false(self):
+        """_disable_autopilot_state sets enabled=False."""
+        from backend.main import _disable_autopilot_state, _AutoPilotState
+
+        state = _AutoPilotState()
+        state.enabled = True
+        _disable_autopilot_state(state)
+
+        assert state.enabled is False
+
+    def test_clears_current_feature_id(self):
+        """_disable_autopilot_state clears current_feature_id."""
+        from backend.main import _disable_autopilot_state, _AutoPilotState
+
+        state = _AutoPilotState()
+        state.current_feature_id = 42
+        _disable_autopilot_state(state)
+
+        assert state.current_feature_id is None
+
+    def test_clears_current_feature_name(self):
+        """_disable_autopilot_state clears current_feature_name."""
+        from backend.main import _disable_autopilot_state, _AutoPilotState
+
+        state = _AutoPilotState()
+        state.current_feature_name = "My Feature"
+        _disable_autopilot_state(state)
+
+        assert state.current_feature_name is None
+
+    def test_clears_current_feature_model(self):
+        """_disable_autopilot_state clears current_feature_model."""
+        from backend.main import _disable_autopilot_state, _AutoPilotState
+
+        state = _AutoPilotState()
+        state.current_feature_model = "opus"
+        _disable_autopilot_state(state)
+
+        assert state.current_feature_model is None
+
+    def test_clears_active_process(self):
+        """_disable_autopilot_state clears active_process."""
+        from backend.main import _disable_autopilot_state, _AutoPilotState
+
+        state = _AutoPilotState()
+        state.active_process = object()
+        _disable_autopilot_state(state)
+
+        assert state.active_process is None
+
+    def test_clears_monitor_task(self):
+        """_disable_autopilot_state clears monitor_task."""
+        from backend.main import _disable_autopilot_state, _AutoPilotState
+
+        state = _AutoPilotState()
+        state.monitor_task = object()
+        _disable_autopilot_state(state)
+
+        assert state.monitor_task is None
+
+    def test_does_not_touch_other_fields(self):
+        """_disable_autopilot_state leaves unrelated fields (last_error, budget_exhausted) unchanged."""
+        from backend.main import _disable_autopilot_state, _AutoPilotState
+
+        state = _AutoPilotState()
+        state.last_error = "some error"
+        state.budget_exhausted = True
+        state.features_completed = 7
+        _disable_autopilot_state(state)
+
+        assert state.last_error == "some error"
+        assert state.budget_exhausted is True
+        assert state.features_completed == 7
+
+    def test_idempotent_on_already_disabled_state(self):
+        """Calling _disable_autopilot_state twice is safe and leaves state disabled."""
+        from backend.main import _disable_autopilot_state, _AutoPilotState
+
+        state = _AutoPilotState()
+        state.enabled = True
+        state.current_feature_id = 1
+        _disable_autopilot_state(state)
+        _disable_autopilot_state(state)
+
+        assert state.enabled is False
+        assert state.current_feature_id is None
+
+
 class TestHandleAllComplete:
     """Unit and integration tests for handle_all_complete()."""
 

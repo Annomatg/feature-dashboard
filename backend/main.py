@@ -570,6 +570,22 @@ async def monitor_manual_process(state: "_AutoPilotState") -> None:
             state.manual_monitor_task = None
 
 
+def _disable_autopilot_state(state: "_AutoPilotState") -> None:
+    """Reset the 6 shared fields that mark an active auto-pilot run as inactive.
+
+    Sets enabled=False and clears current_feature_id, current_feature_name,
+    current_feature_model, active_process, and monitor_task.  Callers that
+    need additional teardown (last_error, budget_exhausted, …) do so after
+    calling this helper.
+    """
+    state.enabled = False
+    state.current_feature_id = None
+    state.current_feature_name = None
+    state.current_feature_model = None
+    state.active_process = None
+    state.monitor_task = None
+
+
 def handle_all_complete(state: "_AutoPilotState") -> None:
     """Cleanly stop auto-pilot when no features remain.
 
@@ -577,13 +593,8 @@ def handle_all_complete(state: "_AutoPilotState") -> None:
     last_error, active_process, and monitor_task, then appends an info log
     entry indicating all tasks are done.
     """
-    state.enabled = False
-    state.current_feature_id = None
-    state.current_feature_name = None
-    state.current_feature_model = None
+    _disable_autopilot_state(state)
     state.last_error = None
-    state.active_process = None
-    state.monitor_task = None
     _append_log(state, 'info', "All tasks complete \u2014 auto-pilot disabled")
 
 
@@ -634,13 +645,8 @@ def handle_budget_exhausted(state: "_AutoPilotState") -> None:
     limit = state.features_completed
     msg = f"Session budget reached: {limit} feature{'s' if limit != 1 else ''} completed"
     _append_log(state, 'info', msg)
-    state.enabled = False
+    _disable_autopilot_state(state)
     state.budget_exhausted = True
-    state.current_feature_id = None
-    state.current_feature_name = None
-    state.current_feature_model = None
-    state.active_process = None
-    state.monitor_task = None
 
 
 async def handle_autopilot_success(
@@ -688,12 +694,7 @@ async def handle_autopilot_success(
             msg = f"Dead loop detected: Feature #{next_feature.id} skipped 3 times consecutively"
             state.last_error = msg
             _append_log(state, 'error', msg)
-            state.enabled = False
-            state.current_feature_id = None
-            state.current_feature_name = None
-            state.current_feature_model = None
-            state.active_process = None
-            state.monitor_task = None
+            _disable_autopilot_state(state)
             return
     else:
         state.consecutive_skip_count = 0
@@ -714,12 +715,7 @@ async def handle_autopilot_success(
             monitor_claude_process(next_feature.id, proc, db_path, state)
         )
     except (FileNotFoundError, RuntimeError) as e:
-        state.enabled = False
-        state.current_feature_id = None
-        state.current_feature_name = None
-        state.current_feature_model = None
-        state.active_process = None
-        state.monitor_task = None
+        _disable_autopilot_state(state)
         err = str(e)
         state.last_error = err
         _append_log(state, 'error', f"Failed to spawn Claude: {err}")
@@ -797,12 +793,7 @@ async def handle_autopilot_failure(
         state.last_error = msg
         _append_log(state, 'error', msg)
 
-    state.enabled = False
-    state.current_feature_id = None
-    state.current_feature_name = None
-    state.current_feature_model = None
-    state.active_process = None
-    state.monitor_task = None
+    _disable_autopilot_state(state)
 
 
 async def monitor_claude_process(
@@ -877,12 +868,7 @@ async def monitor_claude_process(
             )
             state.last_error = msg
             _append_log(state, 'error', msg)
-            state.enabled = False
-            state.current_feature_id = None
-            state.current_feature_name = None
-            state.current_feature_model = None
-            state.active_process = None
-            state.monitor_task = None
+            _disable_autopilot_state(state)
             return
 
         # Open a fresh DB session — the process may have updated the DB while running
@@ -2546,19 +2532,13 @@ async def enable_autopilot():
             proc = spawn_claude_for_autopilot(feature, settings, working_dir)
             state.active_process = proc
         except (FileNotFoundError, RuntimeError) as e:
-            state.enabled = False
-            state.current_feature_id = None
-            state.current_feature_name = None
-            state.current_feature_model = None
+            _disable_autopilot_state(state)
             err = str(e)
             state.last_error = err
             _append_log(state, 'error', err)
             raise HTTPException(status_code=500, detail=err)
         except Exception as e:
-            state.enabled = False
-            state.current_feature_id = None
-            state.current_feature_name = None
-            state.current_feature_model = None
+            _disable_autopilot_state(state)
             err = f"Failed to launch Claude: {str(e)}"
             state.last_error = err
             raise HTTPException(status_code=500, detail=err)
