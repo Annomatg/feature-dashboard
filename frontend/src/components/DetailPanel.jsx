@@ -181,7 +181,9 @@ function ClaudeLogSection({ featureId, inProgress }) {
     return () => clearInterval(intervalRef.current)
   }, [featureId, inProgress, fetchLog])
 
-  const entries = sessionData?.entries ?? []
+  // Only show log if it belongs to this feature
+  const isForThisFeature = sessionData?.feature_id === featureId
+  const entries = isForThisFeature ? (sessionData?.entries ?? []) : []
 
   // Auto-scroll to bottom when new entries arrive — only if already pinned to bottom.
   // useLayoutEffect ensures the scroll fires synchronously after the DOM update and
@@ -208,7 +210,7 @@ function ClaudeLogSection({ featureId, inProgress }) {
     atBottomRef.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 20
   }, [])
 
-  if (!inProgress) return null
+  if (!inProgress || !isForThisFeature) return null
 
   const formatTime = (iso) => {
     try {

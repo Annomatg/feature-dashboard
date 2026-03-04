@@ -33,6 +33,8 @@ function KanbanCard({
   isMobileDragging = false,
   /** Latest Claude session log text shown instead of recent_log for in-progress features */
   claudeLogSnippet = null,
+  /** Feature ID the snippet belongs to (only show snippet on this card) */
+  claudeLogFeatureId = null,
 }) {
   const hasDescription = feature.description && feature.description.trim().length > 0
 
@@ -190,7 +192,8 @@ function KanbanCard({
 
       {/* Footer: recent log / claude log (left) + steps count (right) */}
       {(() => {
-        const activeSnippet = feature.in_progress && claudeLogSnippet ? claudeLogSnippet : null
+        // Only show claude log snippet if this card's feature id matches
+        const activeSnippet = feature.in_progress && claudeLogSnippet && feature.id === claudeLogFeatureId ? claudeLogSnippet : null
         const displayText = activeSnippet || feature.recent_log
         const hasFooter = displayText || (feature.steps && feature.steps.length > 0)
         if (!hasFooter) return null

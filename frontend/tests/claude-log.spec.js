@@ -15,13 +15,15 @@ import { test, expect } from '@playwright/test';
 const MOCK_SESSION_EMPTY = {
   status: 200,
   contentType: 'application/json',
-  body: JSON.stringify({ entries: [], session_file: null }),
+  body: JSON.stringify({ active: true, feature_id: 2, entries: [], session_file: null }),
 };
 
 const MOCK_SESSION_WITH_ENTRIES = {
   status: 200,
   contentType: 'application/json',
   body: JSON.stringify({
+    active: true,
+    feature_id: 2, // Matches the in-progress feature (id=2)
     entries: [
       { timestamp: '2026-02-27T10:00:01.000000+00:00', entry_type: 'text', text: 'Starting feature work...' },
       { timestamp: '2026-02-27T10:00:02.000000+00:00', entry_type: 'tool_use', tool_name: 'Bash', text: 'Running command...' },
@@ -42,7 +44,7 @@ const MANY_ENTRIES = Array.from({ length: 20 }, (_, i) => ({
 const MOCK_SESSION_MANY = {
   status: 200,
   contentType: 'application/json',
-  body: JSON.stringify({ entries: MANY_ENTRIES, session_file: 'session.jsonl' }),
+  body: JSON.stringify({ active: true, feature_id: 2, entries: MANY_ENTRIES, session_file: 'session.jsonl' }),
 };
 
 /** Open the detail panel for the seeded IN PROGRESS feature (id=2). */
@@ -316,6 +318,73 @@ test.describe('Claude Log Section', () => {
       // After re-expanding, should be at the bottom again
       const atBottom = await logEl.evaluate(el => el.scrollTop + el.clientHeight >= el.scrollHeight - 20);
       expect(atBottom).toBe(true);
+    });
+  });
+
+  test.describe('feature_id filtering', () => {
+    test('log section is hidden when feature_id does not match', async ({ page }) => {
+      // Session log is for feature 99, but we're viewing feature 2
+      const mockResponse = {
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          active: true,
+          feature_id: 99, // Different from the in-progress feature (id=2)
+          entries: [
+            { timestamp: '2026-02-27T10:00:01.000000+00:00', entry_type: 'text', text: 'Working on feature 99...' },
+          ],
+          session_file: 'session.jsonl',
+        }),
+      };
+      await page.route('**/api/autopilot/session-log**', route => route.fulfill(mockResponse));
+      await openInProgressPanel(page);
+
+      // Log section should be hidden because feature_id doesn't match
+      await expect(page.getByTestId('claude-log-section')).not.toBeVisible();
+    });
+
+    test('log section is visible when feature_id matches', async ({ page }) => {
+      // Session log is for feature 2 (the in-progress feature)
+      const mockResponse = {
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          active: true,
+          feature_id: 2, // Matches the in-progress feature
+          entries: [
+            { timestamp: '2026-02-27T10:00:01.000000+00:00', entry_type: 'text', text: 'Working on feature 2...' },
+          ],
+          session_file: 'session.jsonl',
+        }),
+      };
+      await page.route('**/api/autopilot/session-log**', route => route.fulfill(mockResponse));
+      await openInProgressPanel(page);
+
+      // Log section should be visible because feature_id matches
+      await expect(page.getByTestId('claude-log-section')).toBeVisible();
+      // Check for the log entry in the log lines container
+      await expect(page.getByTestId('claude-log-lines').getByText('Working on feature 2...')).toBeVisible();
+    });
+
+    test('log section is hidden when feature_id is null', async ({ page }) => {
+      // Session log has no feature_id (e.g., no active session)
+      const mockResponse = {
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          active: true,
+          feature_id: null,
+          entries: [
+            { timestamp: '2026-02-27T10:00:01.000000+00:00', entry_type: 'text', text: 'Some log...' },
+          ],
+          session_file: 'session.jsonl',
+        }),
+      };
+      await page.route('**/api/autopilot/session-log**', route => route.fulfill(mockResponse));
+      await openInProgressPanel(page);
+
+      // Log section should be hidden because feature_id is null
+      await expect(page.getByTestId('claude-log-section')).not.toBeVisible();
     });
   });
 });

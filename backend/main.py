@@ -1372,6 +1372,7 @@ class SessionLogEntry(BaseModel):
 class SessionLogResponse(BaseModel):
     """Response for GET /api/autopilot/session-log."""
     active: bool
+    feature_id: Optional[int] = None  # ID of the feature being processed (autopilot or manual)
     session_file: Optional[str] = None
     entries: list[SessionLogEntry]
     total_entries: int
@@ -1821,9 +1822,17 @@ async def get_autopilot_session_log(limit: int = 50):
     # the session log should remain readable until the process actually exits.
     active = state.enabled or state.manual_active or state.stopping
 
+    # Determine which feature is being processed (for frontend filtering)
+    feature_id = None
+    if state.manual_active:
+        feature_id = state.manual_feature_id
+    elif state.enabled or state.stopping:
+        feature_id = state.current_feature_id
+
     if not active or state.session_start_time is None:
         return SessionLogResponse(
             active=active,
+            feature_id=feature_id,
             session_file=None,
             entries=[],
             total_entries=0,
@@ -1835,6 +1844,7 @@ async def get_autopilot_session_log(limit: int = 50):
     if projects_dir is None:
         return SessionLogResponse(
             active=active,
+            feature_id=feature_id,
             session_file=None,
             entries=[],
             total_entries=0,
@@ -1855,6 +1865,7 @@ async def get_autopilot_session_log(limit: int = 50):
     if session_file is None:
         return SessionLogResponse(
             active=active,
+            feature_id=feature_id,
             session_file=None,
             entries=[],
             total_entries=0,
@@ -1865,6 +1876,7 @@ async def get_autopilot_session_log(limit: int = 50):
 
     return SessionLogResponse(
         active=active,
+        feature_id=feature_id,
         session_file=session_file.name,
         entries=[SessionLogEntry(**e) for e in entries],
         total_entries=len(entries),

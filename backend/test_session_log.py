@@ -512,6 +512,132 @@ class TestSessionLogEndpoint:
         state.session_start_time = None
         state.session_jsonl_path = None
 
+    def test_feature_id_none_when_not_active(self):
+        """feature_id is None when no session is active."""
+        state = main_module.get_autopilot_state()
+        state.enabled = False
+        state.manual_active = False
+        state.stopping = False
+        state.session_start_time = None
+        resp = self.client.get('/api/autopilot/session-log')
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data['feature_id'] is None
+
+    def test_feature_id_from_autopilot(self, tmp_path):
+        """feature_id is current_feature_id when autopilot is enabled."""
+        since = datetime.now(timezone.utc) - timedelta(seconds=30)
+        session_file = tmp_path / 'autopilot.jsonl'
+        session_file.write_text(make_assistant_text('Working on feature'))
+
+        state = main_module.get_autopilot_state()
+        state.enabled = True
+        state.manual_active = False
+        state.stopping = False
+        state.current_feature_id = 42
+        state.session_start_time = since
+        state.session_jsonl_path = None
+
+        with patch('backend.main._get_claude_projects_dir', return_value=tmp_path):
+            with patch('backend.main._find_session_jsonl', return_value=session_file):
+                resp = self.client.get('/api/autopilot/session-log')
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data['feature_id'] == 42
+
+        # Reset
+        state.enabled = False
+        state.current_feature_id = None
+        state.session_start_time = None
+        state.session_jsonl_path = None
+
+    def test_feature_id_from_manual_launch(self, tmp_path):
+        """feature_id is manual_feature_id when manual launch is active."""
+        since = datetime.now(timezone.utc) - timedelta(seconds=30)
+        session_file = tmp_path / 'manual.jsonl'
+        session_file.write_text(make_assistant_text('Manual run'))
+
+        state = main_module.get_autopilot_state()
+        state.enabled = False
+        state.manual_active = True
+        state.stopping = False
+        state.manual_feature_id = 99
+        state.current_feature_id = 42  # Should NOT be used
+        state.session_start_time = since
+        state.session_jsonl_path = None
+
+        with patch('backend.main._get_claude_projects_dir', return_value=tmp_path):
+            with patch('backend.main._find_session_jsonl', return_value=session_file):
+                resp = self.client.get('/api/autopilot/session-log')
+
+        assert resp.status_code == 200
+        data = resp.json()
+        # Manual feature_id takes priority over current_feature_id
+        assert data['feature_id'] == 99
+
+        # Reset
+        state.manual_active = False
+        state.manual_feature_id = None
+        state.current_feature_id = None
+        state.session_start_time = None
+        state.session_jsonl_path = None
+
+    def test_feature_id_from_stopping_state(self, tmp_path):
+        """feature_id is current_feature_id when in stopping state."""
+        since = datetime.now(timezone.utc) - timedelta(seconds=30)
+        session_file = tmp_path / 'stopping.jsonl'
+        session_file.write_text(make_assistant_text('Finishing up'))
+
+        state = main_module.get_autopilot_state()
+        state.enabled = False
+        state.manual_active = False
+        state.stopping = True
+        state.current_feature_id = 55
+        state.session_start_time = since
+        state.session_jsonl_path = None
+
+        with patch('backend.main._get_claude_projects_dir', return_value=tmp_path):
+            with patch('backend.main._find_session_jsonl', return_value=session_file):
+                resp = self.client.get('/api/autopilot/session-log')
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data['feature_id'] == 55
+
+        # Reset
+        state.stopping = False
+        state.current_feature_id = None
+        state.session_start_time = None
+        state.session_jsonl_path = None
+
+    def test_feature_id_none_when_no_feature_set(self, tmp_path):
+        """feature_id is None when active but no feature id is set."""
+        since = datetime.now(timezone.utc) - timedelta(seconds=30)
+        session_file = tmp_path / 'no_feature.jsonl'
+        session_file.write_text(make_assistant_text('No feature'))
+
+        state = main_module.get_autopilot_state()
+        state.enabled = True
+        state.manual_active = False
+        state.stopping = False
+        state.current_feature_id = None
+        state.session_start_time = since
+        state.session_jsonl_path = None
+
+        with patch('backend.main._get_claude_projects_dir', return_value=tmp_path):
+            with patch('backend.main._find_session_jsonl', return_value=session_file):
+                resp = self.client.get('/api/autopilot/session-log')
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data['feature_id'] is None
+
+        # Reset
+        state.enabled = False
+        state.session_start_time = None
+        state.session_jsonl_path = None
+
 
 # ---------------------------------------------------------------------------
 # _jsonl_contains_prompt tests

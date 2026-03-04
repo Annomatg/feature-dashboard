@@ -18,6 +18,7 @@ const MOCK_SESSION_ACTIVE = {
   contentType: 'application/json',
   body: JSON.stringify({
     active: true,
+    feature_id: null, // Will be set dynamically in tests
     session_file: 'session.jsonl',
     entries: [
       { timestamp: '2026-03-02T10:00:01.000000+00:00', entry_type: 'text', tool_name: null, text: 'Working on the implementation now' },
@@ -31,6 +32,7 @@ const MOCK_SESSION_INACTIVE = {
   contentType: 'application/json',
   body: JSON.stringify({
     active: false,
+    feature_id: null,
     session_file: null,
     entries: [],
     total_entries: 0,
@@ -63,9 +65,21 @@ test.describe('Claude log in in-progress card (Feature #150)', () => {
     const feature = await createInProgressFeature(page, 'Log Snippet Active Test');
     await addComment(page, feature.id, 'Previous comment text');
 
-    // Mock the session log to return an active session with one entry
+    // Mock the session log to return an active session with one entry for this feature
     await page.route('**/api/autopilot/session-log?limit=1', route =>
-      route.fulfill(MOCK_SESSION_ACTIVE)
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          active: true,
+          feature_id: feature.id, // Match the feature being tested
+          session_file: 'session.jsonl',
+          entries: [
+            { timestamp: '2026-03-02T10:00:01.000000+00:00', entry_type: 'text', tool_name: null, text: 'Working on the implementation now' },
+          ],
+          total_entries: 1,
+        }),
+      })
     );
 
     await page.goto('/');
@@ -122,9 +136,21 @@ test.describe('Claude log in in-progress card (Feature #150)', () => {
     const feature = await res.json();
     await addComment(page, feature.id, 'Todo comment text');
 
-    // Mock an active session
+    // Mock an active session for a DIFFERENT feature (not this one)
     await page.route('**/api/autopilot/session-log?limit=1', route =>
-      route.fulfill(MOCK_SESSION_ACTIVE)
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          active: true,
+          feature_id: 99999, // Different feature - snippet should not show on this card
+          session_file: 'session.jsonl',
+          entries: [
+            { timestamp: '2026-03-02T10:00:01.000000+00:00', entry_type: 'text', tool_name: null, text: 'Working on the implementation now' },
+          ],
+          total_entries: 1,
+        }),
+      })
     );
 
     await page.goto('/');
@@ -147,7 +173,19 @@ test.describe('Claude log in in-progress card (Feature #150)', () => {
     const feature = await createInProgressFeature(page, 'Log Snippet Color Test');
 
     await page.route('**/api/autopilot/session-log?limit=1', route =>
-      route.fulfill(MOCK_SESSION_ACTIVE)
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          active: true,
+          feature_id: feature.id, // Match the feature being tested
+          session_file: 'session.jsonl',
+          entries: [
+            { timestamp: '2026-03-02T10:00:01.000000+00:00', entry_type: 'text', tool_name: null, text: 'Working on the implementation now' },
+          ],
+          total_entries: 1,
+        }),
+      })
     );
 
     await page.goto('/');
@@ -164,5 +202,53 @@ test.describe('Claude log in in-progress card (Feature #150)', () => {
 
     // Cleanup
     await page.request.delete(`${API}/api/features/${feature.id}`);
+  });
+
+  test('snippet only shows on the card matching feature_id (Feature #176)', async ({ page }) => {
+    // Create two in-progress features
+    const featureA = await createInProgressFeature(page, 'Feature A - Active Session');
+    const featureB = await createInProgressFeature(page, 'Feature B - Not Active');
+    await addComment(page, featureA.id, 'Comment on A');
+    await addComment(page, featureB.id, 'Comment on B');
+
+    // Mock session log to show feature A is being processed
+    await page.route('**/api/autopilot/session-log?limit=1', route =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          active: true,
+          feature_id: featureA.id, // Only feature A should show the snippet
+          session_file: 'session.jsonl',
+          entries: [
+            { timestamp: '2026-03-02T10:00:01.000000+00:00', entry_type: 'text', tool_name: null, text: 'Working on Feature A' },
+          ],
+          total_entries: 1,
+        }),
+      })
+    );
+
+    await page.goto('/');
+    await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+
+    // Feature A card should show the snippet
+    const cardA = page.locator(`[data-testid="kanban-card"][data-feature-id="${featureA.id}"]`);
+    await cardA.waitFor({ state: 'visible' });
+    const snippetA = cardA.locator('[data-testid="claude-log-snippet"]');
+    await expect(snippetA).toBeVisible();
+    await expect(snippetA).toContainText('Working on Feature A');
+
+    // Feature B card should NOT show the snippet (should show recent-log instead)
+    const cardB = page.locator(`[data-testid="kanban-card"][data-feature-id="${featureB.id}"]`);
+    await cardB.waitFor({ state: 'visible' });
+    const snippetB = cardB.locator('[data-testid="claude-log-snippet"]');
+    await expect(snippetB).not.toBeVisible();
+    const recentLogB = cardB.locator('[data-testid="recent-log"]');
+    await expect(recentLogB).toBeVisible();
+    await expect(recentLogB).toContainText('Comment on B');
+
+    // Cleanup
+    await page.request.delete(`${API}/api/features/${featureA.id}`);
+    await page.request.delete(`${API}/api/features/${featureB.id}`);
   });
 });

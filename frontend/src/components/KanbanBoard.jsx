@@ -169,6 +169,8 @@ function KanbanBoard() {
     queryFn: fetchSessionLogSnippet,
     refetchInterval: 3000,
   })
+  // Extract the feature_id to only show the snippet on the correct card
+  const claudeLogFeatureId = sessionLogData?.feature_id ?? null
   const claudeLogSnippet = sessionLogData?.active && sessionLogData?.entries?.length > 0
     ? sessionLogData.entries[0].text
     : null
@@ -500,6 +502,7 @@ function KanbanBoard() {
               mobileDragInsertBeforeId={mobileInsertFor('inProgress')}
               mobileDragFeatureId={mobileDrag.dragFeature?.id}
               claudeLogSnippet={claudeLogSnippet}
+              claudeLogFeatureId={claudeLogFeatureId}
             />
           </div>
 
