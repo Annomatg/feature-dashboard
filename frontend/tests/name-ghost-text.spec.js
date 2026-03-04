@@ -303,6 +303,46 @@ test.describe('Name field mobile suggestion list', () => {
     expect(await chips.count()).toBeGreaterThanOrEqual(1)
   })
 
+  test('suggestion list uses dark theme styling on mobile', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 })
+    await page.goto('/')
+    await page.waitForSelector('text=FEATURE DASHBOARD')
+
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const titleInput = page.locator('input[placeholder*="Enter feature title"]')
+    await titleInput.fill('Fea')
+
+    const suggestionList = page.locator('[data-testid="name-suggestion-list"]')
+    await expect(suggestionList).toBeVisible({ timeout: 3000 })
+
+    // Verify container has dark background (bg-surface = #2d2d2d)
+    const containerBg = await suggestionList.evaluate(el => getComputedStyle(el).backgroundColor)
+    // Expect dark background: rgb(45, 45, 45) = #2d2d2d
+    const bgMatch = containerBg.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)
+    expect(bgMatch).not.toBeNull()
+    const r = parseInt(bgMatch[1])
+    const g = parseInt(bgMatch[2])
+    const b = parseInt(bgMatch[3])
+    // Dark background should have low RGB values
+    expect(r).toBeLessThanOrEqual(60)
+    expect(g).toBeLessThanOrEqual(60)
+    expect(b).toBeLessThanOrEqual(60)
+
+    // Verify container has a border
+    const containerBorder = await suggestionList.evaluate(el => getComputedStyle(el).borderWidth)
+    expect(parseFloat(containerBorder)).toBeGreaterThan(0)
+
+    // Verify first chip has dark background
+    const firstChip = suggestionList.locator('button').first()
+    const chipBg = await firstChip.evaluate(el => getComputedStyle(el).backgroundColor)
+    const chipBgMatch = chipBg.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)
+    expect(chipBgMatch).not.toBeNull()
+    // Chip background should be dark (bg-background = #1a1a1a or bg-surface = #2d2d2d)
+    const chipR = parseInt(chipBgMatch[1])
+    expect(chipR).toBeLessThanOrEqual(60)
+  })
+
   test('suggestion list shows up to 5 chips on mobile', async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 })
     await page.goto('/')

@@ -187,7 +187,7 @@ const GhostTextInput = forwardRef(function GhostTextInput(
       {suggestions.length > 0 && (
         <div
           data-testid="name-suggestion-list"
-          className="flex flex-wrap gap-1 mt-1 md:hidden"
+          className="flex flex-wrap gap-1.5 mt-2 p-2 bg-surface border border-border rounded shadow-lg md:hidden"
           role="listbox"
           aria-label="Name suggestions"
         >
@@ -197,10 +197,10 @@ const GhostTextInput = forwardRef(function GhostTextInput(
               type="button"
               role="option"
               aria-selected={i === suggestionIndex}
-              className={`px-2 py-1 text-xs font-mono rounded border transition-colors ${
+              className={`px-2.5 py-1.5 text-xs font-mono rounded border transition-colors ${
                 i === suggestionIndex
                   ? 'bg-primary text-black border-primary'
-                  : 'bg-surface border-border text-text-primary'
+                  : 'bg-background border-border text-text-secondary hover:text-text-primary hover:border-primary/50'
               }`}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => handleSuggestionClick(suggestion)}
