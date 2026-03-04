@@ -49,6 +49,13 @@ const GhostTextInput = forwardRef(function GhostTextInput(
         `/api/autocomplete/name?prefix=${encodeURIComponent(token)}`,
         { signal: abortRef.current.signal }
       )
+      if (!res.ok) {
+        // Treat HTTP errors (4xx, 5xx) as failures - show no suggestions
+        setSuggestions([])
+        setSuggestionIndex(0)
+        setTokenLength(0)
+        return
+      }
       const data = await res.json()
       const valid = (data.suggestions ?? []).filter(s =>
         s.toLowerCase().startsWith(token.toLowerCase())
