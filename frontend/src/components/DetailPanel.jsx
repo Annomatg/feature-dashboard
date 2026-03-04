@@ -261,12 +261,16 @@ function ClaudeLogSection({ featureId, inProgress }) {
                     className={`text-xs font-mono px-1 rounded flex-shrink-0 ${
                       entry.entry_type === 'tool_use'
                         ? 'bg-blue-500/20 text-blue-400'
+                        : entry.entry_type === 'thinking'
+                        ? 'bg-purple-500/20 text-purple-400'
                         : 'bg-green-500/20 text-green-400'
                     }`}
                     data-testid="claude-log-stream-badge"
                   >
                     {entry.entry_type === 'tool_use'
                       ? (entry.tool_name?.split('__').pop() ?? 'tool')
+                      : entry.entry_type === 'thinking'
+                      ? 'think'
                       : 'text'}
                   </span>
                   <span className="text-xs font-mono text-text-primary break-all min-w-0">

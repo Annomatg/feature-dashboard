@@ -459,6 +459,17 @@ def _parse_jsonl_log(jsonl_file: Path, limit: int = 50) -> list[dict]:
                         'tool_name': None,
                         'text': text[:200],
                     })
+            elif item_type == 'thinking':
+                # Handle "thinking" content type from extended thinking models
+                thinking_text = item.get('thinking', '').strip()
+                if thinking_text:
+                    thinking_text = thinking_text.replace('\n', ' ').replace('\r', '')
+                    entries.append({
+                        'timestamp': timestamp,
+                        'entry_type': 'thinking',
+                        'tool_name': None,
+                        'text': thinking_text[:200],
+                    })
 
     return entries[-limit:] if len(entries) > limit else entries
 

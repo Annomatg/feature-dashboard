@@ -25,7 +25,8 @@ const MOCK_SESSION_WITH_ENTRIES = {
     entries: [
       { timestamp: '2026-02-27T10:00:01.000000+00:00', entry_type: 'text', text: 'Starting feature work...' },
       { timestamp: '2026-02-27T10:00:02.000000+00:00', entry_type: 'tool_use', tool_name: 'Bash', text: 'Running command...' },
-      { timestamp: '2026-02-27T10:00:03.000000+00:00', entry_type: 'text', text: 'Done.' },
+      { timestamp: '2026-02-27T10:00:03.000000+00:00', entry_type: 'thinking', text: 'Analyzing the codebase...' },
+      { timestamp: '2026-02-27T10:00:04.000000+00:00', entry_type: 'text', text: 'Done.' },
     ],
     session_file: 'session.jsonl',
   }),
@@ -102,29 +103,34 @@ test.describe('Claude Log Section', () => {
     const logLines = page.getByTestId('claude-log-lines');
     await expect(logLines).toBeVisible();
 
-    // All three entries should be rendered
+    // All four entries should be rendered
     await expect(logLines.getByText('Starting feature work...')).toBeVisible();
     await expect(logLines.getByText('Running command...')).toBeVisible();
+    await expect(logLines.getByText('Analyzing the codebase...')).toBeVisible();
     await expect(logLines.getByText('Done.')).toBeVisible();
 
     // Stream badges present
     const badges = logLines.getByTestId('claude-log-stream-badge');
-    await expect(badges).toHaveCount(3);
+    await expect(badges).toHaveCount(4);
   });
 
-  test('tool_use badge is blue, text badge is green', async ({ page }) => {
+  test('tool_use badge is blue, thinking badge is purple, text badge is green', async ({ page }) => {
     await page.route('**/api/autopilot/session-log**', route => route.fulfill(MOCK_SESSION_WITH_ENTRIES));
     await openInProgressPanel(page);
 
     const badges = page.getByTestId('claude-log-stream-badge');
     const first = badges.nth(0);  // text entry
     const second = badges.nth(1); // tool_use entry
+    const third = badges.nth(2);  // thinking entry
 
     await expect(first).toHaveText('text');
     await expect(first).toHaveClass(/text-green-400/);
 
     await expect(second).toHaveText('Bash');
     await expect(second).toHaveClass(/text-blue-400/);
+
+    await expect(third).toHaveText('think');
+    await expect(third).toHaveClass(/text-purple-400/);
   });
 
   test('header shows total entry count', async ({ page }) => {
@@ -132,7 +138,7 @@ test.describe('Claude Log Section', () => {
     await openInProgressPanel(page);
 
     const toggle = page.getByTestId('claude-log-toggle');
-    await expect(toggle).toContainText('3 entries');
+    await expect(toggle).toContainText('4 entries');
   });
 
   test('collapse toggle hides log lines', async ({ page }) => {

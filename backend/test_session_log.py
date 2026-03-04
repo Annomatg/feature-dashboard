@@ -175,18 +175,50 @@ class TestParseJsonlLog:
         assert len(entries) == 1
         assert entries[0]['tool_name'] == 'Read'
 
-    def test_skips_thinking_entries(self, tmp_path):
+    def test_parses_thinking_content(self, tmp_path):
+        """Parse 'thinking' content type from extended thinking models (e.g., zai-org/glm-5)."""
         f = tmp_path / 'session.jsonl'
         content = make_jsonl_line({
             'type': 'assistant',
             'timestamp': '2026-01-01T00:00:00Z',
             'message': {
-                'content': [{'type': 'thinking', 'thinking': 'internal thoughts'}]
+                'content': [{'type': 'thinking', 'thinking': 'I need to analyze this code'}]
             }
         })
         f.write_text(content)
         entries = _parse_jsonl_log(f)
-        assert len(entries) == 0
+        assert len(entries) == 1
+        assert entries[0]['entry_type'] == 'thinking'
+        assert 'analyze this code' in entries[0]['text']
+
+    def test_thinking_text_truncated_to_200(self, tmp_path):
+        """Thinking text is truncated to 200 chars like regular text."""
+        f = tmp_path / 'session.jsonl'
+        long_thinking = 'x' * 500
+        content = make_jsonl_line({
+            'type': 'assistant',
+            'timestamp': '2026-01-01T00:00:00Z',
+            'message': {
+                'content': [{'type': 'thinking', 'thinking': long_thinking}]
+            }
+        })
+        f.write_text(content)
+        entries = _parse_jsonl_log(f)
+        assert len(entries[0]['text']) <= 200
+
+    def test_thinking_newlines_replaced(self, tmp_path):
+        """Thinking text has newlines replaced with spaces."""
+        f = tmp_path / 'session.jsonl'
+        content = make_jsonl_line({
+            'type': 'assistant',
+            'timestamp': '2026-01-01T00:00:00Z',
+            'message': {
+                'content': [{'type': 'thinking', 'thinking': 'line1\nline2\nline3'}]
+            }
+        })
+        f.write_text(content)
+        entries = _parse_jsonl_log(f)
+        assert '\n' not in entries[0]['text']
 
     def test_respects_limit(self, tmp_path):
         f = tmp_path / 'session.jsonl'
@@ -246,6 +278,27 @@ class TestParseJsonlLog:
         f.write_text(content)
         entries = _parse_jsonl_log(f)
         assert len(entries) == 2
+
+    def test_mixed_content_types(self, tmp_path):
+        """Parse tool_use, text, and thinking content in the same message."""
+        f = tmp_path / 'session.jsonl'
+        content = make_jsonl_line({
+            'type': 'assistant',
+            'timestamp': '2026-01-01T00:00:00Z',
+            'message': {
+                'content': [
+                    {'type': 'thinking', 'thinking': 'Let me analyze this'},
+                    {'type': 'text', 'text': 'I will now fix the bug.'},
+                    {'type': 'tool_use', 'name': 'Read', 'input': {'file_path': 'main.py'}},
+                ]
+            }
+        })
+        f.write_text(content)
+        entries = _parse_jsonl_log(f)
+        assert len(entries) == 3
+        assert entries[0]['entry_type'] == 'thinking'
+        assert entries[1]['entry_type'] == 'text'
+        assert entries[2]['entry_type'] == 'tool_use'
 
 
 # ---------------------------------------------------------------------------
