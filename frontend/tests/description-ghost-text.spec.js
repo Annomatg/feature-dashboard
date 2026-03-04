@@ -9,6 +9,66 @@ import { test, expect } from '@playwright/test'
  * entries so that /api/autocomplete/description returns real suggestions.
  */
 
+test.describe('Description field ghost text visual distinction', () => {
+  test('ghost text has distinct color from typed text', async ({ page }) => {
+    await page.goto('/')
+    await page.waitForSelector('text=FEATURE DASHBOARD')
+
+    // Open the new-feature card
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const descTextarea = page.locator('textarea[placeholder*="Describe"]')
+    await descTextarea.fill('fea')
+
+    const ghost = page.locator('[data-testid="description-ghost-text"]')
+    await expect(ghost).toBeVisible({ timeout: 3000 })
+
+    // Get the computed color of the ghost text suffix span
+    const ghostSuffixSpan = ghost.locator('span').nth(1) // Second span contains the ghost suffix
+    const ghostColor = await ghostSuffixSpan.evaluate(el => getComputedStyle(el).color)
+
+    // Get the computed color of the textarea text
+    const textareaColor = await descTextarea.evaluate(el => getComputedStyle(el).color)
+
+    // Ghost text color should be different from textarea text color
+    expect(ghostColor).not.toBe(textareaColor)
+
+    // Verify ghost text has the expected gray color (text-gray-500 = #6b7280)
+    const ghostRgb = ghostColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)
+    expect(ghostRgb).not.toBeNull()
+    const r = parseInt(ghostRgb[1])
+    const g = parseInt(ghostRgb[2])
+    const b = parseInt(ghostRgb[3])
+    // Allow some tolerance for color rendering
+    expect(r).toBeGreaterThanOrEqual(100)
+    expect(r).toBeLessThanOrEqual(120)
+    expect(g).toBeGreaterThanOrEqual(107)
+    expect(g).toBeLessThanOrEqual(127)
+    expect(b).toBeGreaterThanOrEqual(120)
+    expect(b).toBeLessThanOrEqual(140)
+  })
+
+  test('ghost text uses same font as textarea', async ({ page }) => {
+    await page.goto('/')
+    await page.waitForSelector('text=FEATURE DASHBOARD')
+
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const descTextarea = page.locator('textarea[placeholder*="Describe"]')
+    await descTextarea.fill('fea')
+
+    const ghost = page.locator('[data-testid="description-ghost-text"]')
+    await expect(ghost).toBeVisible({ timeout: 3000 })
+
+    const ghostSuffixSpan = ghost.locator('span').nth(1)
+    const ghostFont = await ghostSuffixSpan.evaluate(el => getComputedStyle(el).fontFamily)
+    const textareaFont = await descTextarea.evaluate(el => getComputedStyle(el).fontFamily)
+
+    // Both should use the same font family (Inter/sans-serif)
+    expect(ghostFont).toBe(textareaFont)
+  })
+})
+
 test.describe('Description field ghost text (desktop)', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')

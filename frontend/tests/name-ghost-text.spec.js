@@ -8,6 +8,69 @@ import { test, expect } from '@playwright/test'
  * so that /api/autocomplete/name returns real suggestions.
  */
 
+test.describe('Name field ghost text visual distinction', () => {
+  test('ghost text has distinct color from typed text', async ({ page }) => {
+    await page.goto('/')
+    await page.waitForSelector('text=FEATURE DASHBOARD')
+
+    // Open the new-feature card
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const titleInput = page.locator('input[placeholder*="Enter feature title"]')
+    await titleInput.fill('Fea')
+
+    const ghost = page.locator('[data-testid="name-ghost-text"]')
+    await expect(ghost).toBeVisible({ timeout: 3000 })
+
+    // Get the computed color of the ghost text suffix span
+    const ghostSuffixSpan = ghost.locator('span').nth(1) // Second span contains the ghost suffix
+    const ghostColor = await ghostSuffixSpan.evaluate(el => getComputedStyle(el).color)
+
+    // Get the computed color of the input text
+    const inputColor = await titleInput.evaluate(el => getComputedStyle(el).color)
+
+    // Ghost text color should be different from input text color
+    // Input text is white (#ffffff or rgb(255, 255, 255))
+    // Ghost text should be gray-500 (#6b7280 or rgb(107, 114, 128))
+    expect(ghostColor).not.toBe(inputColor)
+
+    // Verify ghost text has the expected gray color (text-gray-500 = #6b7280)
+    // RGB values: 107, 114, 128
+    const ghostRgb = ghostColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)
+    expect(ghostRgb).not.toBeNull()
+    const r = parseInt(ghostRgb[1])
+    const g = parseInt(ghostRgb[2])
+    const b = parseInt(ghostRgb[3])
+    // Allow some tolerance for color rendering
+    expect(r).toBeGreaterThanOrEqual(100)
+    expect(r).toBeLessThanOrEqual(120)
+    expect(g).toBeGreaterThanOrEqual(107)
+    expect(g).toBeLessThanOrEqual(127)
+    expect(b).toBeGreaterThanOrEqual(120)
+    expect(b).toBeLessThanOrEqual(140)
+  })
+
+  test('ghost text uses same font as input', async ({ page }) => {
+    await page.goto('/')
+    await page.waitForSelector('text=FEATURE DASHBOARD')
+
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const titleInput = page.locator('input[placeholder*="Enter feature title"]')
+    await titleInput.fill('Fea')
+
+    const ghost = page.locator('[data-testid="name-ghost-text"]')
+    await expect(ghost).toBeVisible({ timeout: 3000 })
+
+    const ghostSuffixSpan = ghost.locator('span').nth(1)
+    const ghostFont = await ghostSuffixSpan.evaluate(el => getComputedStyle(el).fontFamily)
+    const inputFont = await titleInput.evaluate(el => getComputedStyle(el).fontFamily)
+
+    // Both should use the same font family (Inter/sans-serif)
+    expect(ghostFont).toBe(inputFont)
+  })
+})
+
 test.describe('Name field ghost text (desktop)', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')

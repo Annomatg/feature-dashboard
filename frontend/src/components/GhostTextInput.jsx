@@ -171,7 +171,7 @@ const GhostTextInput = forwardRef(function GhostTextInput(
         >
           {/* Transparent span positions the ghost suffix after the typed text */}
           <span className="text-transparent whitespace-pre select-none">{value}</span>
-          <span className="text-text-secondary opacity-40 whitespace-pre select-none">{ghostSuffix}</span>
+          <span className="text-gray-500 whitespace-pre select-none">{ghostSuffix}</span>
         </div>
       )}
       <input

@@ -173,7 +173,7 @@ const GhostTextArea = forwardRef(function GhostTextArea(
         >
           {/* Transparent span positions the ghost suffix after the typed text */}
           <span className="text-transparent select-none">{value}</span>
-          <span className="text-text-secondary opacity-40 select-none">{ghostSuffix}</span>
+          <span className="text-gray-500 select-none">{ghostSuffix}</span>
         </div>
       )}
       <textarea
