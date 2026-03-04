@@ -232,6 +232,28 @@ test.describe('Description field ghost text (desktop)', () => {
     await expect(descTextarea).toHaveValue('fea')
   })
 
+  test('Enter dismisses ghost text in description field without accepting suggestion', async ({ page }) => {
+    await page.locator('button[aria-label="Add feature to TODO"]').click()
+
+    const descTextarea = page.locator('textarea[placeholder*="Describe"]')
+    await descTextarea.fill('fea')
+
+    const ghost = page.locator('[data-testid="description-ghost-text"]')
+    await expect(ghost).toBeVisible({ timeout: 3000 })
+
+    // Press Enter — ghost text should disappear
+    // For textarea, Enter adds a newline (normal behavior)
+    // The suggestion should NOT be accepted (value should not become "feature..." or similar)
+    await descTextarea.press('Enter')
+
+    await expect(ghost).not.toBeVisible()
+    // Value should start with 'fea' - either 'fea\n' (normal Enter in textarea) or 'fea' depending on form handling
+    const value = await descTextarea.inputValue()
+    expect(value.startsWith('fea')).toBe(true)
+    // Should NOT contain the full suggestion (e.g., "feature" or "features")
+    expect(value).not.toContain('feature')
+  })
+
   test('ghost text not visible on mobile viewport in description field', async ({ page }) => {
     // Set a narrow (mobile) viewport — below the md breakpoint (768px)
     await page.setViewportSize({ width: 375, height: 812 })

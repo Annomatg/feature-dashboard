@@ -125,6 +125,11 @@ const GhostTextArea = forwardRef(function GhostTextArea(
         setSuggestions([])
         setSuggestionIndex(0)
         setTokenLength(0)
+      } else if (e.key === 'Enter') {
+        // Enter should dismiss suggestions but allow normal form submission
+        setSuggestions([])
+        setSuggestionIndex(0)
+        setTokenLength(0)
       }
     }
     onKeyDown?.(e)
