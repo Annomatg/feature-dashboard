@@ -34,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sqlalchemy import func as sa_func
 
-from api.database import Comment, DescriptionToken, Feature, NameToken, create_database
+from api.database import CategoryToken, Comment, DescriptionToken, Feature, NameToken, create_database
 from api.tokens import normalize_tokens
 from backend.providers import REGISTRY, get_provider
 
@@ -1664,6 +1664,30 @@ def get_autocomplete_description(prefix: str = ""):
         session.close()
 
 
+@app.get("/api/autocomplete/category")
+def get_autocomplete_category(prefix: str = ""):
+    """Return up to 5 category token suggestions matching the given prefix.
+
+    Returns an empty suggestion list if the prefix is shorter than 3 characters.
+    Results are ordered by usage_count descending.
+    """
+    if len(prefix) < 3:
+        return {"suggestions": []}
+
+    session = get_session()
+    try:
+        rows = (
+            session.query(CategoryToken.token)
+            .filter(CategoryToken.token.like(f"{prefix}%"))
+            .order_by(CategoryToken.usage_count.desc())
+            .limit(5)
+            .all()
+        )
+        return {"suggestions": [row.token for row in rows]}
+    finally:
+        session.close()
+
+
 # ---------------------------------------------------------------------------
 # Feature stream — SSE endpoint for immediate board refresh
 # ---------------------------------------------------------------------------
@@ -1935,6 +1959,14 @@ async def create_feature(request: CreateFeatureRequest):
                 existing.usage_count += 1
             else:
                 session.add(DescriptionToken(token=token, usage_count=1))
+
+        # Upsert category_tokens for each token in the new feature's category
+        for token in set(normalize_tokens(new_feature.category)):
+            existing = session.query(CategoryToken).filter(CategoryToken.token == token).first()
+            if existing:
+                existing.usage_count += 1
+            else:
+                session.add(CategoryToken(token=token, usage_count=1))
         session.commit()
 
         return feature_to_response(new_feature, {})
@@ -2000,6 +2032,16 @@ async def update_feature(feature_id: int, request: UpdateFeatureRequest):
                     existing.usage_count += 1
                 else:
                     session.add(DescriptionToken(token=token, usage_count=1))
+            session.commit()
+
+        # Upsert category_tokens if category was updated (append-only, no decrement)
+        if request.category is not None:
+            for token in set(normalize_tokens(feature.category)):
+                existing = session.query(CategoryToken).filter(CategoryToken.token == token).first()
+                if existing:
+                    existing.usage_count += 1
+                else:
+                    session.add(CategoryToken(token=token, usage_count=1))
             session.commit()
 
         return feature_to_response(feature, get_comment_counts(session, [feature.id]), get_recent_logs(session, [feature.id]))

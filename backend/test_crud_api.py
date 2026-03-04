@@ -26,7 +26,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from backend.main import app, get_session
-from api.database import create_database, DescriptionToken, Feature, NameToken
+from api.database import CategoryToken, create_database, DescriptionToken, Feature, NameToken
 
 
 @pytest.fixture
@@ -5824,6 +5824,138 @@ class TestAutocompleteDescriptionEndpoint:
         response = client.get("/api/autocomplete/description")
         assert response.status_code == 200
         assert response.json() == {"suggestions": []}
+
+
+class TestAutocompleteCategoryEndpoint:
+    """Tests for GET /api/autocomplete/category"""
+
+    def test_prefix_too_short_returns_empty(self, client):
+        """Returns empty suggestions when prefix is shorter than 3 characters."""
+        for prefix in ["", "a", "fr"]:
+            response = client.get(f"/api/autocomplete/category?prefix={prefix}")
+            assert response.status_code == 200
+            assert response.json() == {"suggestions": []}
+
+    def test_prefix_exact_three_chars_returns_results(self, client):
+        """Returns suggestions when prefix is exactly 3 characters."""
+        import backend.main as main_module
+
+        # Seed category_tokens directly
+        session = main_module.get_session()
+        try:
+            session.add(CategoryToken(token="category", usage_count=5))
+            session.add(CategoryToken(token="cat", usage_count=3))
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/autocomplete/category?prefix=cat")
+        assert response.status_code == 200
+        data = response.json()
+        assert "suggestions" in data
+        assert "category" in data["suggestions"]
+        assert "cat" in data["suggestions"]
+
+    def test_no_match_returns_empty_array(self, client):
+        """Returns empty suggestions when no token matches the prefix."""
+        response = client.get("/api/autocomplete/category?prefix=xyz")
+        assert response.status_code == 200
+        assert response.json() == {"suggestions": []}
+
+    def test_results_ordered_by_usage_count_desc(self, client):
+        """Suggestions are ordered by usage_count descending."""
+        import backend.main as main_module
+
+        session = main_module.get_session()
+        try:
+            session.add(CategoryToken(token="backend", usage_count=10))
+            session.add(CategoryToken(token="backlog", usage_count=20))
+            session.add(CategoryToken(token="backup", usage_count=5))
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/autocomplete/category?prefix=back")
+        assert response.status_code == 200
+        suggestions = response.json()["suggestions"]
+        # backlog(20) > backend(10) > backup(5)
+        assert "backlog" in suggestions
+        assert "backend" in suggestions
+        assert suggestions.index("backlog") < suggestions.index("backend")
+        assert suggestions.index("backend") < suggestions.index("backup")
+
+    def test_returns_at_most_five_suggestions(self, client):
+        """Returns no more than 5 suggestions."""
+        import backend.main as main_module
+
+        session = main_module.get_session()
+        try:
+            for i in range(8):
+                session.add(CategoryToken(token=f"cat{i:02d}", usage_count=i))
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/autocomplete/category?prefix=cat")
+        assert response.status_code == 200
+        assert len(response.json()["suggestions"]) <= 5
+
+    def test_missing_prefix_returns_empty(self, client):
+        """Returns empty suggestions when prefix parameter is omitted."""
+        response = client.get("/api/autocomplete/category")
+        assert response.status_code == 200
+        assert response.json() == {"suggestions": []}
+
+    def test_create_feature_populates_category_tokens(self, client):
+        """Creating a feature populates category_tokens with tokens from the category."""
+        import backend.main as main_module
+
+        # Create a feature with a category
+        response = client.post("/api/features", json={
+            "name": "Test Feature",
+            "description": "Test description",
+            "category": "Frontend UI",
+            "steps": ["Step 1"]
+        })
+        assert response.status_code == 201
+
+        # Check category_tokens were populated
+        session = main_module.get_session()
+        try:
+            tokens = {row.token: row.usage_count for row in session.query(CategoryToken).all()}
+            # "frontend" and "ui" are the tokens from "Frontend UI"
+            assert "frontend" in tokens or "ui" in tokens
+        finally:
+            session.close()
+
+    def test_update_feature_category_populates_category_tokens(self, client):
+        """Updating a feature's category populates category_tokens with new tokens."""
+        import backend.main as main_module
+
+        # Create a feature
+        response = client.post("/api/features", json={
+            "name": "Test Feature",
+            "description": "Test description",
+            "category": "Backend",
+            "steps": ["Step 1"]
+        })
+        assert response.status_code == 201
+        feature_id = response.json()["id"]
+
+        # Update the category
+        response = client.put(f"/api/features/{feature_id}", json={
+            "category": "API Service"
+        })
+        assert response.status_code == 200
+
+        # Check category_tokens were populated with new tokens
+        session = main_module.get_session()
+        try:
+            tokens = {row.token: row.usage_count for row in session.query(CategoryToken).all()}
+            # "api" and "service" are the tokens from "API Service"
+            assert "api" in tokens or "service" in tokens
+        finally:
+            session.close()
 
 
 class TestAutocompletePerformance:

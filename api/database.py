@@ -49,6 +49,22 @@ class DescriptionToken(Base):
         }
 
 
+class CategoryToken(Base):
+    """Normalized word tokens extracted from feature categories with frequency counts."""
+
+    __tablename__ = "category_tokens"
+
+    token = Column(Text, primary_key=True)
+    usage_count = Column(Integer, nullable=False, default=0, server_default="0")
+
+    def to_dict(self) -> dict:
+        """Convert token to dictionary for JSON serialization."""
+        return {
+            "token": self.token,
+            "usage_count": self.usage_count,
+        }
+
+
 class Comment(Base):
     """Comment model for storing notes/results attached to a feature."""
 
@@ -240,6 +256,22 @@ def _migration_v7(engine) -> None:
             conn.commit()
 
 
+def _migration_v8(engine) -> None:
+    """v8: Create category_tokens table for storing normalized word tokens from feature categories."""
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='category_tokens'"))
+        if result.fetchone() is None:
+            conn.execute(text("""
+                CREATE TABLE category_tokens (
+                    token TEXT PRIMARY KEY,
+                    usage_count INTEGER NOT NULL DEFAULT 0
+                )
+            """))
+            conn.commit()
+
+
 _MIGRATIONS = [
     (1, _migration_v1),
     (2, _migration_v2),
@@ -248,6 +280,7 @@ _MIGRATIONS = [
     (5, _migration_v5),
     (6, _migration_v6),
     (7, _migration_v7),
+    (8, _migration_v8),
 ]
 
 

@@ -14,7 +14,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from api.database import DescriptionToken, Feature, NameToken, create_database
+from api.database import CategoryToken, DescriptionToken, Feature, NameToken, create_database
 from api.tokens import normalize_tokens
 
 
@@ -124,6 +124,63 @@ def backfill_description_tokens(session_maker: sessionmaker) -> int:
         session.commit()
         total = len(token_counts)
         print(f"Backfilled {total} distinct tokens into description_tokens")
+        return total
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def tokenize_category(category: str) -> list:
+    """Tokenize a feature category into normalized word tokens.
+
+    Delegates to the shared :func:`api.tokens.normalize_tokens` function.
+
+    Args:
+        category: Raw feature category string.
+
+    Returns:
+        List of normalized token strings.
+    """
+    return normalize_tokens(category)
+
+
+def backfill_category_tokens(session_maker: sessionmaker) -> int:
+    """Populate category_tokens from all existing feature categories.
+
+    Reads every row from features.category, tokenizes the text, and upserts
+    the aggregated usage counts into category_tokens.
+
+    Idempotent: if category_tokens already contains rows the function returns
+    -1 and makes no changes.
+
+    Args:
+        session_maker: SQLAlchemy session factory bound to the target DB.
+
+    Returns:
+        Number of distinct tokens inserted, or -1 if the table was not empty
+        (guard skipped the backfill).
+    """
+    session: Session = session_maker()
+    try:
+        existing_count = session.query(CategoryToken).count()
+        if existing_count > 0:
+            print(f"category_tokens already has {existing_count} tokens, skipping backfill")
+            return -1
+
+        categories = [row[0] for row in session.query(Feature.category).all()]
+
+        token_counts: Counter = Counter()
+        for cat in categories:
+            token_counts.update(tokenize_category(cat))
+
+        for token, count in token_counts.items():
+            session.add(CategoryToken(token=token, usage_count=count))
+
+        session.commit()
+        total = len(token_counts)
+        print(f"Backfilled {total} distinct tokens into category_tokens")
         return total
     except Exception:
         session.rollback()
@@ -272,6 +329,7 @@ def migrate_all_dashboards(config_path: Optional[Path] = None) -> None:
             print(f"  OK: {db_path}")
             backfill_name_tokens(session_maker)
             backfill_description_tokens(session_maker)
+            backfill_category_tokens(session_maker)
         except Exception as e:
             print(f"  ERROR: {e}")
 

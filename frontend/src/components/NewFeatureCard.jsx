@@ -94,13 +94,16 @@ function NewFeatureCard({ lane, onSave, onCancel, accentColor }) {
         <label className="block text-xs font-mono text-text-secondary mb-1">
           Category
         </label>
-        <input
+        <GhostTextInput
           type="text"
           value={category}
           onChange={(e) => setCategory(e.target.value)}
           placeholder="e.g., Frontend, Backend, API..."
           className="w-full bg-background border border-border rounded px-3 py-2 text-sm text-text-primary placeholder-text-secondary focus:outline-none focus:border-primary transition-colors"
           maxLength={100}
+          autocompleteEndpoint="/api/autocomplete/category"
+          suggestionListTestId="category-suggestion-list"
+          ghostTextTestId="category-ghost-text"
         />
       </div>
 

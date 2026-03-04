@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHand
  * GhostTextInput — wraps a text <input> with inline ghost-text autocomplete.
  *
  * On desktop (>= md / 768 px) it fetches up to 5 suggestions from
- * /api/autocomplete/name for the token currently being typed at the cursor,
+ * the specified autocomplete endpoint for the token currently being typed at the cursor,
  * then renders the suffix as a semi-transparent overlay so it looks like an
  * inline hint.  Pressing Tab accepts the suggestion.
  *
@@ -14,9 +14,18 @@ import { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHand
  * On mobile (< md) the ghost overlay is hidden via Tailwind's `hidden md:flex`,
  * and instead a horizontal chip list (data-testid="name-suggestion-list") is
  * rendered below the input.  Tapping a chip accepts the suggestion.
+ *
+ * Props:
+ *   - value: input value
+ *   - onChange: change handler
+ *   - className: CSS classes
+ *   - onKeyDown: keydown handler
+ *   - autocompleteEndpoint: API endpoint for suggestions (default: "/api/autocomplete/name")
+ *   - suggestionListTestId: test ID for the suggestion list (default: "name-suggestion-list")
+ *   - ghostTextTestId: test ID for the ghost text (default: "name-ghost-text")
  */
 const GhostTextInput = forwardRef(function GhostTextInput(
-  { value, onChange, className, onKeyDown, ...props },
+  { value, onChange, className, onKeyDown, autocompleteEndpoint = '/api/autocomplete/name', suggestionListTestId = 'name-suggestion-list', ghostTextTestId = 'name-ghost-text', ...props },
   ref
 ) {
   const [suggestions, setSuggestions] = useState([])
@@ -46,7 +55,7 @@ const GhostTextInput = forwardRef(function GhostTextInput(
     abortRef.current = new AbortController()
     try {
       const res = await fetch(
-        `/api/autocomplete/name?prefix=${encodeURIComponent(token)}`,
+        `${autocompleteEndpoint}?prefix=${encodeURIComponent(token)}`,
         { signal: abortRef.current.signal }
       )
       if (!res.ok) {
@@ -178,7 +187,7 @@ const GhostTextInput = forwardRef(function GhostTextInput(
       {showGhost && (
         <div
           aria-hidden="true"
-          data-testid="name-ghost-text"
+          data-testid={ghostTextTestId}
           className="hidden md:flex absolute inset-0 px-3 py-2 text-sm pointer-events-none items-center overflow-hidden"
         >
           {/* Transparent span positions the ghost suffix after the typed text */}
@@ -198,10 +207,10 @@ const GhostTextInput = forwardRef(function GhostTextInput(
       {/* Mobile suggestion chips — hidden on desktop via md:hidden */}
       {suggestions.length > 0 && (
         <div
-          data-testid="name-suggestion-list"
+          data-testid={suggestionListTestId}
           className="flex flex-wrap gap-1.5 mt-2 p-2 bg-surface border border-border rounded shadow-lg md:hidden"
           role="listbox"
-          aria-label="Name suggestions"
+          aria-label="Suggestions"
         >
           {suggestions.slice(0, 5).map((suggestion, i) => (
             <button
