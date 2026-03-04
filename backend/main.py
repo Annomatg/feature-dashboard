@@ -5,6 +5,11 @@ Feature Dashboard Backend API
 FastAPI server exposing feature data from SQLite database.
 """
 
+# Load environment variables from .env file FIRST (before other imports)
+from dotenv import load_dotenv
+from pathlib import Path
+load_dotenv(Path(__file__).parent.parent / ".env")
+
 import asyncio
 import json
 import secrets
@@ -17,7 +22,6 @@ import urllib.error
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Header, HTTPException
@@ -2515,7 +2519,6 @@ async def enable_autopilot():
         # against the state we are about to set for the new run.
         if state.monitor_task is not None:
             state.monitor_task.cancel()
-            state.monitor_task = None
         # Attempt to kill the old orphaned process so it does not interfere with
         # the new Claude run (especially on Windows where the child may outlive
         # the PowerShell wrapper).
@@ -2524,11 +2527,8 @@ async def enable_autopilot():
                 state.active_process.terminate()
             except Exception:
                 pass
-            state.active_process = None
+        _disable_autopilot_state(state)
         state.stopping = False
-        state.current_feature_id = None
-        state.current_feature_name = None
-        state.current_feature_model = None
 
     session = get_session()
     try:
