@@ -212,10 +212,19 @@ async def monitor_manual_process(state: "_AutoPilotState") -> None:
 
     If the process has stdout/stderr pipes (hidden-execution mode) the output is
     captured into ``_claude_process_logs`` keyed by feature_id.
+
+    When ``process`` is None (interactive terminal launch), there is no handle to
+    wait on.  The function returns immediately so that ``manual_active`` stays True
+    and the JSONL session-log remains readable while Claude works in the terminal.
     """
     process = state.manual_process
     feature_id = state.manual_feature_id
     feature_name = state.manual_feature_name
+
+    # Interactive mode: Claude opened in a terminal; no process handle to wait on.
+    # Leave manual_active=True so the session log stays readable.
+    if process is None:
+        return
 
     # Set up log buffer and reader tasks if the process has pipes
     log: Optional[ClaudeProcessLog] = None

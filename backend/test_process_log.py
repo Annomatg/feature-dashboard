@@ -7,6 +7,8 @@ Tests cover:
 - ClaudeProcessLog append and maxlen behaviour
 - _claude_process_logs lifecycle via monitor_claude_process (created / cleaned up)
 - _read_stream_to_buffer reading lines from a BytesIO-like object
+- monitor_manual_process with None process (interactive terminal mode)
+- monitor_manual_process with a real process handle (hidden mode)
 """
 
 import asyncio
@@ -320,3 +322,103 @@ class TestClaudeProcessLogsLifecycle:
         texts = {line.text for line in lines}
         assert "hello stdout" in texts
         assert "hello stderr" in texts
+
+
+# ---------------------------------------------------------------------------
+# monitor_manual_process tests
+# ---------------------------------------------------------------------------
+
+class TestMonitorManualProcess:
+    """Tests for monitor_manual_process — covers interactive (None process) and hidden modes."""
+
+    def _run(self, coro):
+        return asyncio.run(coro)
+
+    def _make_state(self, feature_id=50, feature_name="Test Feature", process=None):
+        state = main_module._AutoPilotState()
+        state.manual_active = True
+        state.manual_feature_id = feature_id
+        state.manual_feature_name = feature_name
+        state.manual_process = process
+        return state
+
+    def test_none_process_returns_without_error(self):
+        """Interactive mode: process=None must not raise and must leave manual_active True."""
+        state = self._make_state(process=None)
+        self._run(main_module.monitor_manual_process(state))
+        assert state.manual_active is True
+
+    def test_none_process_preserves_feature_id(self):
+        """Interactive mode: feature tracking fields must remain set after return."""
+        state = self._make_state(feature_id=99, process=None)
+        self._run(main_module.monitor_manual_process(state))
+        assert state.manual_feature_id == 99
+        assert state.manual_feature_name == "Test Feature"
+
+    def test_none_process_does_not_append_error_log(self):
+        """Interactive mode: no error log entry should be added when process is None."""
+        state = self._make_state(process=None)
+        self._run(main_module.monitor_manual_process(state))
+        error_entries = [e for e in state.log if e.level == "error"]
+        assert error_entries == []
+
+    def test_hidden_process_success_clears_state(self):
+        """Hidden mode: successful process exit clears manual_active and appends success log."""
+        proc = MagicMock()
+        proc.wait.return_value = 0
+        proc.stdout = None
+        proc.stderr = None
+
+        state = self._make_state(feature_id=55, feature_name="Hidden Feature", process=proc)
+        self._run(main_module.monitor_manual_process(state))
+
+        assert state.manual_active is False
+        assert state.manual_feature_id is None
+        success_entries = [e for e in state.log if e.level == "success"]
+        assert any("Hidden Feature" in e.message for e in success_entries)
+
+    def test_hidden_process_nonzero_exit_appends_info_log(self):
+        """Hidden mode: non-zero exit appends info log (not success, not error)."""
+        proc = MagicMock()
+        proc.wait.return_value = 1
+        proc.stdout = None
+        proc.stderr = None
+
+        state = self._make_state(feature_id=56, feature_name="Failing Feature", process=proc)
+        self._run(main_module.monitor_manual_process(state))
+
+        assert state.manual_active is False
+        info_entries = [e for e in state.log if e.level == "info"]
+        assert any("Failing Feature" in e.message for e in info_entries)
+
+    def test_hidden_process_captures_stdout(self):
+        """Hidden mode: stdout lines are captured into _claude_process_logs."""
+        proc = MagicMock()
+        proc.wait.return_value = 0
+        proc.stdout = FakeBinaryStream([b"captured output\n"])
+        proc.stderr = None
+
+        feature_id = 57
+        state = self._make_state(feature_id=feature_id, process=proc)
+
+        captured: dict = {}
+
+        original_logs = main_module._claude_process_logs
+
+        class TrackingDict(dict):
+            def pop(self, key, *args):
+                if key == feature_id:
+                    log = self.get(feature_id)
+                    if log:
+                        captured["lines"] = list(log.lines)
+                return super().pop(key, *args)
+
+        tracking = TrackingDict()
+        main_module._claude_process_logs = tracking
+        try:
+            self._run(main_module.monitor_manual_process(state))
+        finally:
+            main_module._claude_process_logs = original_logs
+
+        texts = {ln.text for ln in captured.get("lines", [])}
+        assert "captured output" in texts
