@@ -670,8 +670,8 @@ class TestErrorCases:
                 with httpx.Client(timeout=10.0) as client:
                     with client.stream("GET", f"{base_url}/api/interview/question/stream") as resp:
                         sse_ready.set()
-                        # We'll get the pre-existing question + the session-timeout
-                        events = _read_sse_events(resp, stop_after=2)
+                        # We'll get: pre-existing question + session-paused (soft timeout) + session-timeout
+                        events = _read_sse_events(resp, stop_after=3)
                         sse_events.extend(events)
                 sse_done.set()
 

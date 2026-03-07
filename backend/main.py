@@ -2791,6 +2791,8 @@ async def interview_question_stream():
 #   Hard timeout: still no answer → kill session, return 408 to Claude
 _SOFT_TIMEOUT_SECONDS: float = 300.0   # 5 minutes
 _HARD_TIMEOUT_SECONDS: float = 600.0   # 10 minutes
+# Legacy single-value override used by tests: setting this caps both soft and hard timeouts.
+_ANSWER_POLL_TIMEOUT_SECONDS: float = _HARD_TIMEOUT_SECONDS
 
 
 @app.get("/api/interview/answer")
@@ -2813,8 +2815,8 @@ async def get_interview_answer():
     """
     session = get_interview_session()
     answer = await session.wait_for_answer(
-        soft_timeout=_SOFT_TIMEOUT_SECONDS,
-        hard_timeout=_HARD_TIMEOUT_SECONDS,
+        soft_timeout=min(_SOFT_TIMEOUT_SECONDS, _ANSWER_POLL_TIMEOUT_SECONDS),
+        hard_timeout=min(_HARD_TIMEOUT_SECONDS, _ANSWER_POLL_TIMEOUT_SECONDS),
     )
 
     if answer is None:
