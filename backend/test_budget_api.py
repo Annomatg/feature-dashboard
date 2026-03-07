@@ -68,7 +68,7 @@ def _mock_urlopen(api_data: dict):
 def test_budget_no_credentials_file(tmp_path):
     """Returns error when ~/.claude/.credentials.json is absent."""
     missing = tmp_path / "no_such_file.json"
-    with patch("backend.main.Path.home", return_value=tmp_path / "home_no_creds"):
+    with patch("backend.routers.settings.Path.home", return_value=tmp_path / "home_no_creds"):
         resp = client.get("/api/budget")
     assert resp.status_code == 200
     data = resp.json()
@@ -85,7 +85,7 @@ def test_budget_no_oauth_token(tmp_path):
     cred_path = claude_dir / ".credentials.json"
     cred_path.write_text(json.dumps({"claudeAiOauth": {}}), encoding="utf-8")
 
-    with patch("backend.main.Path.home", return_value=home):
+    with patch("backend.routers.settings.Path.home", return_value=home):
         resp = client.get("/api/budget")
     assert resp.status_code == 200
     data = resp.json()
@@ -109,8 +109,8 @@ def test_budget_api_http_error(tmp_path):
     )
 
     with (
-        patch("backend.main.Path.home", return_value=home),
-        patch("backend.main.urllib.request.urlopen", side_effect=http_err),
+        patch("backend.routers.settings.Path.home", return_value=home),
+        patch("backend.routers.settings.urllib.request.urlopen", side_effect=http_err),
     ):
         resp = client.get("/api/budget")
 
@@ -128,8 +128,8 @@ def test_budget_api_network_error(tmp_path):
     _make_cred_file(claude_dir)
 
     with (
-        patch("backend.main.Path.home", return_value=home),
-        patch("backend.main.urllib.request.urlopen", side_effect=OSError("Network unreachable")),
+        patch("backend.routers.settings.Path.home", return_value=home),
+        patch("backend.routers.settings.urllib.request.urlopen", side_effect=OSError("Network unreachable")),
     ):
         resp = client.get("/api/budget")
 
@@ -151,8 +151,8 @@ def test_budget_returns_five_hour_and_seven_day(tmp_path):
     mock_resp = _mock_urlopen(api_data)
 
     with (
-        patch("backend.main.Path.home", return_value=home),
-        patch("backend.main.urllib.request.urlopen", return_value=mock_resp),
+        patch("backend.routers.settings.Path.home", return_value=home),
+        patch("backend.routers.settings.urllib.request.urlopen", return_value=mock_resp),
     ):
         resp = client.get("/api/budget")
 
@@ -176,8 +176,8 @@ def test_budget_provider_field(tmp_path):
     mock_resp = _mock_urlopen(api_data)
 
     with (
-        patch("backend.main.Path.home", return_value=home),
-        patch("backend.main.urllib.request.urlopen", return_value=mock_resp),
+        patch("backend.routers.settings.Path.home", return_value=home),
+        patch("backend.routers.settings.urllib.request.urlopen", return_value=mock_resp),
     ):
         resp = client.get("/api/budget")
 
@@ -195,8 +195,8 @@ def test_budget_utilization_rounded(tmp_path):
     mock_resp = _mock_urlopen(api_data)
 
     with (
-        patch("backend.main.Path.home", return_value=home),
-        patch("backend.main.urllib.request.urlopen", return_value=mock_resp),
+        patch("backend.routers.settings.Path.home", return_value=home),
+        patch("backend.routers.settings.urllib.request.urlopen", return_value=mock_resp),
     ):
         resp = client.get("/api/budget")
 
@@ -220,8 +220,8 @@ def test_budget_resets_formatted_today(tmp_path):
     mock_resp = _mock_urlopen(api_data)
 
     with (
-        patch("backend.main.Path.home", return_value=home),
-        patch("backend.main.urllib.request.urlopen", return_value=mock_resp),
+        patch("backend.routers.settings.Path.home", return_value=home),
+        patch("backend.routers.settings.urllib.request.urlopen", return_value=mock_resp),
     ):
         resp = client.get("/api/budget")
 
@@ -246,8 +246,8 @@ def test_budget_resets_formatted_other_day(tmp_path):
     mock_resp = _mock_urlopen(api_data)
 
     with (
-        patch("backend.main.Path.home", return_value=home),
-        patch("backend.main.urllib.request.urlopen", return_value=mock_resp),
+        patch("backend.routers.settings.Path.home", return_value=home),
+        patch("backend.routers.settings.urllib.request.urlopen", return_value=mock_resp),
     ):
         resp = client.get("/api/budget")
 
@@ -269,8 +269,8 @@ def test_budget_empty_when_api_returns_no_periods(tmp_path):
     mock_resp = _mock_urlopen(api_data)
 
     with (
-        patch("backend.main.Path.home", return_value=home),
-        patch("backend.main.urllib.request.urlopen", return_value=mock_resp),
+        patch("backend.routers.settings.Path.home", return_value=home),
+        patch("backend.routers.settings.urllib.request.urlopen", return_value=mock_resp),
     ):
         resp = client.get("/api/budget")
 
