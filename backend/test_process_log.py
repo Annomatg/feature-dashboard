@@ -303,20 +303,22 @@ class TestClaudeProcessLogsLifecycle:
                         captured_log["lines"] = list(log.lines)
                 return super().pop(key, *args)
 
+        import backend.autopilot_engine as ae_module
+
         tracking: dict[int, ClaudeProcessLog] = TrackingDict()
-        original_logs = main_module._claude_process_logs
-        main_module._claude_process_logs = tracking
+        original_logs = ae_module._claude_process_logs
+        ae_module._claude_process_logs = tracking
 
         async def fake_failure(*args, **kwargs):
             pass
 
         try:
-            with patch.object(main_module, "handle_autopilot_failure", side_effect=fake_failure):
+            with patch.object(ae_module, "handle_autopilot_failure", side_effect=fake_failure):
                 self._run(
                     main_module.monitor_claude_process(77, proc, db_path, state)
                 )
         finally:
-            main_module._claude_process_logs = original_logs
+            ae_module._claude_process_logs = original_logs
 
         lines = captured_log.get("lines", [])
         texts = {line.text for line in lines}
@@ -401,9 +403,10 @@ class TestMonitorManualProcess:
         feature_id = 57
         state = self._make_state(feature_id=feature_id, process=proc)
 
+        import backend.autopilot_engine as ae_module
         captured: dict = {}
 
-        original_logs = main_module._claude_process_logs
+        original_logs = ae_module._claude_process_logs
 
         class TrackingDict(dict):
             def pop(self, key, *args):
@@ -414,11 +417,11 @@ class TestMonitorManualProcess:
                 return super().pop(key, *args)
 
         tracking = TrackingDict()
-        main_module._claude_process_logs = tracking
+        ae_module._claude_process_logs = tracking
         try:
             self._run(main_module.monitor_manual_process(state))
         finally:
-            main_module._claude_process_logs = original_logs
+            ae_module._claude_process_logs = original_logs
 
         texts = {ln.text for ln in captured.get("lines", [])}
         assert "captured output" in texts

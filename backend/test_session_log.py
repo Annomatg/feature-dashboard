@@ -22,7 +22,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import backend.main as main_module
-from backend.main import (
+from backend.claude_process import (
     _format_tool_call,
     _get_claude_projects_slug,
     _jsonl_contains_prompt,

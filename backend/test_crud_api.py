@@ -2893,8 +2893,9 @@ class TestMonitorClaudeProcess:
 
         import backend.main as main_module
         import backend.deps as deps_module
-        monkeypatch.setattr(main_module, 'handle_autopilot_success', mock_success)
-        monkeypatch.setattr(main_module, 'handle_autopilot_failure', mock_failure)
+        import backend.autopilot_engine as ae_module
+        monkeypatch.setattr(ae_module, 'handle_autopilot_success', mock_success)
+        monkeypatch.setattr(ae_module, 'handle_autopilot_failure', mock_failure)
 
         state = _AutoPilotState()
         proc = self._make_mock_process(return_code=0)
@@ -2924,8 +2925,9 @@ class TestMonitorClaudeProcess:
 
         import backend.main as main_module
         import backend.deps as deps_module
-        monkeypatch.setattr(main_module, 'handle_autopilot_success', mock_success)
-        monkeypatch.setattr(main_module, 'handle_autopilot_failure', mock_failure)
+        import backend.autopilot_engine as ae_module
+        monkeypatch.setattr(ae_module, 'handle_autopilot_success', mock_success)
+        monkeypatch.setattr(ae_module, 'handle_autopilot_failure', mock_failure)
 
         state = _AutoPilotState()
         proc = self._make_mock_process(return_code=1)
@@ -2952,8 +2954,9 @@ class TestMonitorClaudeProcess:
 
         import backend.main as main_module
         import backend.deps as deps_module
-        monkeypatch.setattr(main_module, 'handle_autopilot_success', lambda *a: None)
-        monkeypatch.setattr(main_module, 'handle_autopilot_failure', mock_failure)
+        import backend.autopilot_engine as ae_module
+        monkeypatch.setattr(ae_module, 'handle_autopilot_success', lambda *a: None)
+        monkeypatch.setattr(ae_module, 'handle_autopilot_failure', mock_failure)
 
         state = _AutoPilotState()
         proc = self._make_mock_process(return_code=0)
@@ -3002,9 +3005,10 @@ class TestMonitorClaudeProcess:
         from backend.main import monitor_claude_process, _AutoPilotState
         import backend.main as main_module
         import backend.deps as deps_module
+        import backend.autopilot_engine as ae_module
 
         # Use a very short timeout so the test completes quickly
-        monkeypatch.setattr(main_module, 'AUTOPILOT_PROCESS_TIMEOUT_SECS', 0.05)
+        monkeypatch.setattr(ae_module, 'AUTOPILOT_PROCESS_TIMEOUT_SECS', 0.05)
 
         kill_event = threading.Event()
         killed = []
@@ -3047,8 +3051,9 @@ class TestMonitorClaudeProcess:
         from backend.main import monitor_claude_process, _AutoPilotState
         import backend.main as main_module
         import backend.deps as deps_module
+        import backend.autopilot_engine as ae_module
 
-        monkeypatch.setattr(main_module, 'AUTOPILOT_PROCESS_TIMEOUT_SECS', 0.05)
+        monkeypatch.setattr(ae_module, 'AUTOPILOT_PROCESS_TIMEOUT_SECS', 0.05)
 
         kill_event = threading.Event()
         completed = []
@@ -3090,7 +3095,7 @@ class TestHandleAutopilotSuccess:
         session_maker, db_path = test_db_with_path
 
         # All features except feature 3 are non-passing; mock spawn to avoid real process
-        monkeypatch.setattr("backend.main.spawn_claude_for_autopilot",
+        monkeypatch.setattr("backend.autopilot_engine.spawn_claude_for_autopilot",
                             lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda s: 0})())
         monkeypatch.setattr("asyncio.create_task", lambda coro: coro.close() or None)
 
@@ -3116,7 +3121,7 @@ class TestHandleAutopilotSuccess:
             spawn_calls.append(feature.id)
             return type("P", (), {"pid": 1, "wait": lambda s: 0})()
 
-        monkeypatch.setattr("backend.main.spawn_claude_for_autopilot", mock_spawn)
+        monkeypatch.setattr("backend.autopilot_engine.spawn_claude_for_autopilot", mock_spawn)
         # Prevent the newly created monitor task from running DB queries
         monkeypatch.setattr("asyncio.create_task", lambda coro: coro.close() or None)
 
@@ -3135,7 +3140,7 @@ class TestHandleAutopilotSuccess:
 
         session_maker, db_path = test_db_with_path
 
-        monkeypatch.setattr("backend.main.spawn_claude_for_autopilot",
+        monkeypatch.setattr("backend.autopilot_engine.spawn_claude_for_autopilot",
                             lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda s: 0})())
         monkeypatch.setattr("asyncio.create_task", lambda coro: coro.close() or None)
 
@@ -3236,7 +3241,7 @@ class TestHandleAutopilotSuccess:
         state.last_skipped_feature_id = 999  # different from Feature 4 returned by sequencer
         state.consecutive_skip_count = 2
 
-        monkeypatch.setattr("backend.main.spawn_claude_for_autopilot",
+        monkeypatch.setattr("backend.autopilot_engine.spawn_claude_for_autopilot",
                             lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda s: 0})())
         monkeypatch.setattr("asyncio.create_task", lambda coro: coro.close() or None)
 
@@ -3263,7 +3268,7 @@ class TestHandleAutopilotSuccess:
 
         session_maker, db_path = test_db_with_path
 
-        monkeypatch.setattr("backend.main.spawn_claude_for_autopilot",
+        monkeypatch.setattr("backend.autopilot_engine.spawn_claude_for_autopilot",
                             lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda s: 0})())
         monkeypatch.setattr("asyncio.create_task", lambda coro: coro.close() or None)
 
@@ -4065,17 +4070,21 @@ class TestStartupAutoPilotReset:
         import backend.main as main_module
         import backend.deps as deps_module
 
+        import backend.autopilot_engine as ae_module
+
         pre_state = main_module._AutoPilotState()
         pre_state.enabled = True
-        monkeypatch.setattr(main_module, '_autopilot_states', {'some_key': pre_state})
+        shared_states = {'some_key': pre_state}
+        monkeypatch.setattr(main_module, '_autopilot_states', shared_states)
+        monkeypatch.setattr(ae_module, '_autopilot_states', shared_states)
         monkeypatch.setattr(main_module, '_reset_autopilot_in_config', lambda: None)
 
         asyncio.run(main_module.startup_reset_autopilot())
 
         # State dict should have exactly one entry (the newly created state)
         # with enabled=False
-        assert len(main_module._autopilot_states) == 1
-        new_state = list(main_module._autopilot_states.values())[0]
+        assert len(shared_states) == 1
+        new_state = list(shared_states.values())[0]
         assert new_state.enabled is False
 
     def test_startup_log_contains_reset_message(self, monkeypatch):
@@ -4116,6 +4125,7 @@ class TestStartupAutoPilotReset:
         import json
         import backend.main as main_module
         import backend.deps as deps_module
+        import backend.autopilot_engine as ae_module
 
         config = [
             {"name": "DB 1", "path": "a.db", "autopilot": True},
@@ -4123,7 +4133,7 @@ class TestStartupAutoPilotReset:
         ]
         config_file = tmp_path / "dashboards.json"
         config_file.write_text(json.dumps(config))
-        monkeypatch.setattr(main_module, 'CONFIG_FILE', config_file)
+        monkeypatch.setattr(ae_module, 'CONFIG_FILE', config_file)
 
         main_module._reset_autopilot_in_config()
 
@@ -4163,6 +4173,7 @@ class TestStartupAutoPilotReset:
         import json
         import backend.main as main_module
         import backend.deps as deps_module
+        import backend.autopilot_engine as ae_module
 
         config = [
             {"name": "DB 1", "path": "a.db", "autopilot": True},
@@ -4171,7 +4182,7 @@ class TestStartupAutoPilotReset:
         ]
         config_file = tmp_path / "dashboards.json"
         config_file.write_text(json.dumps(config))
-        monkeypatch.setattr(main_module, 'CONFIG_FILE', config_file)
+        monkeypatch.setattr(ae_module, 'CONFIG_FILE', config_file)
 
         main_module._reset_autopilot_in_config()
 
@@ -4202,6 +4213,7 @@ class TestAutoPilotPersistence:
         import json
         import backend.main as main_module
         import backend.deps as deps_module
+        import backend.autopilot_engine as ae_module
 
         temp_db_path = tmp_path / "features.db"
         engine, session_maker = create_database(tmp_path)
@@ -4228,10 +4240,13 @@ class TestAutoPilotPersistence:
         config_data = [{"name": "Test DB", "path": str(temp_db_path)}]
         config_path.write_text(json.dumps(config_data))
 
+        shared_states: dict = {}
         monkeypatch.setattr(deps_module, '_session_maker', session_maker)
         monkeypatch.setattr(deps_module, '_current_db_path', temp_db_path)
         monkeypatch.setattr(main_module, 'CONFIG_FILE', config_path)
-        monkeypatch.setattr(main_module, '_autopilot_states', {})
+        monkeypatch.setattr(ae_module, 'CONFIG_FILE', config_path)
+        monkeypatch.setattr(main_module, '_autopilot_states', shared_states)
+        monkeypatch.setattr(ae_module, '_autopilot_states', shared_states)
         monkeypatch.setattr(main_module.asyncio, 'create_task',
                             lambda coro: (coro.close(), None)[1])
 
@@ -4333,6 +4348,7 @@ class TestAutoPilotPersistence:
         import json
         import backend.main as main_module
         import backend.deps as deps_module
+        import backend.autopilot_engine as ae_module
 
         db_path_a = tmp_path / "a.db"
         db_path_b = tmp_path / "b.db"
@@ -4344,8 +4360,11 @@ class TestAutoPilotPersistence:
         ]
         config_path.write_text(json.dumps(config_data))
 
+        shared_states_a: dict = {}
         monkeypatch.setattr(main_module, 'CONFIG_FILE', config_path)
-        monkeypatch.setattr(main_module, '_autopilot_states', {})
+        monkeypatch.setattr(ae_module, 'CONFIG_FILE', config_path)
+        monkeypatch.setattr(main_module, '_autopilot_states', shared_states_a)
+        monkeypatch.setattr(ae_module, '_autopilot_states', shared_states_a)
 
         # Simulate switching to DB A
         monkeypatch.setattr(deps_module, '_current_db_path', db_path_a)
@@ -4353,7 +4372,9 @@ class TestAutoPilotPersistence:
         assert state_a.enabled is True
 
         # Reset in-memory state and simulate switching to DB B
-        monkeypatch.setattr(main_module, '_autopilot_states', {})
+        shared_states_b: dict = {}
+        monkeypatch.setattr(main_module, '_autopilot_states', shared_states_b)
+        monkeypatch.setattr(ae_module, '_autopilot_states', shared_states_b)
         monkeypatch.setattr(deps_module, '_current_db_path', db_path_b)
         state_b = main_module.get_autopilot_state()
         assert state_b.enabled is False
@@ -4383,8 +4404,9 @@ class TestAutoPilotPersistence:
         """_read_autopilot_from_config() returns False when CONFIG_FILE does not exist."""
         import backend.main as main_module
         import backend.deps as deps_module
+        import backend.autopilot_engine as ae_module
 
-        monkeypatch.setattr(main_module, 'CONFIG_FILE', tmp_path / "nonexistent.json")
+        monkeypatch.setattr(ae_module, 'CONFIG_FILE', tmp_path / "nonexistent.json")
         monkeypatch.setattr(deps_module, '_current_db_path', tmp_path / "features.db")
 
         assert main_module._read_autopilot_from_config() is False
@@ -4394,10 +4416,11 @@ class TestAutoPilotPersistence:
         import json
         import backend.main as main_module
         import backend.deps as deps_module
+        import backend.autopilot_engine as ae_module
 
         config_path = tmp_path / "dashboards.json"
         config_path.write_text(json.dumps([{"name": "Other", "path": str(tmp_path / "other.db"), "autopilot": True}]))
-        monkeypatch.setattr(main_module, 'CONFIG_FILE', config_path)
+        monkeypatch.setattr(ae_module, 'CONFIG_FILE', config_path)
         monkeypatch.setattr(deps_module, '_current_db_path', tmp_path / "features.db")
 
         assert main_module._read_autopilot_from_config() is False
@@ -5404,7 +5427,8 @@ class TestAutopilotBudgetLimit:
 
         session_maker, db_path = test_db_with_path
 
-        monkeypatch.setattr(main_module, 'load_settings', lambda: {
+        import backend.autopilot_engine as ae_module
+        monkeypatch.setattr(ae_module, 'load_settings', lambda: {
             "claude_prompt_template": "t",
             "autopilot_budget_limit": 0,
         })
@@ -5414,7 +5438,7 @@ class TestAutopilotBudgetLimit:
             spawn_calls.append(feature.id)
             return type("P", (), {"pid": 1, "wait": lambda s: 0})()
 
-        monkeypatch.setattr("backend.main.spawn_claude_for_autopilot", mock_spawn)
+        monkeypatch.setattr("backend.autopilot_engine.spawn_claude_for_autopilot", mock_spawn)
         monkeypatch.setattr("asyncio.create_task", lambda coro: coro.close() or None)
 
         state = _AutoPilotState()
@@ -5438,7 +5462,8 @@ class TestAutopilotBudgetLimit:
 
         session_maker, db_path = test_db_with_path
 
-        monkeypatch.setattr(main_module, 'load_settings', lambda: {
+        import backend.autopilot_engine as ae_module
+        monkeypatch.setattr(ae_module, 'load_settings', lambda: {
             "claude_prompt_template": "t",
             "autopilot_budget_limit": 2,
         })
@@ -5449,7 +5474,7 @@ class TestAutopilotBudgetLimit:
             spawn_calls.append(feature.id)
             return type("P", (), {"pid": 1, "wait": lambda s: 0})()
 
-        monkeypatch.setattr("backend.main.spawn_claude_for_autopilot", mock_spawn)
+        monkeypatch.setattr("backend.autopilot_engine.spawn_claude_for_autopilot", mock_spawn)
         monkeypatch.setattr("asyncio.create_task", lambda coro: coro.close() or None)
 
         state = _AutoPilotState()
@@ -5478,13 +5503,14 @@ class TestAutopilotBudgetLimit:
 
         session_maker, db_path = test_db_with_path
 
-        monkeypatch.setattr(main_module, 'load_settings', lambda: {
+        import backend.autopilot_engine as ae_module
+        monkeypatch.setattr(ae_module, 'load_settings', lambda: {
             "claude_prompt_template": "t",
             "autopilot_budget_limit": 1,
         })
 
         spawn_calls = []
-        monkeypatch.setattr("backend.main.spawn_claude_for_autopilot",
+        monkeypatch.setattr("backend.autopilot_engine.spawn_claude_for_autopilot",
                             lambda *a, **k: spawn_calls.append(1) or type("P", (), {"pid": 1})())
         monkeypatch.setattr("asyncio.create_task", lambda coro: coro.close() or None)
 
@@ -5510,11 +5536,12 @@ class TestAutopilotBudgetLimit:
 
         session_maker, db_path = test_db_with_path
 
-        monkeypatch.setattr(main_module, 'load_settings', lambda: {
+        import backend.autopilot_engine as ae_module
+        monkeypatch.setattr(ae_module, 'load_settings', lambda: {
             "claude_prompt_template": "t",
             "autopilot_budget_limit": 0,
         })
-        monkeypatch.setattr("backend.main.spawn_claude_for_autopilot",
+        monkeypatch.setattr("backend.autopilot_engine.spawn_claude_for_autopilot",
                             lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda s: 0})())
         monkeypatch.setattr("asyncio.create_task", lambda coro: coro.close() or None)
 
@@ -5760,11 +5787,12 @@ class TestBudgetExhaustedFlag:
 
         session_maker, db_path = test_db_with_path
 
-        monkeypatch.setattr(main_module, 'load_settings', lambda: {
+        import backend.autopilot_engine as ae_module
+        monkeypatch.setattr(ae_module, 'load_settings', lambda: {
             "claude_prompt_template": "t",
             "autopilot_budget_limit": 1,
         })
-        monkeypatch.setattr("backend.main.spawn_claude_for_autopilot",
+        monkeypatch.setattr("backend.autopilot_engine.spawn_claude_for_autopilot",
                             lambda *a, **k: type("P", (), {"pid": 1})())
         monkeypatch.setattr("asyncio.create_task", lambda coro: coro.close() or None)
 
