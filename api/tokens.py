@@ -30,3 +30,19 @@ def normalize_tokens(text: str) -> list[str]:
     text = text.lower()
     text = re.sub(r"[^a-z0-9\s]", " ", text)
     return [token for token in text.split() if len(token) >= 2]
+
+
+def extract_bigrams(text: str) -> list[tuple[str, str]]:
+    """Extract consecutive word pairs (bigrams) from text.
+
+    Uses the same normalization as normalize_tokens().
+
+    Args:
+        text: Raw input string (feature name, description, etc.).
+
+    Returns:
+        List of (word1, word2) tuples for each consecutive pair of tokens.
+        Returns an empty list if the text produces fewer than 2 tokens.
+    """
+    tokens = normalize_tokens(text)
+    return [(tokens[i], tokens[i + 1]) for i in range(len(tokens) - 1)]

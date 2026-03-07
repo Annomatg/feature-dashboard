@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, r'${projectRoot}')
 
-from api.database import Feature, NameToken, DescriptionToken
+from api.database import Feature, NameToken, DescriptionToken, NameBigram, DescriptionBigram
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from api.database import Base
@@ -113,6 +113,27 @@ description_tokens = [
 ]
 for token in description_tokens:
     session.add(token)
+
+# Seed name bigrams for two-word autocomplete tests.
+# Use tokens that do NOT conflict with existing "fea" prefix tests.
+# "authentication" -> "backend": typing "aut" shows "authentication backend"
+# "dashboard" -> "configuration": typing "das" shows "dashboard configuration"
+name_bigrams = [
+    NameBigram(word1='authentication', word2='backend', usage_count=10),
+    NameBigram(word1='dashboard', word2='configuration', usage_count=8),
+]
+for bigram in name_bigrams:
+    session.add(bigram)
+
+# Seed description bigrams for two-word autocomplete tests.
+# "implement" -> "backend": typing "imp" shows "implement backend"
+# "integration" -> "frontend": typing "int" shows "integration frontend"
+description_bigrams = [
+    DescriptionBigram(word1='implement', word2='backend', usage_count=15),
+    DescriptionBigram(word1='integration', word2='frontend', usage_count=6),
+]
+for bigram in description_bigrams:
+    session.add(bigram)
 
 session.commit()
 session.close()

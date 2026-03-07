@@ -34,8 +34,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sqlalchemy import func as sa_func
 
-from api.database import CategoryToken, Comment, DescriptionToken, Feature, NameToken, create_database
-from api.tokens import normalize_tokens
+from api.database import CategoryToken, Comment, DescriptionBigram, DescriptionToken, Feature, NameBigram, NameToken, create_database
+from api.tokens import extract_bigrams, normalize_tokens
 from backend.providers import REGISTRY, get_provider
 
 # Initialize FastAPI app
@@ -1620,22 +1620,32 @@ async def get_stats():
 def get_autocomplete_name(prefix: str = ""):
     """Return up to 5 name token suggestions matching the given prefix.
 
+    When a bigram exists for a matched token, returns a two-word suggestion
+    (e.g. "feature dashboard") instead of just the single token.
     Returns an empty suggestion list if the prefix is shorter than 3 characters.
     Results are ordered by usage_count descending.
     """
     if len(prefix) < 3:
         return {"suggestions": []}
 
+    from sqlalchemy import text as sa_text
     session = get_session()
     try:
-        rows = (
-            session.query(NameToken.token)
-            .filter(NameToken.token.like(f"{prefix}%"))
-            .order_by(NameToken.usage_count.desc())
-            .limit(5)
-            .all()
-        )
-        return {"suggestions": [row.token for row in rows]}
+        rows = session.execute(sa_text("""
+            SELECT t.token,
+                   (SELECT b.word2 FROM name_bigrams b
+                    WHERE b.word1 = t.token
+                    ORDER BY b.usage_count DESC LIMIT 1) as next_word
+            FROM name_tokens t
+            WHERE t.token LIKE :prefix
+            ORDER BY t.usage_count DESC
+            LIMIT 5
+        """), {"prefix": f"{prefix}%"}).fetchall()
+        suggestions = [
+            f"{row[0]} {row[1]}" if row[1] else row[0]
+            for row in rows
+        ]
+        return {"suggestions": suggestions}
     finally:
         session.close()
 
@@ -1644,22 +1654,32 @@ def get_autocomplete_name(prefix: str = ""):
 def get_autocomplete_description(prefix: str = ""):
     """Return up to 5 description token suggestions matching the given prefix.
 
+    When a bigram exists for a matched token, returns a two-word suggestion
+    (e.g. "implement feature") instead of just the single token.
     Returns an empty suggestion list if the prefix is shorter than 3 characters.
     Results are ordered by usage_count descending.
     """
     if len(prefix) < 3:
         return {"suggestions": []}
 
+    from sqlalchemy import text as sa_text
     session = get_session()
     try:
-        rows = (
-            session.query(DescriptionToken.token)
-            .filter(DescriptionToken.token.like(f"{prefix}%"))
-            .order_by(DescriptionToken.usage_count.desc())
-            .limit(5)
-            .all()
-        )
-        return {"suggestions": [row.token for row in rows]}
+        rows = session.execute(sa_text("""
+            SELECT t.token,
+                   (SELECT b.word2 FROM description_bigrams b
+                    WHERE b.word1 = t.token
+                    ORDER BY b.usage_count DESC LIMIT 1) as next_word
+            FROM description_tokens t
+            WHERE t.token LIKE :prefix
+            ORDER BY t.usage_count DESC
+            LIMIT 5
+        """), {"prefix": f"{prefix}%"}).fetchall()
+        suggestions = [
+            f"{row[0]} {row[1]}" if row[1] else row[0]
+            for row in rows
+        ]
+        return {"suggestions": suggestions}
     finally:
         session.close()
 
@@ -1952,6 +1972,16 @@ async def create_feature(request: CreateFeatureRequest):
             else:
                 session.add(NameToken(token=token, usage_count=1))
 
+        # Upsert name_bigrams for consecutive word pairs in the new feature's name
+        for word1, word2 in extract_bigrams(new_feature.name):
+            existing = session.query(NameBigram).filter(
+                NameBigram.word1 == word1, NameBigram.word2 == word2
+            ).first()
+            if existing:
+                existing.usage_count += 1
+            else:
+                session.add(NameBigram(word1=word1, word2=word2, usage_count=1))
+
         # Upsert description_tokens for each token in the new feature's description
         for token in set(normalize_tokens(new_feature.description)):
             existing = session.query(DescriptionToken).filter(DescriptionToken.token == token).first()
@@ -1959,6 +1989,16 @@ async def create_feature(request: CreateFeatureRequest):
                 existing.usage_count += 1
             else:
                 session.add(DescriptionToken(token=token, usage_count=1))
+
+        # Upsert description_bigrams for consecutive word pairs in the new feature's description
+        for word1, word2 in extract_bigrams(new_feature.description):
+            existing = session.query(DescriptionBigram).filter(
+                DescriptionBigram.word1 == word1, DescriptionBigram.word2 == word2
+            ).first()
+            if existing:
+                existing.usage_count += 1
+            else:
+                session.add(DescriptionBigram(word1=word1, word2=word2, usage_count=1))
 
         # Upsert category_tokens for each token in the new feature's category
         for token in set(normalize_tokens(new_feature.category)):
@@ -2022,6 +2062,14 @@ async def update_feature(feature_id: int, request: UpdateFeatureRequest):
                     existing.usage_count += 1
                 else:
                     session.add(NameToken(token=token, usage_count=1))
+            for word1, word2 in extract_bigrams(feature.name):
+                existing = session.query(NameBigram).filter(
+                    NameBigram.word1 == word1, NameBigram.word2 == word2
+                ).first()
+                if existing:
+                    existing.usage_count += 1
+                else:
+                    session.add(NameBigram(word1=word1, word2=word2, usage_count=1))
             session.commit()
 
         # Upsert description_tokens if description was updated (append-only, no decrement)
@@ -2032,6 +2080,14 @@ async def update_feature(feature_id: int, request: UpdateFeatureRequest):
                     existing.usage_count += 1
                 else:
                     session.add(DescriptionToken(token=token, usage_count=1))
+            for word1, word2 in extract_bigrams(feature.description):
+                existing = session.query(DescriptionBigram).filter(
+                    DescriptionBigram.word1 == word1, DescriptionBigram.word2 == word2
+                ).first()
+                if existing:
+                    existing.usage_count += 1
+                else:
+                    session.add(DescriptionBigram(word1=word1, word2=word2, usage_count=1))
             session.commit()
 
         # Upsert category_tokens if category was updated (append-only, no decrement)

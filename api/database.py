@@ -65,6 +65,26 @@ class CategoryToken(Base):
         }
 
 
+class NameBigram(Base):
+    """Consecutive word pairs (bigrams) extracted from feature names with frequency counts."""
+
+    __tablename__ = "name_bigrams"
+
+    word1 = Column(Text, primary_key=True)
+    word2 = Column(Text, primary_key=True)
+    usage_count = Column(Integer, nullable=False, default=0, server_default="0")
+
+
+class DescriptionBigram(Base):
+    """Consecutive word pairs (bigrams) extracted from feature descriptions with frequency counts."""
+
+    __tablename__ = "description_bigrams"
+
+    word1 = Column(Text, primary_key=True)
+    word2 = Column(Text, primary_key=True)
+    usage_count = Column(Integer, nullable=False, default=0, server_default="0")
+
+
 class Comment(Base):
     """Comment model for storing notes/results attached to a feature."""
 
@@ -141,7 +161,7 @@ def get_database_url(project_dir: Path, db_filename: str = "features.db") -> str
 # Numbered migrations
 # ---------------------------------------------------------------------------
 
-LATEST_SCHEMA_VERSION = 7
+LATEST_SCHEMA_VERSION = 10
 
 
 def _migration_v1(engine) -> None:
@@ -272,6 +292,42 @@ def _migration_v8(engine) -> None:
             conn.commit()
 
 
+def _migration_v9(engine) -> None:
+    """v9: Create name_bigrams table for storing consecutive word pairs from feature names."""
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='name_bigrams'"))
+        if result.fetchone() is None:
+            conn.execute(text("""
+                CREATE TABLE name_bigrams (
+                    word1 TEXT NOT NULL,
+                    word2 TEXT NOT NULL,
+                    usage_count INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (word1, word2)
+                )
+            """))
+            conn.commit()
+
+
+def _migration_v10(engine) -> None:
+    """v10: Create description_bigrams table for storing consecutive word pairs from feature descriptions."""
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='description_bigrams'"))
+        if result.fetchone() is None:
+            conn.execute(text("""
+                CREATE TABLE description_bigrams (
+                    word1 TEXT NOT NULL,
+                    word2 TEXT NOT NULL,
+                    usage_count INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (word1, word2)
+                )
+            """))
+            conn.commit()
+
+
 _MIGRATIONS = [
     (1, _migration_v1),
     (2, _migration_v2),
@@ -281,6 +337,8 @@ _MIGRATIONS = [
     (6, _migration_v6),
     (7, _migration_v7),
     (8, _migration_v8),
+    (9, _migration_v9),
+    (10, _migration_v10),
 ]
 
 

@@ -26,7 +26,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from backend.main import app, get_session
-from api.database import CategoryToken, create_database, DescriptionToken, Feature, NameToken
+from api.database import CategoryToken, create_database, DescriptionBigram, DescriptionToken, Feature, NameBigram, NameToken
 
 
 @pytest.fixture
@@ -5956,6 +5956,187 @@ class TestAutocompleteCategoryEndpoint:
             assert "api" in tokens or "service" in tokens
         finally:
             session.close()
+
+
+class TestAutocompleteTwoWordSuggestions:
+    """Tests for two-word (bigram) suggestions in autocomplete endpoints."""
+
+    def test_name_autocomplete_returns_two_word_suggestion_when_bigram_exists(self, client):
+        """Returns 'token nextword' when a bigram exists for the matched token."""
+        import backend.main as main_module
+
+        session = main_module.get_session()
+        try:
+            session.add(NameToken(token="dashboard", usage_count=10))
+            session.add(NameBigram(word1="dashboard", word2="widget", usage_count=5))
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/autocomplete/name?prefix=das")
+        assert response.status_code == 200
+        suggestions = response.json()["suggestions"]
+        assert "dashboard widget" in suggestions
+
+    def test_name_autocomplete_returns_single_word_when_no_bigram(self, client):
+        """Returns just the token when no bigram exists for it."""
+        import backend.main as main_module
+
+        session = main_module.get_session()
+        try:
+            session.add(NameToken(token="singleword", usage_count=5))
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/autocomplete/name?prefix=sin")
+        assert response.status_code == 200
+        suggestions = response.json()["suggestions"]
+        assert "singleword" in suggestions
+        # No second word should be appended
+        assert not any(" " in s and s.startswith("singleword") for s in suggestions)
+
+    def test_name_autocomplete_bigram_uses_highest_count_next_word(self, client):
+        """Returns the bigram with the highest usage_count as the next word."""
+        import backend.main as main_module
+
+        session = main_module.get_session()
+        try:
+            session.add(NameToken(token="config", usage_count=10))
+            session.add(NameBigram(word1="config", word2="file", usage_count=3))
+            session.add(NameBigram(word1="config", word2="panel", usage_count=20))
+            session.add(NameBigram(word1="config", word2="screen", usage_count=1))
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/autocomplete/name?prefix=con")
+        assert response.status_code == 200
+        suggestions = response.json()["suggestions"]
+        # "panel" has the highest count (20) so "config panel" should appear
+        assert "config panel" in suggestions
+
+    def test_description_autocomplete_returns_two_word_suggestion_when_bigram_exists(self, client):
+        """Description endpoint returns 'token nextword' when a bigram exists."""
+        import backend.main as main_module
+
+        session = main_module.get_session()
+        try:
+            session.add(DescriptionToken(token="implement", usage_count=15))
+            session.add(DescriptionBigram(word1="implement", word2="feature", usage_count=8))
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/autocomplete/description?prefix=imp")
+        assert response.status_code == 200
+        suggestions = response.json()["suggestions"]
+        assert "implement feature" in suggestions
+
+    def test_description_autocomplete_returns_single_word_when_no_bigram(self, client):
+        """Description endpoint returns just the token when no bigram exists."""
+        import backend.main as main_module
+
+        session = main_module.get_session()
+        try:
+            session.add(DescriptionToken(token="standalone", usage_count=5))
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/autocomplete/description?prefix=sta")
+        assert response.status_code == 200
+        suggestions = response.json()["suggestions"]
+        assert "standalone" in suggestions
+        assert not any(" " in s and s.startswith("standalone") for s in suggestions)
+
+    def test_create_feature_populates_name_bigrams(self, client):
+        """Creating a feature populates name_bigrams with consecutive word pairs."""
+        import backend.main as main_module
+
+        response = client.post("/api/features", json={
+            "name": "Kanban Board Feature",
+            "description": "A test feature",
+            "category": "UI",
+            "steps": []
+        })
+        assert response.status_code == 201
+
+        session = main_module.get_session()
+        try:
+            bigrams = {(b.word1, b.word2) for b in session.query(NameBigram).all()}
+            # "kanban board feature" → ("kanban","board"), ("board","feature")
+            assert ("kanban", "board") in bigrams
+            assert ("board", "feature") in bigrams
+        finally:
+            session.close()
+
+    def test_create_feature_populates_description_bigrams(self, client):
+        """Creating a feature populates description_bigrams with consecutive word pairs."""
+        import backend.main as main_module
+
+        response = client.post("/api/features", json={
+            "name": "Test Feature",
+            "description": "allow user authentication via OAuth",
+            "category": "Auth",
+            "steps": []
+        })
+        assert response.status_code == 201
+
+        session = main_module.get_session()
+        try:
+            bigrams = {(b.word1, b.word2) for b in session.query(DescriptionBigram).all()}
+            # "allow user authentication via oauth" → pairs include ("allow","user"), ("user","authentication")
+            assert ("allow", "user") in bigrams
+            assert ("user", "authentication") in bigrams
+        finally:
+            session.close()
+
+    def test_update_feature_name_populates_name_bigrams(self, client):
+        """Updating a feature name populates name_bigrams with new consecutive pairs."""
+        import backend.main as main_module
+
+        create_response = client.post("/api/features", json={
+            "name": "Old Name",
+            "description": "desc",
+            "category": "Test",
+            "steps": []
+        })
+        assert create_response.status_code == 201
+        feature_id = create_response.json()["id"]
+
+        update_response = client.put(f"/api/features/{feature_id}", json={
+            "name": "Settings Page Navigation"
+        })
+        assert update_response.status_code == 200
+
+        session = main_module.get_session()
+        try:
+            bigrams = {(b.word1, b.word2) for b in session.query(NameBigram).all()}
+            assert ("settings", "page") in bigrams
+            assert ("page", "navigation") in bigrams
+        finally:
+            session.close()
+
+    def test_mixed_results_some_with_bigrams_some_without(self, client):
+        """When multiple tokens match, each gets a next word only if its bigram exists."""
+        import backend.main as main_module
+
+        session = main_module.get_session()
+        try:
+            session.add(NameToken(token="workflow", usage_count=10))
+            session.add(NameToken(token="worker", usage_count=8))
+            # Only "workflow" has a bigram
+            session.add(NameBigram(word1="workflow", word2="manager", usage_count=5))
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/autocomplete/name?prefix=wor")
+        assert response.status_code == 200
+        suggestions = response.json()["suggestions"]
+        assert "workflow manager" in suggestions
+        assert "worker" in suggestions
 
 
 class TestAutocompletePerformance:

@@ -135,8 +135,11 @@ test.describe('Name field ghost text (desktop)', () => {
     // Press Tab to accept the suggestion
     await titleInput.press('Tab')
 
-    // Input should now contain the completed token "Feature" with a trailing space
-    await expect(titleInput).toHaveValue('Feature ')
+    // Input should start with the completed token "Feature" followed by a space.
+    // When a bigram exists (two-word suggestion), the value may be "Feature word2 "
+    // instead of just "Feature " — both are valid accepted states.
+    const value = await titleInput.inputValue()
+    expect(value).toMatch(/^Feature\s/)
 
     // Ghost text should be gone after acceptance
     await expect(ghost).not.toBeVisible()
@@ -154,11 +157,12 @@ test.describe('Name field ghost text (desktop)', () => {
     // Press Tab to accept the suggestion
     await titleInput.press('Tab')
 
-    await expect(titleInput).toHaveValue('Feature ')
+    const value = await titleInput.inputValue()
+    expect(value).toMatch(/^Feature\s/)
 
-    // Cursor should be positioned at the end of the accepted token (including trailing space)
+    // Cursor should be positioned at the end of the accepted suggestion (including trailing space)
     const cursorPos = await titleInput.evaluate(el => el.selectionStart)
-    expect(cursorPos).toBe('Feature '.length)
+    expect(cursorPos).toBe(value.length)
   })
 
   test('ArrowDown cycles to the next suggestion', async ({ page }) => {
@@ -238,9 +242,11 @@ test.describe('Name field ghost text (desktop)', () => {
     await titleInput.press('ArrowDown')
     await expect(ghost).toContainText('tures')
 
-    // Accept with Tab — input should contain "Features" with a trailing space
+    // Accept with Tab — input should start with "Features" followed by a space.
+    // A two-word suggestion (e.g. "Features word2 ") is also valid.
     await titleInput.press('Tab')
-    await expect(titleInput).toHaveValue('Features ')
+    const value = await titleInput.inputValue()
+    expect(value).toMatch(/^Features\s/)
     await expect(ghost).not.toBeVisible()
   })
 
