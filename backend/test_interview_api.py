@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import backend.interview_state as state_module
 import backend.main as main_module
+import backend.deps as deps_module
 from backend.main import app
 
 
@@ -377,6 +378,7 @@ class TestSessionTokenGuard:
     def test_token_cleared_on_answer_timeout(self, client):
         """When GET /answer times out the owner token is cleared."""
         import backend.main as main_module
+        import backend.deps as deps_module
         client.post("/api/interview/question", json={
             "text": "Q1",
             "options": ["A"],
@@ -646,6 +648,7 @@ class TestGetInterviewQuestionStream:
         closes, preventing memory leaks.
         """
         import backend.main as main_module
+        import backend.deps as deps_module
         base_url, _ = live_server
         main_module._SSE_HEARTBEAT_SECONDS = 0.05  # fire heartbeat quickly
 
@@ -676,6 +679,7 @@ class TestGetInterviewQuestionStream:
         keeping long-lived connections alive through proxies.
         """
         import backend.main as main_module
+        import backend.deps as deps_module
         base_url, _ = live_server
         main_module._SSE_HEARTBEAT_SECONDS = 0.05  # very short for testing
 
@@ -776,6 +780,7 @@ class TestPostInterviewAnswer:
         subscribers so the browser can transition to a waiting state.
         """
         import backend.main as main_module
+        import backend.deps as deps_module
         base_url, _ = live_server
         main_module._SSE_HEARTBEAT_SECONDS = 15.0
 
@@ -858,6 +863,7 @@ class TestGetInterviewAnswer:
         # A second call should time out (not return "A" again).
         # Override timeout to 0.05 s so the test finishes quickly.
         import backend.main as main_module
+        import backend.deps as deps_module
         original_soft = main_module._SOFT_TIMEOUT_SECONDS
         original_hard = main_module._HARD_TIMEOUT_SECONDS
         main_module._SOFT_TIMEOUT_SECONDS = 0.02
@@ -872,6 +878,7 @@ class TestGetInterviewAnswer:
     def test_get_answer_returns_408_on_timeout(self, client):
         """Returns 408 when no answer arrives within the hard timeout."""
         import backend.main as main_module
+        import backend.deps as deps_module
         original_soft = main_module._SOFT_TIMEOUT_SECONDS
         original_hard = main_module._HARD_TIMEOUT_SECONDS
         main_module._SOFT_TIMEOUT_SECONDS = 0.02
@@ -887,6 +894,7 @@ class TestGetInterviewAnswer:
     def test_get_answer_timeout_clears_session_state(self, client):
         """When GET /answer hard-times out, session state is cleared."""
         import backend.main as main_module
+        import backend.deps as deps_module
         session = state_module.get_interview_session()
         session.active_question = {"text": "Q?", "options": ["A"]}
         original_soft = main_module._SOFT_TIMEOUT_SECONDS
@@ -908,6 +916,7 @@ class TestGetInterviewAnswer:
         session_timeout event which the SSE stream forwards as 'session-timeout'.
         """
         import backend.main as main_module
+        import backend.deps as deps_module
         base_url, _ = live_server
         main_module._SOFT_TIMEOUT_SECONDS = 0.05
         main_module._HARD_TIMEOUT_SECONDS = 0.1
@@ -949,6 +958,7 @@ class TestGetInterviewAnswer:
         an answer via POST /api/interview/answer.
         """
         import backend.main as main_module
+        import backend.deps as deps_module
         base_url, _ = live_server
         main_module._SOFT_TIMEOUT_SECONDS = 10.0
         main_module._HARD_TIMEOUT_SECONDS = 20.0
@@ -994,6 +1004,7 @@ class TestGetInterviewAnswer:
         the configured timeout (tested with a very short timeout).
         """
         import backend.main as main_module
+        import backend.deps as deps_module
         base_url, _ = live_server
         main_module._SOFT_TIMEOUT_SECONDS = 0.05
         main_module._HARD_TIMEOUT_SECONDS = 0.1
@@ -1099,6 +1110,7 @@ class TestPostInterviewRevive:
         without terminating the session.
         """
         import backend.main as main_module
+        import backend.deps as deps_module
         base_url, _ = live_server
         main_module._SOFT_TIMEOUT_SECONDS = 0.05
         main_module._HARD_TIMEOUT_SECONDS = 10.0  # keep hard timeout long
@@ -1157,6 +1169,7 @@ class TestPostInterviewRevive:
         cleared — only a broadcast is sent.
         """
         import backend.main as main_module
+        import backend.deps as deps_module
         resp = client.post("/api/interview/question", json={
             "text": "Still here?",
             "options": ["Yes", "No"],
@@ -1401,6 +1414,7 @@ class TestInterviewPromptSafety:
         JSON escape errors from inline string interpolation.
         """
         import backend.main as main_module
+        import backend.deps as deps_module
         assert "json.dumps(" in main_module._INTERVIEW_API_SUFFIX, (
             "_INTERVIEW_API_SUFFIX must instruct Claude to use json.dumps() "
             "to build the curl body — never inline '-d '{...}'' strings"
@@ -1413,6 +1427,7 @@ class TestInterviewPromptSafety:
         or when subsequent responses omit session_token.
         """
         import backend.main as main_module
+        import backend.deps as deps_module
         assert "get('session_token'" in main_module._INTERVIEW_API_SUFFIX, (
             "_INTERVIEW_API_SUFFIX must use .get('session_token', ...) "
             "instead of direct key access to prevent KeyError on error responses"
@@ -1424,6 +1439,7 @@ class TestInterviewPromptSafety:
         which raises KeyError when the response is an error JSON.
         """
         import backend.main as main_module
+        import backend.deps as deps_module
         assert "['session_token']" not in main_module._INTERVIEW_API_SUFFIX, (
             "_INTERVIEW_API_SUFFIX must not use ['session_token'] — "
             "use .get('session_token', '') to handle error responses safely"
@@ -1435,6 +1451,7 @@ class TestInterviewPromptSafety:
         POST response, preventing Claude from expecting it in every response.
         """
         import backend.main as main_module
+        import backend.deps as deps_module
         suffix = main_module._INTERVIEW_API_SUFFIX
         assert "first" in suffix.lower() and "session_token" in suffix, (
             "_INTERVIEW_API_SUFFIX must clarify that session_token is only "
@@ -1512,7 +1529,7 @@ class TestInterviewStart:
 
     def test_start_interview_returns_launched_true(self, client, monkeypatch, tmp_path):
         """Valid description returns 200 with launched=True."""
-        monkeypatch.setattr(main_module, "SETTINGS_FILE", tmp_path / "settings.json")
+        monkeypatch.setattr(deps_module, "SETTINGS_FILE", tmp_path / "settings.json")
         self._mock_popen(monkeypatch)
 
         response = client.post("/api/interview/start", json={"description": "Build a user login system"})
@@ -1532,7 +1549,7 @@ class TestInterviewStart:
 
     def test_start_interview_spawns_one_process(self, client, monkeypatch, tmp_path):
         """Exactly one subprocess is spawned per start request."""
-        monkeypatch.setattr(main_module, "SETTINGS_FILE", tmp_path / "settings.json")
+        monkeypatch.setattr(deps_module, "SETTINGS_FILE", tmp_path / "settings.json")
         popen_calls = self._mock_popen(monkeypatch)
 
         client.post("/api/interview/start", json={"description": "Feature planning session"})
@@ -1541,7 +1558,7 @@ class TestInterviewStart:
 
     def test_start_interview_uses_print_flag(self, client, monkeypatch, tmp_path):
         """Claude is launched with --print so it runs non-interactively and exits when done."""
-        monkeypatch.setattr(main_module, "SETTINGS_FILE", tmp_path / "settings.json")
+        monkeypatch.setattr(deps_module, "SETTINGS_FILE", tmp_path / "settings.json")
         popen_calls = self._mock_popen(monkeypatch)
 
         client.post("/api/interview/start", json={"description": "A new feature"})
@@ -1553,7 +1570,7 @@ class TestInterviewStart:
 
     def test_start_interview_uses_skip_permissions(self, client, monkeypatch, tmp_path):
         """Claude is launched with --dangerously-skip-permissions."""
-        monkeypatch.setattr(main_module, "SETTINGS_FILE", tmp_path / "settings.json")
+        monkeypatch.setattr(deps_module, "SETTINGS_FILE", tmp_path / "settings.json")
         popen_calls = self._mock_popen(monkeypatch)
 
         client.post("/api/interview/start", json={"description": "Build a feature"})
@@ -1565,7 +1582,7 @@ class TestInterviewStart:
 
     def test_start_interview_captures_stdout_stderr(self, client, monkeypatch, tmp_path):
         """stdout and stderr are captured via PIPE (hidden execution, no terminal window)."""
-        monkeypatch.setattr(main_module, "SETTINGS_FILE", tmp_path / "settings.json")
+        monkeypatch.setattr(deps_module, "SETTINGS_FILE", tmp_path / "settings.json")
         popen_calls = self._mock_popen(monkeypatch)
 
         client.post("/api/interview/start", json={"description": "Plan features"})
@@ -1577,7 +1594,7 @@ class TestInterviewStart:
 
     def test_start_interview_does_not_open_new_console(self, client, monkeypatch, tmp_path):
         """No CREATE_NEW_CONSOLE flag is passed — the process is hidden, not interactive."""
-        monkeypatch.setattr(main_module, "SETTINGS_FILE", tmp_path / "settings.json")
+        monkeypatch.setattr(deps_module, "SETTINGS_FILE", tmp_path / "settings.json")
         popen_calls = self._mock_popen(monkeypatch)
 
         client.post("/api/interview/start", json={"description": "Plan features"})
@@ -1589,7 +1606,7 @@ class TestInterviewStart:
 
     def test_start_interview_prompt_contains_description(self, client, monkeypatch, tmp_path):
         """The launched prompt includes the user-supplied description."""
-        monkeypatch.setattr(main_module, "SETTINGS_FILE", tmp_path / "settings.json")
+        monkeypatch.setattr(deps_module, "SETTINGS_FILE", tmp_path / "settings.json")
         popen_calls = self._mock_popen(monkeypatch)
 
         client.post("/api/interview/start", json={"description": "My unique feature description XYZ123"})
@@ -1608,7 +1625,7 @@ class TestInterviewStart:
         if sys.platform != "win32":
             pytest.skip("Windows-only: PowerShell fallback test")
 
-        monkeypatch.setattr(main_module, "SETTINGS_FILE", tmp_path / "settings.json")
+        monkeypatch.setattr(deps_module, "SETTINGS_FILE", tmp_path / "settings.json")
 
         def mock_popen_not_found(*args, **kwargs):
             raise FileNotFoundError("pwsh not found")
@@ -1625,7 +1642,7 @@ class TestInterviewStart:
         if sys.platform == "win32":
             pytest.skip("Non-Windows only: direct claude CLI test")
 
-        monkeypatch.setattr(main_module, "SETTINGS_FILE", tmp_path / "settings.json")
+        monkeypatch.setattr(deps_module, "SETTINGS_FILE", tmp_path / "settings.json")
 
         def mock_popen_not_found(*args, **kwargs):
             raise FileNotFoundError("claude not found")

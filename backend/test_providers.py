@@ -303,7 +303,7 @@ def api_client(monkeypatch, tmp_path):
     app.dependency_overrides[get_session] = override_get_session
 
     # Redirect settings file to tmp dir
-    monkeypatch.setattr("backend.main.SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr("backend.deps.SETTINGS_FILE", tmp_path / "settings.json")
 
     yield TestClient(app)
 

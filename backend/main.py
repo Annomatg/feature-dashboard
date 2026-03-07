@@ -13,7 +13,6 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 import asyncio
 import json
 import secrets
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -31,11 +30,18 @@ from fastapi.responses import StreamingResponse
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from sqlalchemy import func as sa_func
-
 from api.database import CategoryToken, Comment, DescriptionBigram, DescriptionToken, Feature, NameBigram, NameToken, create_database
 from api.tokens import extract_bigrams, normalize_tokens
 from backend.providers import REGISTRY, get_provider
+import backend.deps as _deps
+from backend.deps import (
+    PROJECT_DIR, CONFIG_FILE, SETTINGS_FILE,
+    DEFAULT_PROMPT_TEMPLATE, PLAN_TASKS_PROMPT_TEMPLATE,
+    get_session, get_comment_counts, get_recent_logs, feature_to_response,
+    load_settings, save_settings, load_dashboards_config,
+    validate_db_path, switch_database,
+    _autopilot_states, _feature_subscribers,
+)
 from backend.schemas import (  # noqa: E402
     AutoPilotStatusResponse,
     BudgetPeriodData,
@@ -126,62 +132,6 @@ CLAUDE_SESSION_LIMIT_EXIT_CODES: frozenset[int] = frozenset([130])
 # never exits on its own.
 AUTOPILOT_PROCESS_TIMEOUT_SECS = 1800  # 30 minutes
 
-PLAN_TASKS_PROMPT_TEMPLATE = """\
-You are a Project Expansion Assistant for the Feature Dashboard project.
-
-## Project Context
-
-Feature Dashboard is a web application for visualizing and managing project features stored \
-in a SQLite database. It uses React 18 + Vite on the frontend and FastAPI + SQLite on the backend. \
-Features are tracked in a kanban board with TODO, In Progress, and Done lanes.
-
-**Available MCP tools:** feature_create_bulk, feature_create, feature_get_stats, \
-feature_get_next, feature_mark_passing, feature_skip
-
-## User Request
-
-The user wants to expand the project with the following:
-
-{description}
-
-## Your Role
-
-Follow the expand-project process:
-
-**Phase 1: Clarify Requirements**
-Ask focused questions to fully understand what the user wants:
-- What the user sees (UI/UX flows)
-- What actions they can take
-- What happens as a result
-- Error states and edge cases
-
-**Phase 2: Present Feature Breakdown**
-Count testable behaviors and present a breakdown by category for approval before creating anything:
-- `functional` - Core functionality, CRUD operations, workflows
-- `style` - Visual design, layout, responsive behavior
-- `navigation` - Routing, links, breadcrumbs
-- `error-handling` - Error states, validation, edge cases
-- `data` - Data integrity, persistence
-
-**Phase 3: Create Features**
-Once the user approves the breakdown, call `feature_create_bulk` with ALL features at once.
-
-Start by greeting the user, summarizing what they want to add, and asking clarifying questions.
-"""
-
-# Support test database via environment variable
-import os
-TEST_DB_PATH = os.environ.get("TEST_DB_PATH")
-if TEST_DB_PATH:
-    # Use test database for E2E tests
-    test_db_path = Path(TEST_DB_PATH)
-    _current_db_path = test_db_path
-    _engine, _session_maker = create_database(test_db_path.parent, db_filename=test_db_path.name)
-else:
-    # Use production database
-    _current_db_path = PROJECT_DIR / "features.db"
-    _engine, _session_maker = create_database(PROJECT_DIR)
-
 
 @dataclass
 class LogLine:
@@ -211,7 +161,6 @@ class ClaudeProcessLog:
 _claude_process_logs: dict[int, ClaudeProcessLog] = {}
 
 
-# Auto-pilot in-memory state, keyed by database path string
 class _AutoPilotState:
     """Tracks auto-pilot mode for a single database."""
     def __init__(self):
@@ -241,7 +190,6 @@ class _AutoPilotState:
         self.session_jsonl_path: Optional[Path] = None     # cached path once the session file is identified
 
 
-_autopilot_states: dict[str, _AutoPilotState] = {}
 
 
 def get_autopilot_state() -> _AutoPilotState:
@@ -251,7 +199,7 @@ def get_autopilot_state() -> _AutoPilotState:
     persisted value in dashboards.json so that the UI toggle is restored
     correctly after a frontend reload (without a backend restart).
     """
-    db_key = str(_current_db_path)
+    db_key = str(_deps._current_db_path)
     if db_key not in _autopilot_states:
         state = _AutoPilotState()
         state.enabled = _read_autopilot_from_config()
@@ -1022,7 +970,7 @@ def _read_autopilot_from_config() -> bool:
     """Read the persisted autopilot state for the currently active database.
 
     Returns the ``autopilot`` boolean stored in dashboards.json for the entry
-    whose path matches ``_current_db_path``.  Returns False if the config file
+    whose path matches ``_deps._current_db_path``.  Returns False if the config file
     cannot be read, the current path is not listed, or the field is absent.
     """
     if not CONFIG_FILE.exists():
@@ -1036,7 +984,7 @@ def _read_autopilot_from_config() -> bool:
                     entry_path = Path(entry.get('path', ''))
                     if not entry_path.is_absolute():
                         entry_path = PROJECT_DIR / entry_path
-                    if entry_path.resolve() == _current_db_path.resolve():
+                    if entry_path.resolve() == _deps._current_db_path.resolve():
                         return bool(entry.get('autopilot', False))
     except Exception:
         pass
@@ -1046,7 +994,7 @@ def _read_autopilot_from_config() -> bool:
 def _write_autopilot_to_config(enabled: bool) -> None:
     """Persist the autopilot toggle state for the currently active database.
 
-    Finds the dashboards.json entry whose path matches ``_current_db_path`` and
+    Finds the dashboards.json entry whose path matches ``_deps._current_db_path`` and
     sets its ``autopilot`` field to *enabled*.  Silently does nothing when the
     config file is absent, cannot be parsed, or does not contain a matching
     entry (e.g. when running against a temporary test database).
@@ -1062,7 +1010,7 @@ def _write_autopilot_to_config(enabled: bool) -> None:
                     entry_path = Path(entry.get('path', ''))
                     if not entry_path.is_absolute():
                         entry_path = PROJECT_DIR / entry_path
-                    if entry_path.resolve() == _current_db_path.resolve():
+                    if entry_path.resolve() == _deps._current_db_path.resolve():
                         entry['autopilot'] = enabled
                         break
             with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
@@ -1091,131 +1039,6 @@ async def startup_reset_autopilot():
     state = get_autopilot_state()
     _append_log(state, 'info', 'Auto-pilot reset on backend restart')
 
-
-def get_session():
-    """Get a database session."""
-    return _session_maker()
-
-
-def get_comment_counts(session, feature_ids: list[int]) -> dict[int, int]:
-    """Return a mapping of feature_id -> comment_count for the given feature IDs."""
-    if not feature_ids:
-        return {}
-    rows = (
-        session.query(Comment.feature_id, sa_func.count(Comment.id))
-        .filter(Comment.feature_id.in_(feature_ids))
-        .group_by(Comment.feature_id)
-        .all()
-    )
-    return {fid: count for fid, count in rows}
-
-
-def get_recent_logs(session, feature_ids: list[int]) -> dict[int, str]:
-    """Return a mapping of feature_id -> most recent comment content for the given feature IDs."""
-    if not feature_ids:
-        return {}
-    # Subquery: latest comment id per feature
-    subq = (
-        session.query(
-            Comment.feature_id,
-            sa_func.max(Comment.id).label("max_id"),
-        )
-        .filter(Comment.feature_id.in_(feature_ids))
-        .group_by(Comment.feature_id)
-        .subquery()
-    )
-    rows = (
-        session.query(Comment.feature_id, Comment.content)
-        .join(subq, Comment.id == subq.c.max_id)
-        .all()
-    )
-    return {fid: content for fid, content in rows}
-
-
-def feature_to_response(
-    feature,
-    comment_counts: dict[int, int],
-    recent_logs: dict[int, str] | None = None,
-) -> "FeatureResponse":
-    """Convert a Feature ORM object to FeatureResponse including comment_count and recent_log."""
-    d = feature.to_dict()
-    d["comment_count"] = comment_counts.get(feature.id, 0)
-    d["recent_log"] = (recent_logs or {}).get(feature.id)
-    return FeatureResponse(**d)
-
-
-def load_settings() -> dict:
-    """Load settings from settings.json, returning defaults if not found."""
-    defaults = {
-        "claude_prompt_template": DEFAULT_PROMPT_TEMPLATE,
-        "plan_tasks_prompt_template": PLAN_TASKS_PROMPT_TEMPLATE,
-        "autopilot_budget_limit": 0,
-        "provider": "claude",
-    }
-    if not SETTINGS_FILE.exists():
-        return defaults
-    try:
-        with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        for key, default in defaults.items():
-            if key not in data:
-                data[key] = default
-        return data
-    except Exception:
-        return defaults
-
-
-def save_settings(settings: dict) -> None:
-    """Save settings to settings.json."""
-    with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(settings, f, indent=2, ensure_ascii=False)
-
-
-def load_dashboards_config() -> list[dict]:
-    """Load dashboards configuration from JSON file."""
-    if not CONFIG_FILE.exists():
-        return [{"name": "Feature Dashboard", "path": "features.db"}]
-
-    try:
-        with open(CONFIG_FILE, 'r') as f:
-            return json.load(f)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to load dashboards config: {str(e)}")
-
-
-def validate_db_path(db_path: Path) -> bool:
-    """Validate that the path is a valid SQLite database."""
-    if not db_path.exists():
-        return False
-
-    try:
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-        # Check if it's a valid SQLite database with features table
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='features'")
-        result = cursor.fetchone()
-        conn.close()
-        return result is not None
-    except sqlite3.DatabaseError:
-        return False
-
-
-def switch_database(db_path: Path) -> None:
-    """Switch the active database connection."""
-    global _current_db_path, _engine, _session_maker
-
-    if not validate_db_path(db_path):
-        raise HTTPException(status_code=400, detail=f"Invalid database path: {db_path}")
-
-    # Create a temporary directory path that will resolve correctly
-    # We need to create the engine with a custom URL since create_database expects project_dir
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-
-    db_url = f"sqlite:///{db_path.as_posix()}"
-    _engine = create_engine(db_url, connect_args={"check_same_thread": False})
-    _session_maker = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
-    _current_db_path = db_path
 
 
 VALID_MODELS = {"opus", "sonnet", "haiku"}
@@ -1268,7 +1091,7 @@ async def get_databases():
             name=db_config["name"],
             path=db_config["path"],
             exists=db_path.exists() and validate_db_path(db_path),
-            is_active=db_path.resolve() == _current_db_path.resolve()
+            is_active=db_path.resolve() == _deps._current_db_path.resolve()
         ))
 
     return result
@@ -1282,7 +1105,7 @@ async def get_active_database():
     # Find the matching config entry
     for db_config in config:
         db_path = PROJECT_DIR / db_config["path"]
-        if db_path.resolve() == _current_db_path.resolve():
+        if db_path.resolve() == _deps._current_db_path.resolve():
             return DatabaseInfo(
                 name=db_config["name"],
                 path=db_config["path"],
@@ -1293,8 +1116,8 @@ async def get_active_database():
     # If not in config, return current path info
     return DatabaseInfo(
         name="Current Database",
-        path=str(_current_db_path.relative_to(PROJECT_DIR)),
-        exists=_current_db_path.exists(),
+        path=str(_deps._current_db_path.relative_to(PROJECT_DIR)),
+        exists=_deps._current_db_path.exists(),
         is_active=True
     )
 
@@ -1520,9 +1343,7 @@ def get_autocomplete_category(prefix: str = ""):
 # Feature stream — SSE endpoint for immediate board refresh
 # ---------------------------------------------------------------------------
 
-# Module-level subscriber list for feature events.
-# Each subscriber is an asyncio.Queue; broadcast() puts events onto every queue.
-_feature_subscribers: list[asyncio.Queue] = []
+# _feature_subscribers is imported from backend.deps (see top-level imports).
 
 # Heartbeat interval for the feature SSE stream (seconds).
 # Override in tests to avoid long waits.
@@ -1690,7 +1511,7 @@ async def get_autopilot_session_log(limit: int = 50):
             total_entries=0,
         )
 
-    working_dir = str(_current_db_path.parent)
+    working_dir = str(_deps._current_db_path.parent)
     projects_dir = _get_claude_projects_dir(working_dir)
 
     if projects_dir is None:
@@ -2304,7 +2125,7 @@ async def launch_claude_for_feature(feature_id: int, request: LaunchClaudeReques
         feature_model = feature.model or "sonnet"
 
         # Launch Claude in the directory containing the active features.db
-        working_dir = str(_current_db_path.parent)
+        working_dir = str(_deps._current_db_path.parent)
 
         launched_process = None
         try:
@@ -2409,7 +2230,7 @@ async def plan_tasks(request: PlanTasksRequest):
     settings = load_settings()
     template = settings.get("plan_tasks_prompt_template", PLAN_TASKS_PROMPT_TEMPLATE)
     prompt = template.format(description=request.description.strip())
-    working_dir = str(_current_db_path.parent)
+    working_dir = str(_deps._current_db_path.parent)
 
     try:
         _launch_claude_terminal(prompt, working_dir)
@@ -2490,13 +2311,13 @@ async def enable_autopilot():
         state.session_start_time = datetime.now(timezone.utc)
         state.session_prompt_snippet = f"Feature #{feature.id} [{feature.category}]"
         state.session_jsonl_path = None
-        _append_log(state, 'info', f"Auto-pilot enabled for database: {_current_db_path.name}")
+        _append_log(state, 'info', f"Auto-pilot enabled for database: {_deps._current_db_path.name}")
         _append_log(state, 'info', f"Starting feature #{feature.id}: {feature.name}")
 
         settings = load_settings()
         feature_model = feature.model or "sonnet"
 
-        await _spawn_and_monitor(feature, state, _current_db_path, settings, raise_on_error=True)
+        await _spawn_and_monitor(feature, state, _deps._current_db_path, settings, raise_on_error=True)
         _append_log(state, 'info', f"Claude launched for feature #{feature.id} with model {feature_model}")
         _write_autopilot_to_config(True)
 
@@ -3201,7 +3022,7 @@ async def start_interview(request: InterviewStartRequest):
     prompt = plan_template.format(description=request.description.strip())
     prompt += _INTERVIEW_API_SUFFIX
 
-    working_dir = str(_current_db_path.parent)
+    working_dir = str(_deps._current_db_path.parent)
 
     try:
         if sys.platform == "win32":

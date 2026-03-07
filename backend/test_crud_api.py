@@ -79,6 +79,7 @@ def client(monkeypatch):
     use the test database instead of the production one.
     """
     import backend.main as main_module
+    import backend.deps as deps_module
 
     temp_dir = tempfile.mkdtemp()
     temp_db_path = Path(temp_dir) / "features.db"
@@ -102,8 +103,8 @@ def client(monkeypatch):
     finally:
         session.close()
 
-    monkeypatch.setattr(main_module, '_session_maker', session_maker)
-    monkeypatch.setattr(main_module, '_current_db_path', temp_db_path)
+    monkeypatch.setattr(deps_module, '_session_maker', session_maker)
+    monkeypatch.setattr(deps_module, '_current_db_path', temp_db_path)
     # Suppress background monitor tasks for endpoint tests — they run against
     # the test DB but complete instantly (mock wait=0), altering state between
     # API calls.  Tests that specifically verify monitor-task behaviour inject
@@ -156,6 +157,7 @@ class TestCreateFeature:
     def test_create_feature_populates_name_tokens(self, client):
         """Creating a feature inserts tokens from its name into name_tokens."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         response = client.post("/api/features", json={
             "category": "Testing",
@@ -181,6 +183,7 @@ class TestCreateFeature:
     def test_create_feature_increments_name_tokens_on_repeated_create(self, client):
         """Creating two features with a shared token increments usage_count for that token."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         client.post("/api/features", json={
             "category": "Testing",
@@ -246,6 +249,7 @@ class TestUpdateFeature:
     def test_update_feature_name_populates_name_tokens(self, client):
         """Updating a feature's name inserts tokens from the new name into name_tokens."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         response = client.put("/api/features/1", json={
             "name": "Updated Gamma Delta"
@@ -268,6 +272,7 @@ class TestUpdateFeature:
     def test_update_feature_name_does_not_decrement_old_tokens(self, client):
         """Old tokens from the previous name are not decremented when name is updated (append-only)."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         # Seed a known token by creating a feature with a unique name
         client.post("/api/features", json={
@@ -305,6 +310,7 @@ class TestUpdateFeature:
     def test_update_feature_without_name_does_not_touch_name_tokens(self, client):
         """Updating fields other than name does not modify name_tokens."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         # Capture current token state
         session = main_module.get_session()
@@ -328,6 +334,7 @@ class TestUpdateFeature:
     def test_update_feature_description_populates_description_tokens(self, client):
         """Updating a feature's description inserts tokens from the new description into description_tokens."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         response = client.put("/api/features/1", json={
             "description": "Zephyr Quartz Vortex updated description"
@@ -350,6 +357,7 @@ class TestUpdateFeature:
     def test_update_feature_description_does_not_decrement_old_tokens(self, client):
         """Old tokens from the previous description are not decremented when description is updated (append-only)."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         # Seed a known token by creating a feature with a unique description
         client.post("/api/features", json={
@@ -387,6 +395,7 @@ class TestUpdateFeature:
     def test_update_feature_without_description_does_not_touch_description_tokens(self, client):
         """Updating fields other than description does not modify description_tokens."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         # Capture current description_tokens state
         session = main_module.get_session()
@@ -410,6 +419,7 @@ class TestUpdateFeature:
     def test_create_feature_populates_description_tokens(self, client):
         """Creating a feature inserts tokens from its description into description_tokens."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         response = client.post("/api/features", json={
             "category": "Testing",
@@ -436,6 +446,7 @@ class TestUpdateFeature:
     def test_create_feature_increments_description_tokens_on_repeated_create(self, client):
         """Creating two features with a shared description token increments usage_count."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         client.post("/api/features", json={
             "category": "Testing",
@@ -1005,8 +1016,9 @@ class TestLaunchClaude:
     def test_launch_todo_feature(self, client, monkeypatch, tmp_path):
         """Test launching Claude for a TODO feature succeeds."""
         import backend.main as main_module
+        import backend.deps as deps_module
         # Isolate from production settings.json so prompt assertions are stable
-        monkeypatch.setattr(main_module, 'SETTINGS_FILE', tmp_path / "settings.json")
+        monkeypatch.setattr(deps_module, 'SETTINGS_FILE', tmp_path / "settings.json")
 
         popen_calls = []
 
@@ -1035,8 +1047,9 @@ class TestLaunchClaude:
     def test_launch_in_progress_feature(self, client, monkeypatch, tmp_path):
         """Test launching Claude for an IN PROGRESS feature succeeds."""
         import backend.main as main_module
+        import backend.deps as deps_module
         # Isolate from production settings.json so prompt assertions are stable
-        monkeypatch.setattr(main_module, 'SETTINGS_FILE', tmp_path / "settings.json")
+        monkeypatch.setattr(deps_module, 'SETTINGS_FILE', tmp_path / "settings.json")
 
         monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
@@ -1110,9 +1123,10 @@ class TestLaunchClaude:
     def test_prompt_contains_feature_details(self, client, monkeypatch, tmp_path):
         """Test that the generated prompt includes all key feature details."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         # Use a fresh settings file with the default template so description is included
-        monkeypatch.setattr(main_module, 'SETTINGS_FILE', tmp_path / "settings.json")
+        monkeypatch.setattr(deps_module, 'SETTINGS_FILE', tmp_path / "settings.json")
         monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
         response = client.post("/api/features/1/launch-claude")
@@ -1263,8 +1277,9 @@ class TestLaunchClaudeHiddenExecution:
 def test_get_settings_returns_defaults(client, tmp_path, monkeypatch):
     """GET /api/settings returns default templates when no settings.json exists."""
     import backend.main as main_module
+    import backend.deps as deps_module
     # Point SETTINGS_FILE to a non-existent file in tmp_path
-    monkeypatch.setattr(main_module, 'SETTINGS_FILE', tmp_path / "settings_nonexistent.json")
+    monkeypatch.setattr(deps_module, 'SETTINGS_FILE', tmp_path / "settings_nonexistent.json")
 
     response = client.get("/api/settings")
     assert response.status_code == 200
@@ -1278,8 +1293,9 @@ def test_get_settings_returns_defaults(client, tmp_path, monkeypatch):
 def test_put_settings_saves_and_returns(client, tmp_path, monkeypatch):
     """PUT /api/settings saves settings and returns them."""
     import backend.main as main_module
+    import backend.deps as deps_module
     settings_file = tmp_path / "test_settings.json"
-    monkeypatch.setattr(main_module, 'SETTINGS_FILE', settings_file)
+    monkeypatch.setattr(deps_module, 'SETTINGS_FILE', settings_file)
 
     new_template = "Custom prompt: {name} - {description}"
     new_plan_template = "Custom plan: {description}"
@@ -1303,8 +1319,9 @@ def test_put_settings_saves_and_returns(client, tmp_path, monkeypatch):
 def test_put_settings_preserves_plan_template_when_omitted(client, tmp_path, monkeypatch):
     """PUT /api/settings preserves plan_tasks_prompt_template when not provided."""
     import backend.main as main_module
+    import backend.deps as deps_module
     settings_file = tmp_path / "test_settings.json"
-    monkeypatch.setattr(main_module, 'SETTINGS_FILE', settings_file)
+    monkeypatch.setattr(deps_module, 'SETTINGS_FILE', settings_file)
 
     # Save a custom plan template first
     custom_plan = "My custom plan: {description}"
@@ -1324,8 +1341,9 @@ def test_put_settings_preserves_plan_template_when_omitted(client, tmp_path, mon
 def test_get_settings_after_save(client, tmp_path, monkeypatch):
     """GET /api/settings returns previously saved settings."""
     import backend.main as main_module
+    import backend.deps as deps_module
     settings_file = tmp_path / "test_settings.json"
-    monkeypatch.setattr(main_module, 'SETTINGS_FILE', settings_file)
+    monkeypatch.setattr(deps_module, 'SETTINGS_FILE', settings_file)
 
     # Save a custom template
     custom_template = "My custom template {feature_id}"
@@ -1346,10 +1364,11 @@ def test_get_settings_after_save(client, tmp_path, monkeypatch):
 def test_plan_tasks_uses_settings_template(client, tmp_path, monkeypatch):
     """POST /api/plan-tasks uses the plan_tasks_prompt_template from settings."""
     import backend.main as main_module
+    import backend.deps as deps_module
 
     # Point settings file to temp dir
     settings_file = tmp_path / "test_settings.json"
-    monkeypatch.setattr(main_module, 'SETTINGS_FILE', settings_file)
+    monkeypatch.setattr(deps_module, 'SETTINGS_FILE', settings_file)
 
     # Save a custom plan template
     custom_plan = "Custom plan for: {description}"
@@ -1686,11 +1705,12 @@ class TestPlanTasks:
         feature-dashboard directory.  Fix: use _current_db_path.parent.
         """
         import backend.main as main_module
+        import backend.deps as deps_module
 
         # Simulate switching to a different project's database
         other_dir = tempfile.mkdtemp()
         other_db_path = Path(other_dir) / "features.db"
-        monkeypatch.setattr(main_module, "_current_db_path", other_db_path)
+        monkeypatch.setattr(deps_module, "_current_db_path", other_db_path)
 
         popen_calls = []
 
@@ -1721,6 +1741,7 @@ class TestPlanTasks:
     def test_working_directory_uses_default_db_parent_without_switch(self, client, monkeypatch):
         """Plan-tasks uses the current active database's parent (not a hardcoded PROJECT_DIR)."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
 
@@ -1729,7 +1750,7 @@ class TestPlanTasks:
         assert response.status_code == 200
         data = response.json()
 
-        expected_dir = str(main_module._current_db_path.parent)
+        expected_dir = str(deps_module._current_db_path.parent)
         assert data["working_directory"] == expected_dir
 
 
@@ -1997,6 +2018,7 @@ class TestSpawnAndMonitor:
 
     def _make_state(self):
         import backend.main as m
+        import backend.deps as deps_module
         # Use the same _AutoPilotState class; get a fresh instance via the module
         state = m._AutoPilotState()
         state.enabled = True
@@ -2012,6 +2034,7 @@ class TestSpawnAndMonitor:
         import tempfile, types
         from backend.main import _spawn_and_monitor
         import backend.main as m
+        import backend.deps as deps_module
 
         monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: types.SimpleNamespace(pid=1))
         monkeypatch.setattr(asyncio, "create_task", lambda coro: coro.close() or None)
@@ -2289,6 +2312,7 @@ class TestAutoPilotEnable:
     def _reset_autopilot_state(self, monkeypatch):
         """Reset autopilot state dict to isolate tests from each other."""
         import backend.main as main_module
+        import backend.deps as deps_module
         monkeypatch.setattr(main_module, '_autopilot_states', {})
 
     def _get_full_command(self, popen_calls):
@@ -2534,6 +2558,7 @@ class TestAutoPilotDisable:
     def _reset_autopilot_state(self, monkeypatch):
         """Reset autopilot state dict to isolate tests from each other."""
         import backend.main as main_module
+        import backend.deps as deps_module
         monkeypatch.setattr(main_module, '_autopilot_states', {})
 
     def test_disable_when_not_enabled_returns_200(self, client, monkeypatch):
@@ -2680,6 +2705,7 @@ class TestAutoPilotStatus:
     def _reset_autopilot_state(self, monkeypatch):
         """Reset autopilot state dict to isolate tests from each other."""
         import backend.main as main_module
+        import backend.deps as deps_module
         monkeypatch.setattr(main_module, '_autopilot_states', {})
 
     def test_status_returns_200_with_correct_shape_when_disabled(self, client, monkeypatch):
@@ -2866,6 +2892,7 @@ class TestMonitorClaudeProcess:
             failure_calls.append((fid, exit_code))
 
         import backend.main as main_module
+        import backend.deps as deps_module
         monkeypatch.setattr(main_module, 'handle_autopilot_success', mock_success)
         monkeypatch.setattr(main_module, 'handle_autopilot_failure', mock_failure)
 
@@ -2896,6 +2923,7 @@ class TestMonitorClaudeProcess:
             failure_calls.append((fid, exit_code))
 
         import backend.main as main_module
+        import backend.deps as deps_module
         monkeypatch.setattr(main_module, 'handle_autopilot_success', mock_success)
         monkeypatch.setattr(main_module, 'handle_autopilot_failure', mock_failure)
 
@@ -2923,6 +2951,7 @@ class TestMonitorClaudeProcess:
             failure_calls.append((fid, exit_code))
 
         import backend.main as main_module
+        import backend.deps as deps_module
         monkeypatch.setattr(main_module, 'handle_autopilot_success', lambda *a: None)
         monkeypatch.setattr(main_module, 'handle_autopilot_failure', mock_failure)
 
@@ -2972,6 +3001,7 @@ class TestMonitorClaudeProcess:
         import threading
         from backend.main import monitor_claude_process, _AutoPilotState
         import backend.main as main_module
+        import backend.deps as deps_module
 
         # Use a very short timeout so the test completes quickly
         monkeypatch.setattr(main_module, 'AUTOPILOT_PROCESS_TIMEOUT_SECS', 0.05)
@@ -3016,6 +3046,7 @@ class TestMonitorClaudeProcess:
         import threading
         from backend.main import monitor_claude_process, _AutoPilotState
         import backend.main as main_module
+        import backend.deps as deps_module
 
         monkeypatch.setattr(main_module, 'AUTOPILOT_PROCESS_TIMEOUT_SECS', 0.05)
 
@@ -3742,6 +3773,7 @@ class TestHandleAllComplete:
         from backend.main import handle_autopilot_success, _AutoPilotState
         from api.database import Feature as FeatureModel
         import backend.main as main_module
+        import backend.deps as deps_module
 
         session_maker, db_path = test_db_with_path
 
@@ -3760,7 +3792,7 @@ class TestHandleAllComplete:
         state = _AutoPilotState()
         state.enabled = True
         state.last_error = "previous error"
-        monkeypatch.setattr(main_module, '_current_db_path', db_path)
+        monkeypatch.setattr(deps_module, '_current_db_path', db_path)
         monkeypatch.setattr(main_module, '_autopilot_states', {str(db_path): state})
 
         asyncio.run(handle_autopilot_success(99, state, db_path))
@@ -3775,6 +3807,7 @@ class TestDisableAutopilotCancelsMonitorTask:
 
     def _reset_autopilot_state(self, monkeypatch):
         import backend.main as main_module
+        import backend.deps as deps_module
         monkeypatch.setattr(main_module, '_autopilot_states', {})
 
     def test_disable_cancels_monitor_task(self, client, monkeypatch):
@@ -3801,6 +3834,7 @@ class TestDisableAutopilotCancelsMonitorTask:
         """Disabling auto-pilot sets state.monitor_task to None."""
         self._reset_autopilot_state(monkeypatch)
         import backend.main as main_module
+        import backend.deps as deps_module
 
         monkeypatch.setattr("backend.main.asyncio.create_task", lambda coro: (coro.close(), None)[1])
         monkeypatch.setattr("backend.main.subprocess.Popen",
@@ -3818,6 +3852,7 @@ class TestClearAutopilotLog:
 
     def _reset_autopilot_state(self, monkeypatch):
         import backend.main as main_module
+        import backend.deps as deps_module
         monkeypatch.setattr(main_module, '_autopilot_states', {})
 
     def test_clear_log_returns_200(self, client, monkeypatch):
@@ -3832,6 +3867,7 @@ class TestClearAutopilotLog:
         """Clear log endpoint removes all log entries from state."""
         self._reset_autopilot_state(monkeypatch)
         import backend.main as main_module
+        import backend.deps as deps_module
 
         # Populate the log by calling disable (which appends a log entry)
         monkeypatch.setattr("backend.main.subprocess.Popen",
@@ -3862,6 +3898,7 @@ class TestClearAutopilotLog:
         """Clearing the log does not change the enabled flag or current feature."""
         self._reset_autopilot_state(monkeypatch)
         import backend.main as main_module
+        import backend.deps as deps_module
 
         # Manually set state fields
         state = main_module.get_autopilot_state()
@@ -3880,6 +3917,7 @@ class TestClearAutopilotLog:
         """GET /api/autopilot/status returns empty log after clear."""
         self._reset_autopilot_state(monkeypatch)
         import backend.main as main_module
+        import backend.deps as deps_module
 
         # Add a log entry directly
         state = main_module.get_autopilot_state()
@@ -3899,6 +3937,7 @@ class TestClearAutoPilotError:
 
     def _reset_autopilot_state(self, monkeypatch):
         import backend.main as main_module
+        import backend.deps as deps_module
         monkeypatch.setattr(main_module, '_autopilot_states', {})
 
     def test_clear_error_returns_200(self, client, monkeypatch):
@@ -3913,6 +3952,7 @@ class TestClearAutoPilotError:
         """Clear error endpoint sets last_error to None."""
         self._reset_autopilot_state(monkeypatch)
         import backend.main as main_module
+        import backend.deps as deps_module
 
         # Manually set last_error
         state = main_module.get_autopilot_state()
@@ -3941,6 +3981,7 @@ class TestClearAutoPilotError:
         """Clearing the error does not change enabled state or log entries."""
         self._reset_autopilot_state(monkeypatch)
         import backend.main as main_module
+        import backend.deps as deps_module
 
         state = main_module.get_autopilot_state()
         state.enabled = False
@@ -3957,6 +3998,7 @@ class TestClearAutoPilotError:
         """GET /api/autopilot/status returns last_error=null after clear-error."""
         self._reset_autopilot_state(monkeypatch)
         import backend.main as main_module
+        import backend.deps as deps_module
 
         # Set an error directly
         state = main_module.get_autopilot_state()
@@ -3978,13 +4020,14 @@ class TestStartupAutoPilotReset:
     def test_status_returns_disabled_after_state_reinit(self, client, monkeypatch):
         """After simulated restart (state re-init), GET /api/autopilot/status returns enabled=False."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         # Simulate pre-existing enabled state from before restart
         pre_restart_state = main_module._AutoPilotState()
         pre_restart_state.enabled = True
         pre_restart_state.current_feature_id = 1
         pre_restart_state.current_feature_name = "Old Feature"
-        old_key = str(main_module._current_db_path)
+        old_key = str(deps_module._current_db_path)
         monkeypatch.setattr(main_module, '_autopilot_states', {old_key: pre_restart_state})
 
         # Simulate startup reset: clear the state dict
@@ -3999,12 +4042,13 @@ class TestStartupAutoPilotReset:
     def test_no_orphaned_process_after_state_reinit(self, client, monkeypatch):
         """No orphaned process/task references exist after state re-init."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         # Simulate state with live references
         pre_restart_state = main_module._AutoPilotState()
         pre_restart_state.active_process = object()
         pre_restart_state.monitor_task = object()
-        old_key = str(main_module._current_db_path)
+        old_key = str(deps_module._current_db_path)
         monkeypatch.setattr(main_module, '_autopilot_states', {old_key: pre_restart_state})
 
         # Simulate startup reset
@@ -4019,6 +4063,7 @@ class TestStartupAutoPilotReset:
         """startup_reset_autopilot() clears all in-memory autopilot states."""
         import asyncio
         import backend.main as main_module
+        import backend.deps as deps_module
 
         pre_state = main_module._AutoPilotState()
         pre_state.enabled = True
@@ -4037,6 +4082,7 @@ class TestStartupAutoPilotReset:
         """startup_reset_autopilot() appends 'Auto-pilot reset on backend restart' to the log."""
         import asyncio
         import backend.main as main_module
+        import backend.deps as deps_module
 
         monkeypatch.setattr(main_module, '_autopilot_states', {})
         monkeypatch.setattr(main_module, '_reset_autopilot_in_config', lambda: None)
@@ -4051,6 +4097,7 @@ class TestStartupAutoPilotReset:
         """GET /api/autopilot/status after startup shows reset log entry."""
         import asyncio
         import backend.main as main_module
+        import backend.deps as deps_module
 
         monkeypatch.setattr(main_module, '_autopilot_states', {})
         monkeypatch.setattr(main_module, '_reset_autopilot_in_config', lambda: None)
@@ -4068,6 +4115,7 @@ class TestStartupAutoPilotReset:
         """_reset_autopilot_in_config() sets autopilot=False in dashboards.json."""
         import json
         import backend.main as main_module
+        import backend.deps as deps_module
 
         config = [
             {"name": "DB 1", "path": "a.db", "autopilot": True},
@@ -4086,6 +4134,7 @@ class TestStartupAutoPilotReset:
         """_reset_autopilot_in_config() does not modify dashboards.json if no autopilot field."""
         import json
         import backend.main as main_module
+        import backend.deps as deps_module
 
         original = [{"name": "DB 1", "path": "a.db"}]
         config_file = tmp_path / "dashboards.json"
@@ -4101,6 +4150,7 @@ class TestStartupAutoPilotReset:
     def test_reset_config_noop_when_no_file(self, tmp_path, monkeypatch):
         """_reset_autopilot_in_config() silently does nothing if dashboards.json doesn't exist."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         nonexistent = tmp_path / "nonexistent.json"
         monkeypatch.setattr(main_module, 'CONFIG_FILE', nonexistent)
@@ -4112,6 +4162,7 @@ class TestStartupAutoPilotReset:
         """_reset_autopilot_in_config() resets all entries with autopilot=True."""
         import json
         import backend.main as main_module
+        import backend.deps as deps_module
 
         config = [
             {"name": "DB 1", "path": "a.db", "autopilot": True},
@@ -4150,6 +4201,7 @@ class TestAutoPilotPersistence:
         """
         import json
         import backend.main as main_module
+        import backend.deps as deps_module
 
         temp_db_path = tmp_path / "features.db"
         engine, session_maker = create_database(tmp_path)
@@ -4176,8 +4228,8 @@ class TestAutoPilotPersistence:
         config_data = [{"name": "Test DB", "path": str(temp_db_path)}]
         config_path.write_text(json.dumps(config_data))
 
-        monkeypatch.setattr(main_module, '_session_maker', session_maker)
-        monkeypatch.setattr(main_module, '_current_db_path', temp_db_path)
+        monkeypatch.setattr(deps_module, '_session_maker', session_maker)
+        monkeypatch.setattr(deps_module, '_current_db_path', temp_db_path)
         monkeypatch.setattr(main_module, 'CONFIG_FILE', config_path)
         monkeypatch.setattr(main_module, '_autopilot_states', {})
         monkeypatch.setattr(main_module.asyncio, 'create_task',
@@ -4195,6 +4247,7 @@ class TestAutoPilotPersistence:
         """POST /api/autopilot/enable writes autopilot=true to dashboards.json."""
         import json
         import backend.main as main_module
+        import backend.deps as deps_module
 
         client, temp_db_path, config_path = client_with_config
 
@@ -4218,6 +4271,7 @@ class TestAutoPilotPersistence:
         """POST /api/autopilot/disable writes autopilot=false to dashboards.json."""
         import json
         import backend.main as main_module
+        import backend.deps as deps_module
 
         client, temp_db_path, config_path = client_with_config
 
@@ -4241,6 +4295,7 @@ class TestAutoPilotPersistence:
         """
         import json
         import backend.main as main_module
+        import backend.deps as deps_module
 
         client, temp_db_path, config_path = client_with_config
 
@@ -4260,6 +4315,7 @@ class TestAutoPilotPersistence:
     def test_status_returns_false_when_config_has_no_autopilot_field(self, client_with_config):
         """GET /api/autopilot/status returns enabled=False when config has no autopilot field."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         client, temp_db_path, config_path = client_with_config
 
@@ -4276,6 +4332,7 @@ class TestAutoPilotPersistence:
         """
         import json
         import backend.main as main_module
+        import backend.deps as deps_module
 
         db_path_a = tmp_path / "a.db"
         db_path_b = tmp_path / "b.db"
@@ -4291,13 +4348,13 @@ class TestAutoPilotPersistence:
         monkeypatch.setattr(main_module, '_autopilot_states', {})
 
         # Simulate switching to DB A
-        monkeypatch.setattr(main_module, '_current_db_path', db_path_a)
+        monkeypatch.setattr(deps_module, '_current_db_path', db_path_a)
         state_a = main_module.get_autopilot_state()
         assert state_a.enabled is True
 
         # Reset in-memory state and simulate switching to DB B
         monkeypatch.setattr(main_module, '_autopilot_states', {})
-        monkeypatch.setattr(main_module, '_current_db_path', db_path_b)
+        monkeypatch.setattr(deps_module, '_current_db_path', db_path_b)
         state_b = main_module.get_autopilot_state()
         assert state_b.enabled is False
 
@@ -4305,6 +4362,7 @@ class TestAutoPilotPersistence:
         """POST /api/autopilot/enable does not write autopilot=true when Claude spawn fails."""
         import json
         import backend.main as main_module
+        import backend.deps as deps_module
 
         client, temp_db_path, config_path = client_with_config
 
@@ -4324,9 +4382,10 @@ class TestAutoPilotPersistence:
     def test_read_autopilot_from_config_returns_false_when_no_file(self, monkeypatch, tmp_path):
         """_read_autopilot_from_config() returns False when CONFIG_FILE does not exist."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         monkeypatch.setattr(main_module, 'CONFIG_FILE', tmp_path / "nonexistent.json")
-        monkeypatch.setattr(main_module, '_current_db_path', tmp_path / "features.db")
+        monkeypatch.setattr(deps_module, '_current_db_path', tmp_path / "features.db")
 
         assert main_module._read_autopilot_from_config() is False
 
@@ -4334,20 +4393,22 @@ class TestAutoPilotPersistence:
         """_read_autopilot_from_config() returns False when the current db path is not in config."""
         import json
         import backend.main as main_module
+        import backend.deps as deps_module
 
         config_path = tmp_path / "dashboards.json"
         config_path.write_text(json.dumps([{"name": "Other", "path": str(tmp_path / "other.db"), "autopilot": True}]))
         monkeypatch.setattr(main_module, 'CONFIG_FILE', config_path)
-        monkeypatch.setattr(main_module, '_current_db_path', tmp_path / "features.db")
+        monkeypatch.setattr(deps_module, '_current_db_path', tmp_path / "features.db")
 
         assert main_module._read_autopilot_from_config() is False
 
     def test_write_autopilot_to_config_noop_when_no_file(self, monkeypatch, tmp_path):
         """_write_autopilot_to_config() silently does nothing when CONFIG_FILE is absent."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         monkeypatch.setattr(main_module, 'CONFIG_FILE', tmp_path / "nonexistent.json")
-        monkeypatch.setattr(main_module, '_current_db_path', tmp_path / "features.db")
+        monkeypatch.setattr(deps_module, '_current_db_path', tmp_path / "features.db")
 
         # Should not raise
         main_module._write_autopilot_to_config(True)
@@ -4356,12 +4417,13 @@ class TestAutoPilotPersistence:
         """_write_autopilot_to_config() does not modify config when db path not found."""
         import json
         import backend.main as main_module
+        import backend.deps as deps_module
 
         original = [{"name": "Other", "path": str(tmp_path / "other.db")}]
         config_path = tmp_path / "dashboards.json"
         config_path.write_text(json.dumps(original))
         monkeypatch.setattr(main_module, 'CONFIG_FILE', config_path)
-        monkeypatch.setattr(main_module, '_current_db_path', tmp_path / "features.db")
+        monkeypatch.setattr(deps_module, '_current_db_path', tmp_path / "features.db")
 
         main_module._write_autopilot_to_config(True)
 
@@ -4376,6 +4438,7 @@ class TestAutoPilotStoppingState:
 
     def _reset_autopilot_state(self, monkeypatch):
         import backend.main as main_module
+        import backend.deps as deps_module
         monkeypatch.setattr(main_module, '_autopilot_states', {})
 
     # ------------------------------------------------------------------
@@ -4486,6 +4549,7 @@ class TestAutoPilotStoppingState:
         """Status endpoint reflects stopping=True while waiting for process to exit."""
         self._reset_autopilot_state(monkeypatch)
         import backend.main as main_module
+        import backend.deps as deps_module
 
         class StillRunningProcess:
             pid = 42
@@ -4522,6 +4586,7 @@ class TestAutoPilotStoppingState:
         """Re-enabling autopilot while stopping clears the stopping flag."""
         self._reset_autopilot_state(monkeypatch)
         import backend.main as main_module
+        import backend.deps as deps_module
 
         class StillRunningProcess:
             pid = 42
@@ -4556,6 +4621,7 @@ class TestAutoPilotStoppingState:
         """Re-enabling while stopping calls terminate() on the old orphaned process."""
         self._reset_autopilot_state(monkeypatch)
         import backend.main as main_module
+        import backend.deps as deps_module
 
         terminate_calls = []
 
@@ -4590,6 +4656,7 @@ class TestAutoPilotStoppingState:
         """After re-enabling while stopping, active_process points to the NEW process."""
         self._reset_autopilot_state(monkeypatch)
         import backend.main as main_module
+        import backend.deps as deps_module
 
         class StillRunningProcess:
             pid = 42
@@ -4619,6 +4686,7 @@ class TestAutoPilotStoppingState:
         import asyncio
         import threading
         import backend.main as main_module
+        import backend.deps as deps_module
 
         # Build a minimal state object mimicking the stopping scenario
         state = main_module._AutoPilotState()
@@ -4672,6 +4740,7 @@ class TestChildProcessTracking:
 
     def _reset_autopilot_state(self, monkeypatch):
         import backend.main as main_module
+        import backend.deps as deps_module
         monkeypatch.setattr(main_module, '_autopilot_states', {})
 
     # ------------------------------------------------------------------
@@ -4681,6 +4750,7 @@ class TestChildProcessTracking:
     def test_get_child_procs_returns_empty_when_psutil_unavailable(self, monkeypatch):
         """_get_child_procs falls back to [] when psutil cannot be imported."""
         import backend.main as main_module
+        import backend.deps as deps_module
         import builtins
 
         real_import = builtins.__import__
@@ -4701,6 +4771,7 @@ class TestChildProcessTracking:
     def test_get_child_procs_returns_empty_for_nonexistent_pid(self):
         """_get_child_procs returns [] if the process does not exist."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         class FakeProc:
             pid = 999999999  # Unlikely to exist
@@ -4715,11 +4786,13 @@ class TestChildProcessTracking:
     def test_any_proc_running_returns_false_for_empty_list(self):
         """_any_proc_running([]) is always False."""
         import backend.main as main_module
+        import backend.deps as deps_module
         assert main_module._any_proc_running([]) is False
 
     def test_any_proc_running_returns_false_when_all_dead(self):
         """_any_proc_running returns False if all processes are dead."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         class DeadProc:
             def is_running(self): return False
@@ -4730,6 +4803,7 @@ class TestChildProcessTracking:
     def test_any_proc_running_returns_true_when_one_alive(self):
         """_any_proc_running returns True if at least one process is running."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         class DeadProc:
             def is_running(self): return False
@@ -4744,6 +4818,7 @@ class TestChildProcessTracking:
     def test_any_proc_running_handles_exceptions(self):
         """_any_proc_running treats exceptions as 'not running' for safety."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         class BrokenProc:
             def is_running(self): raise RuntimeError("process gone")
@@ -4758,6 +4833,7 @@ class TestChildProcessTracking:
         """_wait_for_process_and_children blocks until all children have exited."""
         import threading
         import backend.main as main_module
+        import backend.deps as deps_module
 
         waited = []
 
@@ -4773,6 +4849,7 @@ class TestChildProcessTracking:
     def test_wait_for_process_and_children_tolerates_child_exception(self):
         """_wait_for_process_and_children continues even if a child.wait() raises."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         waited = []
 
@@ -4798,6 +4875,7 @@ class TestChildProcessTracking:
         """stopping=True when parent already exited but child process is still running."""
         self._reset_autopilot_state(monkeypatch)
         import backend.main as main_module
+        import backend.deps as deps_module
 
         class ExitedParent:
             pid = 42
@@ -4826,6 +4904,7 @@ class TestChildProcessTracking:
         """Log mentions 'waiting for Claude process' even when only children are alive."""
         self._reset_autopilot_state(monkeypatch)
         import backend.main as main_module
+        import backend.deps as deps_module
 
         class ExitedParent:
             pid = 42
@@ -4850,6 +4929,7 @@ class TestChildProcessTracking:
         """stopping=False when parent AND all children have already exited."""
         self._reset_autopilot_state(monkeypatch)
         import backend.main as main_module
+        import backend.deps as deps_module
 
         class ExitedParent:
             pid = 42
@@ -4880,6 +4960,7 @@ class TestChildProcessTracking:
         import asyncio
         import threading
         import backend.main as main_module
+        import backend.deps as deps_module
 
         waited = []
 
@@ -4930,6 +5011,7 @@ class TestManualLaunchTracking:
 
     def _reset_autopilot_state(self, monkeypatch):
         import backend.main as main_module
+        import backend.deps as deps_module
         monkeypatch.setattr(main_module, '_autopilot_states', {})
 
     def test_manual_launch_sets_manual_active_in_status(self, client, monkeypatch):
@@ -5037,6 +5119,7 @@ class TestManualLaunchTracking:
         """When the manual process exits, monitor_manual_process should clear manual_* state."""
         import asyncio
         import backend.main as main_module
+        import backend.deps as deps_module
 
         self._reset_autopilot_state(monkeypatch)
 
@@ -5077,6 +5160,7 @@ class TestManualLaunchTracking:
         """monitor_manual_process logs a success entry when process exits with code 0."""
         import asyncio
         import backend.main as main_module
+        import backend.deps as deps_module
 
         self._reset_autopilot_state(monkeypatch)
 
@@ -5105,6 +5189,7 @@ class TestManualLaunchTracking:
         """monitor_manual_process logs an info entry when process exits with non-zero code."""
         import asyncio
         import backend.main as main_module
+        import backend.deps as deps_module
 
         self._reset_autopilot_state(monkeypatch)
 
@@ -5136,6 +5221,7 @@ class TestClaudeLog:
     def test_no_log_returns_404(self, client, monkeypatch):
         """Returns 404 when no log buffer exists for the feature."""
         import backend.main as main_module
+        import backend.deps as deps_module
         monkeypatch.setattr(main_module, '_claude_process_logs', {})
         response = client.get("/api/features/1/claude-log")
         assert response.status_code == 404
@@ -5143,6 +5229,7 @@ class TestClaudeLog:
     def test_empty_log_returns_200_with_no_lines(self, client, monkeypatch):
         """Returns 200 with empty lines list when log exists but has no output yet."""
         import backend.main as main_module
+        import backend.deps as deps_module
         from backend.main import ClaudeProcessLog
         log = ClaudeProcessLog(feature_id=1)
         monkeypatch.setattr(main_module, '_claude_process_logs', {1: log})
@@ -5157,6 +5244,7 @@ class TestClaudeLog:
     def test_log_with_data_returns_last_n_lines(self, client, monkeypatch):
         """Returns last N lines when limit is applied."""
         import backend.main as main_module
+        import backend.deps as deps_module
         from backend.main import ClaudeProcessLog
         log = ClaudeProcessLog(feature_id=2)
         for i in range(20):
@@ -5174,6 +5262,7 @@ class TestClaudeLog:
     def test_filter_by_stdout(self, client, monkeypatch):
         """Filters lines by stream=stdout."""
         import backend.main as main_module
+        import backend.deps as deps_module
         from backend.main import ClaudeProcessLog
         log = ClaudeProcessLog(feature_id=3)
         log.append("stdout", "out line 1")
@@ -5190,6 +5279,7 @@ class TestClaudeLog:
     def test_filter_by_stderr(self, client, monkeypatch):
         """Filters lines by stream=stderr."""
         import backend.main as main_module
+        import backend.deps as deps_module
         from backend.main import ClaudeProcessLog
         log = ClaudeProcessLog(feature_id=3)
         log.append("stdout", "out line")
@@ -5206,6 +5296,7 @@ class TestClaudeLog:
     def test_limit_clamped_to_500(self, client, monkeypatch):
         """Limit is clamped to a maximum of 500."""
         import backend.main as main_module
+        import backend.deps as deps_module
         from backend.main import ClaudeProcessLog
         log = ClaudeProcessLog(feature_id=1)
         for i in range(10):
@@ -5220,6 +5311,7 @@ class TestClaudeLog:
     def test_line_schema(self, client, monkeypatch):
         """Each line has timestamp, stream, and text fields."""
         import backend.main as main_module
+        import backend.deps as deps_module
         from backend.main import ClaudeProcessLog
         log = ClaudeProcessLog(feature_id=1)
         log.append("stdout", "hello world")
@@ -5237,6 +5329,7 @@ class TestClaudeLog:
     def test_active_flag_reflects_log_presence(self, client, monkeypatch):
         """active=True when the log key is present (process running)."""
         import backend.main as main_module
+        import backend.deps as deps_module
         from backend.main import ClaudeProcessLog
         log = ClaudeProcessLog(feature_id=1)
         monkeypatch.setattr(main_module, '_claude_process_logs', {1: log})
@@ -5253,7 +5346,8 @@ class TestClaudeLog:
 def test_settings_includes_budget_limit_default(client, tmp_path, monkeypatch):
     """GET /api/settings returns autopilot_budget_limit=0 by default."""
     import backend.main as main_module
-    monkeypatch.setattr(main_module, 'SETTINGS_FILE', tmp_path / "settings_nonexistent.json")
+    import backend.deps as deps_module
+    monkeypatch.setattr(deps_module, 'SETTINGS_FILE', tmp_path / "settings_nonexistent.json")
 
     response = client.get("/api/settings")
     assert response.status_code == 200
@@ -5266,8 +5360,9 @@ def test_put_settings_saves_budget_limit(client, tmp_path, monkeypatch):
     """PUT /api/settings saves and returns autopilot_budget_limit."""
     import json
     import backend.main as main_module
+    import backend.deps as deps_module
     settings_file = tmp_path / "test_settings.json"
-    monkeypatch.setattr(main_module, 'SETTINGS_FILE', settings_file)
+    monkeypatch.setattr(deps_module, 'SETTINGS_FILE', settings_file)
 
     response = client.put("/api/settings", json={
         "claude_prompt_template": "some template",
@@ -5286,8 +5381,9 @@ def test_put_settings_saves_budget_limit(client, tmp_path, monkeypatch):
 def test_put_settings_budget_limit_defaults_to_zero_when_omitted(client, tmp_path, monkeypatch):
     """PUT /api/settings defaults autopilot_budget_limit to 0 when not provided."""
     import backend.main as main_module
+    import backend.deps as deps_module
     settings_file = tmp_path / "test_settings.json"
-    monkeypatch.setattr(main_module, 'SETTINGS_FILE', settings_file)
+    monkeypatch.setattr(deps_module, 'SETTINGS_FILE', settings_file)
 
     response = client.put("/api/settings", json={
         "claude_prompt_template": "some template",
@@ -5304,6 +5400,7 @@ class TestAutopilotBudgetLimit:
         import asyncio
         from backend.main import handle_autopilot_success, _AutoPilotState
         import backend.main as main_module
+        import backend.deps as deps_module
 
         session_maker, db_path = test_db_with_path
 
@@ -5337,6 +5434,7 @@ class TestAutopilotBudgetLimit:
         import asyncio
         from backend.main import handle_autopilot_success, _AutoPilotState
         import backend.main as main_module
+        import backend.deps as deps_module
 
         session_maker, db_path = test_db_with_path
 
@@ -5376,6 +5474,7 @@ class TestAutopilotBudgetLimit:
         import asyncio
         from backend.main import handle_autopilot_success, _AutoPilotState
         import backend.main as main_module
+        import backend.deps as deps_module
 
         session_maker, db_path = test_db_with_path
 
@@ -5407,6 +5506,7 @@ class TestAutopilotBudgetLimit:
         import asyncio
         from backend.main import handle_autopilot_success, _AutoPilotState
         import backend.main as main_module
+        import backend.deps as deps_module
 
         session_maker, db_path = test_db_with_path
 
@@ -5427,6 +5527,7 @@ class TestAutopilotBudgetLimit:
     def test_enable_autopilot_resets_features_completed(self, client, monkeypatch):
         """Enabling autopilot resets features_completed counter to 0."""
         import backend.main as main_module
+        import backend.deps as deps_module
         from backend.main import _AutoPilotState
 
         self._reset_autopilot_state(monkeypatch)
@@ -5445,6 +5546,7 @@ class TestAutopilotBudgetLimit:
     def _reset_autopilot_state(self, monkeypatch):
         """Reset global autopilot state so tests start fresh."""
         import backend.main as main_module
+        import backend.deps as deps_module
         monkeypatch.setattr(main_module, '_autopilot_states', {})
 
 
@@ -5457,13 +5559,15 @@ class TestAutopilotBudgetStatusResponse:
 
     def _reset_autopilot_state(self, monkeypatch):
         import backend.main as main_module
+        import backend.deps as deps_module
         monkeypatch.setattr(main_module, '_autopilot_states', {})
 
     def test_status_returns_budget_fields_default(self, client, tmp_path, monkeypatch):
         """GET /api/autopilot/status includes budget_limit=0 and features_completed=0 by default."""
         import backend.main as main_module
+        import backend.deps as deps_module
         self._reset_autopilot_state(monkeypatch)
-        monkeypatch.setattr(main_module, 'SETTINGS_FILE', tmp_path / "none.json")
+        monkeypatch.setattr(deps_module, 'SETTINGS_FILE', tmp_path / "none.json")
 
         response = client.get("/api/autopilot/status")
         assert response.status_code == 200
@@ -5477,6 +5581,7 @@ class TestAutopilotBudgetStatusResponse:
         """GET /api/autopilot/status returns budget_limit from settings."""
         import json
         import backend.main as main_module
+        import backend.deps as deps_module
         self._reset_autopilot_state(monkeypatch)
 
         settings_file = tmp_path / "settings.json"
@@ -5485,7 +5590,7 @@ class TestAutopilotBudgetStatusResponse:
             "plan_tasks_prompt_template": "p",
             "autopilot_budget_limit": 7,
         }))
-        monkeypatch.setattr(main_module, 'SETTINGS_FILE', settings_file)
+        monkeypatch.setattr(deps_module, 'SETTINGS_FILE', settings_file)
 
         response = client.get("/api/autopilot/status")
         assert response.status_code == 200
@@ -5494,8 +5599,9 @@ class TestAutopilotBudgetStatusResponse:
     def test_status_reflects_features_completed_counter(self, client, tmp_path, monkeypatch):
         """GET /api/autopilot/status returns the current features_completed counter."""
         import backend.main as main_module
+        import backend.deps as deps_module
         self._reset_autopilot_state(monkeypatch)
-        monkeypatch.setattr(main_module, 'SETTINGS_FILE', tmp_path / "none.json")
+        monkeypatch.setattr(deps_module, 'SETTINGS_FILE', tmp_path / "none.json")
 
         state = main_module.get_autopilot_state()
         state.features_completed = 3
@@ -5508,6 +5614,7 @@ class TestAutopilotBudgetStatusResponse:
         """POST /api/autopilot/enable response includes budget_limit and features_completed."""
         import json
         import backend.main as main_module
+        import backend.deps as deps_module
         self._reset_autopilot_state(monkeypatch)
 
         settings_file = tmp_path / "settings.json"
@@ -5516,7 +5623,7 @@ class TestAutopilotBudgetStatusResponse:
             "plan_tasks_prompt_template": "p",
             "autopilot_budget_limit": 4,
         }))
-        monkeypatch.setattr(main_module, 'SETTINGS_FILE', settings_file)
+        monkeypatch.setattr(deps_module, 'SETTINGS_FILE', settings_file)
         monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {
             "pid": 1, "terminate": lambda self: None, "wait": lambda self: 0
         })())
@@ -5531,6 +5638,7 @@ class TestAutopilotBudgetStatusResponse:
         """POST /api/autopilot/disable response includes budget_limit and features_completed."""
         import json
         import backend.main as main_module
+        import backend.deps as deps_module
         self._reset_autopilot_state(monkeypatch)
 
         settings_file = tmp_path / "settings.json"
@@ -5539,7 +5647,7 @@ class TestAutopilotBudgetStatusResponse:
             "plan_tasks_prompt_template": "p",
             "autopilot_budget_limit": 10,
         }))
-        monkeypatch.setattr(main_module, 'SETTINGS_FILE', settings_file)
+        monkeypatch.setattr(deps_module, 'SETTINGS_FILE', settings_file)
         monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {
             "pid": 1, "terminate": lambda self: None, "wait": lambda self: 0
         })())
@@ -5567,6 +5675,7 @@ class TestBudgetExhaustedFlag:
 
     def _reset_autopilot_state(self, monkeypatch):
         import backend.main as main_module
+        import backend.deps as deps_module
         monkeypatch.setattr(main_module, '_autopilot_states', {})
 
     def test_budget_exhausted_default_is_false(self):
@@ -5588,8 +5697,9 @@ class TestBudgetExhaustedFlag:
     def test_status_returns_budget_exhausted_false_by_default(self, client, tmp_path, monkeypatch):
         """GET /api/autopilot/status returns budget_exhausted=False by default."""
         import backend.main as main_module
+        import backend.deps as deps_module
         self._reset_autopilot_state(monkeypatch)
-        monkeypatch.setattr(main_module, 'SETTINGS_FILE', tmp_path / "none.json")
+        monkeypatch.setattr(deps_module, 'SETTINGS_FILE', tmp_path / "none.json")
 
         response = client.get("/api/autopilot/status")
         assert response.status_code == 200
@@ -5598,8 +5708,9 @@ class TestBudgetExhaustedFlag:
     def test_status_reflects_budget_exhausted_true(self, client, tmp_path, monkeypatch):
         """GET /api/autopilot/status returns budget_exhausted=True after budget is hit."""
         import backend.main as main_module
+        import backend.deps as deps_module
         self._reset_autopilot_state(monkeypatch)
-        monkeypatch.setattr(main_module, 'SETTINGS_FILE', tmp_path / "none.json")
+        monkeypatch.setattr(deps_module, 'SETTINGS_FILE', tmp_path / "none.json")
 
         state = main_module.get_autopilot_state()
         state.budget_exhausted = True
@@ -5611,8 +5722,9 @@ class TestBudgetExhaustedFlag:
     def test_clear_error_also_clears_budget_exhausted(self, client, tmp_path, monkeypatch):
         """POST /api/autopilot/clear-error clears budget_exhausted flag."""
         import backend.main as main_module
+        import backend.deps as deps_module
         self._reset_autopilot_state(monkeypatch)
-        monkeypatch.setattr(main_module, 'SETTINGS_FILE', tmp_path / "none.json")
+        monkeypatch.setattr(deps_module, 'SETTINGS_FILE', tmp_path / "none.json")
 
         state = main_module.get_autopilot_state()
         state.budget_exhausted = True
@@ -5624,8 +5736,9 @@ class TestBudgetExhaustedFlag:
     def test_enable_resets_budget_exhausted(self, client, tmp_path, monkeypatch):
         """POST /api/autopilot/enable resets budget_exhausted to False."""
         import backend.main as main_module
+        import backend.deps as deps_module
         self._reset_autopilot_state(monkeypatch)
-        monkeypatch.setattr(main_module, 'SETTINGS_FILE', tmp_path / "none.json")
+        monkeypatch.setattr(deps_module, 'SETTINGS_FILE', tmp_path / "none.json")
         monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {
             "pid": 1, "terminate": lambda self: None, "wait": lambda self: 0
         })())
@@ -5643,6 +5756,7 @@ class TestBudgetExhaustedFlag:
         import asyncio
         from backend.main import handle_autopilot_success, _AutoPilotState
         import backend.main as main_module
+        import backend.deps as deps_module
 
         session_maker, db_path = test_db_with_path
 
@@ -5677,6 +5791,7 @@ class TestAutocompleteNameEndpoint:
     def test_prefix_exact_three_chars_returns_results(self, client):
         """Returns suggestions when prefix is exactly 3 characters."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         # Seed name_tokens directly
         session = main_module.get_session()
@@ -5706,6 +5821,7 @@ class TestAutocompleteNameEndpoint:
     def test_results_ordered_by_usage_count_desc(self, client):
         """Suggestions are ordered by usage_count descending."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         session = main_module.get_session()
         try:
@@ -5726,6 +5842,7 @@ class TestAutocompleteNameEndpoint:
     def test_returns_at_most_five_suggestions(self, client):
         """Returns no more than 5 suggestions."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         session = main_module.get_session()
         try:
@@ -5759,6 +5876,7 @@ class TestAutocompleteDescriptionEndpoint:
     def test_prefix_exact_three_chars_returns_results(self, client):
         """Returns suggestions when prefix is exactly 3 characters."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         session = main_module.get_session()
         try:
@@ -5786,6 +5904,7 @@ class TestAutocompleteDescriptionEndpoint:
     def test_results_ordered_by_usage_count_desc(self, client):
         """Suggestions are ordered by usage_count descending."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         session = main_module.get_session()
         try:
@@ -5806,6 +5925,7 @@ class TestAutocompleteDescriptionEndpoint:
     def test_returns_at_most_five_suggestions(self, client):
         """Returns no more than 5 suggestions."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         session = main_module.get_session()
         try:
@@ -5839,6 +5959,7 @@ class TestAutocompleteCategoryEndpoint:
     def test_prefix_exact_three_chars_returns_results(self, client):
         """Returns suggestions when prefix is exactly 3 characters."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         # Seed category_tokens directly
         session = main_module.get_session()
@@ -5865,6 +5986,7 @@ class TestAutocompleteCategoryEndpoint:
     def test_results_ordered_by_usage_count_desc(self, client):
         """Suggestions are ordered by usage_count descending."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         session = main_module.get_session()
         try:
@@ -5887,6 +6009,7 @@ class TestAutocompleteCategoryEndpoint:
     def test_returns_at_most_five_suggestions(self, client):
         """Returns no more than 5 suggestions."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         session = main_module.get_session()
         try:
@@ -5909,6 +6032,7 @@ class TestAutocompleteCategoryEndpoint:
     def test_create_feature_populates_category_tokens(self, client):
         """Creating a feature populates category_tokens with tokens from the category."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         # Create a feature with a category
         response = client.post("/api/features", json={
@@ -5931,6 +6055,7 @@ class TestAutocompleteCategoryEndpoint:
     def test_update_feature_category_populates_category_tokens(self, client):
         """Updating a feature's category populates category_tokens with new tokens."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         # Create a feature
         response = client.post("/api/features", json={
@@ -5964,6 +6089,7 @@ class TestAutocompleteTwoWordSuggestions:
     def test_name_autocomplete_returns_two_word_suggestion_when_bigram_exists(self, client):
         """Returns 'token nextword' when a bigram exists for the matched token."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         session = main_module.get_session()
         try:
@@ -5981,6 +6107,7 @@ class TestAutocompleteTwoWordSuggestions:
     def test_name_autocomplete_returns_single_word_when_no_bigram(self, client):
         """Returns just the token when no bigram exists for it."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         session = main_module.get_session()
         try:
@@ -5999,6 +6126,7 @@ class TestAutocompleteTwoWordSuggestions:
     def test_name_autocomplete_bigram_uses_highest_count_next_word(self, client):
         """Returns the bigram with the highest usage_count as the next word."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         session = main_module.get_session()
         try:
@@ -6019,6 +6147,7 @@ class TestAutocompleteTwoWordSuggestions:
     def test_description_autocomplete_returns_two_word_suggestion_when_bigram_exists(self, client):
         """Description endpoint returns 'token nextword' when a bigram exists."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         session = main_module.get_session()
         try:
@@ -6036,6 +6165,7 @@ class TestAutocompleteTwoWordSuggestions:
     def test_description_autocomplete_returns_single_word_when_no_bigram(self, client):
         """Description endpoint returns just the token when no bigram exists."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         session = main_module.get_session()
         try:
@@ -6053,6 +6183,7 @@ class TestAutocompleteTwoWordSuggestions:
     def test_create_feature_populates_name_bigrams(self, client):
         """Creating a feature populates name_bigrams with consecutive word pairs."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         response = client.post("/api/features", json={
             "name": "Kanban Board Feature",
@@ -6074,6 +6205,7 @@ class TestAutocompleteTwoWordSuggestions:
     def test_create_feature_populates_description_bigrams(self, client):
         """Creating a feature populates description_bigrams with consecutive word pairs."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         response = client.post("/api/features", json={
             "name": "Test Feature",
@@ -6095,6 +6227,7 @@ class TestAutocompleteTwoWordSuggestions:
     def test_update_feature_name_populates_name_bigrams(self, client):
         """Updating a feature name populates name_bigrams with new consecutive pairs."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         create_response = client.post("/api/features", json={
             "name": "Old Name",
@@ -6121,6 +6254,7 @@ class TestAutocompleteTwoWordSuggestions:
     def test_mixed_results_some_with_bigrams_some_without(self, client):
         """When multiple tokens match, each gets a next word only if its bigram exists."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         session = main_module.get_session()
         try:
@@ -6146,6 +6280,7 @@ class TestAutocompletePerformance:
     def perf_client(self, monkeypatch):
         """Test client pre-loaded with 1000 tokens for performance testing."""
         import backend.main as main_module
+        import backend.deps as deps_module
 
         temp_dir = tempfile.mkdtemp()
         temp_db_path = Path(temp_dir) / "features.db"
@@ -6163,8 +6298,8 @@ class TestAutocompletePerformance:
         finally:
             session.close()
 
-        monkeypatch.setattr(main_module, '_session_maker', session_maker)
-        monkeypatch.setattr(main_module, '_current_db_path', temp_db_path)
+        monkeypatch.setattr(deps_module, '_session_maker', session_maker)
+        monkeypatch.setattr(deps_module, '_current_db_path', temp_db_path)
         monkeypatch.setattr(main_module.asyncio, 'create_task',
                             lambda coro: (coro.close(), None)[1])
 
