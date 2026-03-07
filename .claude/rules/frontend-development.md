@@ -1,10 +1,11 @@
 ---
 paths:
-  - "frontend/src/pages/**/*.{jsx,tsx}"
-  - "frontend/src/components/**/*.{jsx,tsx}"
+  - "**/*.{jsx,tsx}"
 ---
 
 # Frontend Development Rules
+
+When writing and modifying frontend pages ALWAYS use the `coder` agent.
 
 ## Design Skill (REQUIRED)
 

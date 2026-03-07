@@ -1,11 +1,12 @@
 ---
 paths:
-  - "frontend/tests/*.spec.js"
-  - "frontend/playwright.config.js"
-  - "frontend/tests/start-test-backend.js"
+  - "**/*.spec.js"
 ---
 
 # E2E Testing Rules
+
+For running tests always use the `playwright-tester` agent.
+For writing and modifying always tests use the `coder` agent.
 
 ## Isolated Test Database (CRITICAL)
 

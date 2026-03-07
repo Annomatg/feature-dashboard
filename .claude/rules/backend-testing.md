@@ -1,10 +1,11 @@
 ---
 paths:
-  - "backend/test_*.py"
-  - "backend/**/test_*.py"
+  - "**/test_*.py"
 ---
 
 # Backend Test File Rules
+
+When writing and modifying tests ALWAYS use the `coder` agent.
 
 ## Database Isolation (CRITICAL)
 

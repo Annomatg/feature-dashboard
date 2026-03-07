@@ -1,7 +1,6 @@
 ---
 paths:
-  - "backend/**/*.py"
-  - "api/**/*.py"
+  - "**/*.py"
 ---
 
 # Backend Development Rules
@@ -10,9 +9,10 @@ paths:
 
 When writing or modifying backend functionality:
 
-1. **Write tests FIRST** or immediately after implementation
-2. **Run tests** to verify everything works
-3. **Only commit** when all tests pass
+1. ALWAYS use the `coder` agent.
+2. **Write tests FIRST** or immediately after implementation
+3. **Run tests** to verify everything works
+4. **Only commit** when all tests pass
 
 ### Testing Workflow
 
