@@ -22,12 +22,12 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import backend.main as main_module
-from backend.main import (
+from backend.claude_process import (
     ClaudeProcessLog,
     LogLine,
-    _claude_process_logs,
     _read_stream_to_buffer,
 )
+from backend.main import _claude_process_logs
 
 
 # ---------------------------------------------------------------------------
