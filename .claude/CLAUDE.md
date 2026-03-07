@@ -25,6 +25,13 @@
 - **Playwright** for E2E testing (Chromium only - other browsers not supported)
 - **ESLint** for code quality
 
+## Development Process
+
+- **Coding** Always use the `coder` agent to implement or modify code
+- **Testing** Always use the `test-reporter` agent to run backend tests and get results. Always use the `playwright-tester` for E2E tests
+- **Review** Always use the `code-review` after implementation was done to verify code quality
+- **Commit** Always use a Haiku agent to do git commits to keep the context clean and the costs minimal
+
 ## Project Structure
 
 ```
