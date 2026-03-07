@@ -135,8 +135,8 @@ test.describe('Name field ghost text (desktop)', () => {
     // Press Tab to accept the suggestion
     await titleInput.press('Tab')
 
-    // Input should now contain the completed token "Feature"
-    await expect(titleInput).toHaveValue('Feature')
+    // Input should now contain the completed token "Feature" with a trailing space
+    await expect(titleInput).toHaveValue('Feature ')
 
     // Ghost text should be gone after acceptance
     await expect(ghost).not.toBeVisible()
@@ -154,11 +154,11 @@ test.describe('Name field ghost text (desktop)', () => {
     // Press Tab to accept the suggestion
     await titleInput.press('Tab')
 
-    await expect(titleInput).toHaveValue('Feature')
+    await expect(titleInput).toHaveValue('Feature ')
 
-    // Cursor should be positioned at the end of the accepted token
+    // Cursor should be positioned at the end of the accepted token (including trailing space)
     const cursorPos = await titleInput.evaluate(el => el.selectionStart)
-    expect(cursorPos).toBe('Feature'.length)
+    expect(cursorPos).toBe('Feature '.length)
   })
 
   test('ArrowDown cycles to the next suggestion', async ({ page }) => {
@@ -238,9 +238,9 @@ test.describe('Name field ghost text (desktop)', () => {
     await titleInput.press('ArrowDown')
     await expect(ghost).toContainText('tures')
 
-    // Accept with Tab — input should contain "Features"
+    // Accept with Tab — input should contain "Features" with a trailing space
     await titleInput.press('Tab')
-    await expect(titleInput).toHaveValue('Features')
+    await expect(titleInput).toHaveValue('Features ')
     await expect(ghost).not.toBeVisible()
   })
 

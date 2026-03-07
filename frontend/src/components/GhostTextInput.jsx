@@ -111,7 +111,7 @@ const GhostTextInput = forwardRef(function GhostTextInput(
         e.preventDefault()
         const chosen = suggestions[suggestionIndex]
         if (chosen) {
-          const newValue = value + ghostSuffix
+          const newValue = value + ghostSuffix + ' '
           onChange({ target: { value: newValue } })
           setSuggestions([])
           setSuggestionIndex(0)
@@ -164,7 +164,7 @@ const GhostTextInput = forwardRef(function GhostTextInput(
       blurTimerRef.current = null
     }
     const suffix = suggestion.slice(tokenLength)
-    const newValue = value + suffix
+    const newValue = value + suffix + ' '
     onChange({ target: { value: newValue } })
     setSuggestions([])
     setSuggestionIndex(0)

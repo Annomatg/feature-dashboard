@@ -133,8 +133,8 @@ test.describe('Description field ghost text (desktop)', () => {
     // Press Tab to accept the suggestion
     await descTextarea.press('Tab')
 
-    // Textarea should now contain the completed token "feature"
-    await expect(descTextarea).toHaveValue('feature')
+    // Textarea should now contain the completed token "feature" with a trailing space
+    await expect(descTextarea).toHaveValue('feature ')
 
     // Ghost text should be gone after acceptance
     await expect(ghost).not.toBeVisible()
@@ -152,11 +152,11 @@ test.describe('Description field ghost text (desktop)', () => {
     // Press Tab to accept the suggestion
     await descTextarea.press('Tab')
 
-    await expect(descTextarea).toHaveValue('feature')
+    await expect(descTextarea).toHaveValue('feature ')
 
-    // Cursor should be positioned at the end of the accepted token
+    // Cursor should be positioned at the end of the accepted token (including trailing space)
     const cursorPos = await descTextarea.evaluate(el => el.selectionStart)
-    expect(cursorPos).toBe('feature'.length)
+    expect(cursorPos).toBe('feature '.length)
   })
 
   test('ArrowDown cycles to next suggestion in description field', async ({ page }) => {
@@ -210,9 +210,9 @@ test.describe('Description field ghost text (desktop)', () => {
     await descTextarea.press('ArrowDown')
     await expect(ghost).toContainText('lementation')
 
-    // Accept with Tab — textarea should contain "implementation"
+    // Accept with Tab — textarea should contain "implementation" with a trailing space
     await descTextarea.press('Tab')
-    await expect(descTextarea).toHaveValue('implementation')
+    await expect(descTextarea).toHaveValue('implementation ')
     await expect(ghost).not.toBeVisible()
   })
 
