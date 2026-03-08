@@ -156,8 +156,8 @@ test.describe('Settings Panel', () => {
     const textarea = page.getByTestId('plan-prompt-template-input');
     await textarea.waitFor({ state: 'visible' });
 
-    // Change the plan template
-    const newPlanTemplate = 'Custom plan template: {description}';
+    // Change the plan template — use a unique value so it always differs from whatever is saved
+    const newPlanTemplate = `Custom plan template ${Date.now()}: {description}`;
     await textarea.fill(newPlanTemplate);
 
     // Save button should be enabled now
