@@ -626,3 +626,191 @@ class TestAutocompletePerformance:
         avg_ms = sum(times) / len(times)
         assert avg_ms < 20, f"Average response time {avg_ms:.1f}ms exceeds 20ms limit"
 
+
+class TestAutocompleteContextSuggestions:
+    """Tests for context-aware (prev word) suggestions — Feature #180."""
+
+    def test_name_prev_returns_bigram_next_words(self, client):
+        """When prev is given, returns words that follow it in bigrams."""
+        import backend.main as main_module
+
+        session = main_module.get_session()
+        try:
+            session.add(NameBigram(word1="feature", word2="dashboard", usage_count=10))
+            session.add(NameBigram(word1="feature", word2="filter", usage_count=5))
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/autocomplete/name?prefix=&prev=feature")
+        assert response.status_code == 200
+        suggestions = response.json()["suggestions"]
+        assert any("dashboard" in s for s in suggestions)
+        assert any("filter" in s for s in suggestions)
+
+    def test_name_prev_filters_by_prefix(self, client):
+        """When both prev and prefix are given, only next-words matching prefix are returned."""
+        import backend.main as main_module
+
+        session = main_module.get_session()
+        try:
+            session.add(NameBigram(word1="kanban", word2="board", usage_count=10))
+            session.add(NameBigram(word1="kanban", word2="column", usage_count=8))
+            session.add(NameBigram(word1="kanban", word2="card", usage_count=6))
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/autocomplete/name?prefix=co&prev=kanban")
+        assert response.status_code == 200
+        suggestions = response.json()["suggestions"]
+        assert any("column" in s for s in suggestions)
+        assert not any("board" in s for s in suggestions)
+        assert not any("card" in s for s in suggestions)
+
+    def test_name_prev_no_min_prefix_length(self, client):
+        """With prev set, suggestions are returned even when prefix is shorter than 3 chars."""
+        import backend.main as main_module
+
+        session = main_module.get_session()
+        try:
+            session.add(NameBigram(word1="user", word2="authentication", usage_count=10))
+            session.commit()
+        finally:
+            session.close()
+
+        for short_prefix in ["", "a", "au"]:
+            response = client.get(f"/api/autocomplete/name?prefix={short_prefix}&prev=user")
+            assert response.status_code == 200
+            suggestions = response.json()["suggestions"]
+            assert len(suggestions) > 0, f"Expected suggestions for prefix={short_prefix!r} with prev=user"
+
+    def test_name_prev_returns_two_word_suggestion_for_next_word(self, client):
+        """Each next-word suggestion is extended with its own bigram continuation."""
+        import backend.main as main_module
+
+        session = main_module.get_session()
+        try:
+            session.add(NameBigram(word1="add", word2="search", usage_count=10))
+            session.add(NameBigram(word1="search", word2="filter", usage_count=7))
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/autocomplete/name?prefix=&prev=add")
+        assert response.status_code == 200
+        suggestions = response.json()["suggestions"]
+        assert "search filter" in suggestions
+
+    def test_name_prev_unknown_word_returns_empty(self, client):
+        """When prev has no bigrams, returns empty suggestions."""
+        response = client.get("/api/autocomplete/name?prefix=&prev=xyznonexistent")
+        assert response.status_code == 200
+        assert response.json() == {"suggestions": []}
+
+    def test_name_prev_ordered_by_usage_count(self, client):
+        """Bigram suggestions are ordered by their usage_count descending."""
+        import backend.main as main_module
+
+        session = main_module.get_session()
+        try:
+            session.add(NameBigram(word1="page", word2="view", usage_count=3))
+            session.add(NameBigram(word1="page", word2="navigation", usage_count=20))
+            session.add(NameBigram(word1="page", word2="layout", usage_count=10))
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/autocomplete/name?prefix=&prev=page")
+        assert response.status_code == 200
+        suggestions = response.json()["suggestions"]
+        nav_idx = next((i for i, s in enumerate(suggestions) if s.startswith("navigation")), -1)
+        layout_idx = next((i for i, s in enumerate(suggestions) if s.startswith("layout")), -1)
+        view_idx = next((i for i, s in enumerate(suggestions) if s.startswith("view")), -1)
+        assert nav_idx < layout_idx < view_idx
+
+    def test_description_prev_returns_bigram_next_words(self, client):
+        """Description endpoint: prev returns words that follow it in description bigrams."""
+        import backend.main as main_module
+
+        session = main_module.get_session()
+        try:
+            session.add(DescriptionBigram(word1="allow", word2="users", usage_count=12))
+            session.add(DescriptionBigram(word1="allow", word2="admins", usage_count=6))
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/autocomplete/description?prefix=&prev=allow")
+        assert response.status_code == 200
+        suggestions = response.json()["suggestions"]
+        assert any("users" in s for s in suggestions)
+        assert any("admins" in s for s in suggestions)
+
+    def test_description_prev_no_min_prefix_length(self, client):
+        """Description endpoint: with prev, short prefixes still return suggestions."""
+        import backend.main as main_module
+
+        session = main_module.get_session()
+        try:
+            session.add(DescriptionBigram(word1="implement", word2="caching", usage_count=8))
+            session.commit()
+        finally:
+            session.close()
+
+        for short_prefix in ["", "c", "ca"]:
+            response = client.get(
+                f"/api/autocomplete/description?prefix={short_prefix}&prev=implement"
+            )
+            assert response.status_code == 200
+            suggestions = response.json()["suggestions"]
+            assert len(suggestions) > 0, f"Expected suggestions for prefix={short_prefix!r} with prev=implement"
+
+    def test_description_prev_returns_two_word_continuation(self, client):
+        """Description endpoint: each next-word suggestion includes its own bigram continuation."""
+        import backend.main as main_module
+
+        session = main_module.get_session()
+        try:
+            session.add(DescriptionBigram(word1="display", word2="error", usage_count=10))
+            session.add(DescriptionBigram(word1="error", word2="message", usage_count=9))
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/autocomplete/description?prefix=&prev=display")
+        assert response.status_code == 200
+        suggestions = response.json()["suggestions"]
+        assert "error message" in suggestions
+
+    def test_name_prev_known_prev_non_matching_prefix_returns_empty(self, client):
+        """Known prev with a prefix that matches none of its bigram next-words returns empty."""
+        import backend.main as main_module
+
+        session = main_module.get_session()
+        try:
+            session.add(NameBigram(word1="kanban2", word2="board", usage_count=10))
+            session.add(NameBigram(word1="kanban2", word2="card", usage_count=8))
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/autocomplete/name?prefix=xyz&prev=kanban2")
+        assert response.status_code == 200
+        assert response.json() == {"suggestions": []}
+
+    def test_description_prev_known_prev_non_matching_prefix_returns_empty(self, client):
+        """Known prev with a prefix that matches none of its bigram next-words returns empty."""
+        import backend.main as main_module
+
+        session = main_module.get_session()
+        try:
+            session.add(DescriptionBigram(word1="allow2", word2="users", usage_count=10))
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/autocomplete/description?prefix=xyz&prev=allow2")
+        assert response.status_code == 200
+        assert response.json() == {"suggestions": []}
+

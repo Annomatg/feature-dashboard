@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text as sa_text
 
@@ -186,19 +186,47 @@ async def get_stats():
 # ---------------------------------------------------------------------------
 
 @router.get("/autocomplete/name")
-def get_autocomplete_name(prefix: str = ""):
+def get_autocomplete_name(
+    prefix: str = Query(default="", max_length=100),
+    prev: str = Query(default="", max_length=100),
+):
     """Return up to 5 name token suggestions matching the given prefix.
 
-    When a bigram exists for a matched token, returns a two-word suggestion
-    (e.g. "feature dashboard") instead of just the single token.
-    Returns an empty suggestion list if the prefix is shorter than 3 characters.
+    When prev is provided (the last fully-typed word before the cursor), uses
+    bigram context to suggest the next word — no minimum prefix length required.
+    Each suggestion may itself be followed by a second predicted word (two-word
+    suggestion) derived from the bigram table.
+
+    When prev is not provided, falls back to token-prefix matching with a
+    minimum prefix length of 3 characters.
     Results are ordered by usage_count descending.
     """
-    if len(prefix) < 3:
-        return {"suggestions": []}
-
     session = get_session()
     try:
+        if prev:
+            # Context-aware: suggest next words after 'prev' using bigrams.
+            # Also look up a second predicted word for each candidate.
+            rows = session.execute(sa_text("""
+                SELECT b.word2,
+                       (SELECT b2.word2 FROM name_bigrams b2
+                        WHERE b2.word1 = b.word2
+                        ORDER BY b2.usage_count DESC LIMIT 1) as next_word
+                FROM name_bigrams b
+                WHERE b.word1 = :prev
+                  AND (:prefix = '' OR b.word2 LIKE :prefix_like)
+                ORDER BY b.usage_count DESC
+                LIMIT 5
+            """), {"prev": prev.lower(), "prefix": prefix.lower(),
+                   "prefix_like": f"{prefix.lower()}%"}).fetchall()
+            suggestions = [
+                f"{row[0]} {row[1]}" if row[1] else row[0]
+                for row in rows
+            ]
+            return {"suggestions": suggestions}
+
+        if len(prefix) < 3:
+            return {"suggestions": []}
+
         rows = session.execute(sa_text("""
             SELECT t.token,
                    (SELECT b.word2 FROM name_bigrams b
@@ -219,19 +247,45 @@ def get_autocomplete_name(prefix: str = ""):
 
 
 @router.get("/autocomplete/description")
-def get_autocomplete_description(prefix: str = ""):
+def get_autocomplete_description(
+    prefix: str = Query(default="", max_length=100),
+    prev: str = Query(default="", max_length=100),
+):
     """Return up to 5 description token suggestions matching the given prefix.
 
-    When a bigram exists for a matched token, returns a two-word suggestion
-    (e.g. "implement feature") instead of just the single token.
-    Returns an empty suggestion list if the prefix is shorter than 3 characters.
+    When prev is provided (the last fully-typed word before the cursor), uses
+    bigram context to suggest the next word — no minimum prefix length required.
+    Each suggestion may itself be followed by a second predicted word (two-word
+    suggestion) derived from the bigram table.
+
+    When prev is not provided, falls back to token-prefix matching with a
+    minimum prefix length of 3 characters.
     Results are ordered by usage_count descending.
     """
-    if len(prefix) < 3:
-        return {"suggestions": []}
-
     session = get_session()
     try:
+        if prev:
+            rows = session.execute(sa_text("""
+                SELECT b.word2,
+                       (SELECT b2.word2 FROM description_bigrams b2
+                        WHERE b2.word1 = b.word2
+                        ORDER BY b2.usage_count DESC LIMIT 1) as next_word
+                FROM description_bigrams b
+                WHERE b.word1 = :prev
+                  AND (:prefix = '' OR b.word2 LIKE :prefix_like)
+                ORDER BY b.usage_count DESC
+                LIMIT 5
+            """), {"prev": prev.lower(), "prefix": prefix.lower(),
+                   "prefix_like": f"{prefix.lower()}%"}).fetchall()
+            suggestions = [
+                f"{row[0]} {row[1]}" if row[1] else row[0]
+                for row in rows
+            ]
+            return {"suggestions": suggestions}
+
+        if len(prefix) < 3:
+            return {"suggestions": []}
+
         rows = session.execute(sa_text("""
             SELECT t.token,
                    (SELECT b.word2 FROM description_bigrams b

@@ -40,15 +40,14 @@ const GhostTextArea = forwardRef(function GhostTextArea(
   const activeSuggestion = suggestions[suggestionIndex] ?? ''
   const ghostSuffix = activeSuggestion ? activeSuggestion.slice(tokenLength) : ''
 
-  // Fetch autocomplete suggestions for a given token prefix
-  const fetchSuggestion = useCallback(async (token) => {
+  // Fetch autocomplete suggestions for a given token prefix and optional previous word
+  const fetchSuggestion = useCallback(async (token, prevWord) => {
     if (abortRef.current) abortRef.current.abort()
     abortRef.current = new AbortController()
     try {
-      const res = await fetch(
-        `/api/autocomplete/description?prefix=${encodeURIComponent(token)}`,
-        { signal: abortRef.current.signal }
-      )
+      let url = `/api/autocomplete/description?prefix=${encodeURIComponent(token)}`
+      if (prevWord) url += `&prev=${encodeURIComponent(prevWord)}`
+      const res = await fetch(url, { signal: abortRef.current.signal })
       if (!res.ok) {
         // Treat HTTP errors (4xx, 5xx) as failures - show no suggestions
         setSuggestions([])
@@ -91,8 +90,13 @@ const GhostTextArea = forwardRef(function GhostTextArea(
     const match = textBeforeCursor.match(/\S+$/)
     const token = match ? match[0] : ''
 
-    if (token.length >= 3) {
-      fetchSuggestion(token)
+    // Extract the previous word for bigram-based context suggestions
+    const textBeforeToken = textBeforeCursor.slice(0, textBeforeCursor.length - token.length)
+    const prevMatch = textBeforeToken.trimEnd().match(/\S+$/)
+    const prevWord = prevMatch ? prevMatch[0].toLowerCase() : ''
+
+    if (token.length >= 3 || prevWord) {
+      fetchSuggestion(token, prevWord)
     }
   }
 
