@@ -5,6 +5,7 @@ Feature CRUD endpoints router.
 import asyncio
 import json
 import sys
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -515,14 +516,14 @@ async def create_feature(request: CreateFeatureRequest):
                 session.add(NameToken(token=token, usage_count=1))
 
         # Upsert name_bigrams for consecutive word pairs in the new feature's name
-        for word1, word2 in extract_bigrams(new_feature.name):
+        for (word1, word2), count in Counter(extract_bigrams(new_feature.name)).items():
             existing = session.query(NameBigram).filter(
                 NameBigram.word1 == word1, NameBigram.word2 == word2
             ).first()
             if existing:
-                existing.usage_count += 1
+                existing.usage_count += count
             else:
-                session.add(NameBigram(word1=word1, word2=word2, usage_count=1))
+                session.add(NameBigram(word1=word1, word2=word2, usage_count=count))
 
         # Upsert description_tokens for each token in the new feature's description
         for token in set(normalize_tokens(new_feature.description)):
@@ -533,14 +534,14 @@ async def create_feature(request: CreateFeatureRequest):
                 session.add(DescriptionToken(token=token, usage_count=1))
 
         # Upsert description_bigrams for consecutive word pairs in the new feature's description
-        for word1, word2 in extract_bigrams(new_feature.description):
+        for (word1, word2), count in Counter(extract_bigrams(new_feature.description)).items():
             existing = session.query(DescriptionBigram).filter(
                 DescriptionBigram.word1 == word1, DescriptionBigram.word2 == word2
             ).first()
             if existing:
-                existing.usage_count += 1
+                existing.usage_count += count
             else:
-                session.add(DescriptionBigram(word1=word1, word2=word2, usage_count=1))
+                session.add(DescriptionBigram(word1=word1, word2=word2, usage_count=count))
 
         # Upsert category_tokens for each token in the new feature's category
         for token in set(normalize_tokens(new_feature.category)):
@@ -604,14 +605,14 @@ async def update_feature(feature_id: int, request: UpdateFeatureRequest):
                     existing.usage_count += 1
                 else:
                     session.add(NameToken(token=token, usage_count=1))
-            for word1, word2 in extract_bigrams(feature.name):
+            for (word1, word2), count in Counter(extract_bigrams(feature.name)).items():
                 existing = session.query(NameBigram).filter(
                     NameBigram.word1 == word1, NameBigram.word2 == word2
                 ).first()
                 if existing:
-                    existing.usage_count += 1
+                    existing.usage_count += count
                 else:
-                    session.add(NameBigram(word1=word1, word2=word2, usage_count=1))
+                    session.add(NameBigram(word1=word1, word2=word2, usage_count=count))
             session.commit()
 
         # Upsert description_tokens if description was updated (append-only, no decrement)
@@ -622,14 +623,14 @@ async def update_feature(feature_id: int, request: UpdateFeatureRequest):
                     existing.usage_count += 1
                 else:
                     session.add(DescriptionToken(token=token, usage_count=1))
-            for word1, word2 in extract_bigrams(feature.description):
+            for (word1, word2), count in Counter(extract_bigrams(feature.description)).items():
                 existing = session.query(DescriptionBigram).filter(
                     DescriptionBigram.word1 == word1, DescriptionBigram.word2 == word2
                 ).first()
                 if existing:
-                    existing.usage_count += 1
+                    existing.usage_count += count
                 else:
-                    session.add(DescriptionBigram(word1=word1, word2=word2, usage_count=1))
+                    session.add(DescriptionBigram(word1=word1, word2=word2, usage_count=count))
             session.commit()
 
         # Upsert category_tokens if category was updated (append-only, no decrement)
