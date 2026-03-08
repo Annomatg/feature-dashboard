@@ -198,9 +198,10 @@ class TestGetFeaturesStream:
 
     def test_stream_sends_heartbeat_when_idle(self, live_server):
         """A heartbeat event is emitted when no events arrive within the timeout."""
+        import backend.routers.features as features_router_module
         base_url, _ = live_server
-        original = main_module._FEATURE_SSE_HEARTBEAT_SECONDS
-        main_module._FEATURE_SSE_HEARTBEAT_SECONDS = 0.05
+        original = features_router_module._FEATURE_SSE_HEARTBEAT_SECONDS
+        features_router_module._FEATURE_SSE_HEARTBEAT_SECONDS = 0.05
 
         try:
             with httpx.Client(timeout=5.0) as client:
@@ -210,15 +211,16 @@ class TestGetFeaturesStream:
             assert len(events) == 1
             assert events[0][0] == "heartbeat"
         finally:
-            main_module._FEATURE_SSE_HEARTBEAT_SECONDS = original
+            features_router_module._FEATURE_SSE_HEARTBEAT_SECONDS = original
 
     def test_stream_receives_feature_created_event_on_notify(self, live_server):
         """
         A feature_created event posted via /api/features/notify is broadcast to
         all active /api/features/stream subscribers.
         """
+        import backend.routers.features as features_router_module
         base_url, _ = live_server
-        main_module._FEATURE_SSE_HEARTBEAT_SECONDS = 15.0
+        features_router_module._FEATURE_SSE_HEARTBEAT_SECONDS = 15.0
 
         received: list[tuple[str, dict]] = []
         ready = threading.Event()
@@ -254,8 +256,9 @@ class TestGetFeaturesStream:
         """
         Multiple subscribers all receive the feature_created event.
         """
+        import backend.routers.features as features_router_module
         base_url, _ = live_server
-        main_module._FEATURE_SSE_HEARTBEAT_SECONDS = 15.0
+        features_router_module._FEATURE_SSE_HEARTBEAT_SECONDS = 15.0
 
         received_1: list = []
         received_2: list = []
@@ -291,9 +294,10 @@ class TestGetFeaturesStream:
         The subscriber queue is removed when the TCP connection closes,
         preventing memory leaks.
         """
+        import backend.routers.features as features_router_module
         base_url, _ = live_server
-        original = main_module._FEATURE_SSE_HEARTBEAT_SECONDS
-        main_module._FEATURE_SSE_HEARTBEAT_SECONDS = 0.05
+        original = features_router_module._FEATURE_SSE_HEARTBEAT_SECONDS
+        features_router_module._FEATURE_SSE_HEARTBEAT_SECONDS = 0.05
 
         try:
             initial_count = len(main_module._feature_subscribers)
@@ -311,4 +315,4 @@ class TestGetFeaturesStream:
 
             assert len(main_module._feature_subscribers) == initial_count
         finally:
-            main_module._FEATURE_SSE_HEARTBEAT_SECONDS = original
+            features_router_module._FEATURE_SSE_HEARTBEAT_SECONDS = original
