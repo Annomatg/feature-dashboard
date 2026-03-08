@@ -5,8 +5,6 @@ paths:
 
 # Frontend Development Rules
 
-When writing and modifying frontend pages ALWAYS use the `coder` agent.
-
 ## Design Skill (REQUIRED)
 
 When creating or modifying frontend pages or components, **ALWAYS load the `frontend-design` skill first**:

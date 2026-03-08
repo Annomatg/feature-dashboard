@@ -6,7 +6,6 @@ paths:
 # E2E Testing Rules
 
 For running tests always use the `playwright-tester` agent.
-For writing and modifying always tests use the `coder` agent.
 
 ## Isolated Test Database (CRITICAL)
 

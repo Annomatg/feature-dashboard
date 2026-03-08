@@ -5,7 +5,6 @@ paths:
 
 # Backend Test File Rules
 
-When writing and modifying tests ALWAYS use the `coder` agent.
 When running tests always use the `test-reporter` agent.
 
 ## Database Isolation (CRITICAL)

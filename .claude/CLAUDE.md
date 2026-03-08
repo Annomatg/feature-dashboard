@@ -27,10 +27,9 @@
 
 ## Development Process
 
-- **Coding** Always use the `coder` agent to implement or modify code
+- **Review** Always use the `code-review` after code generation is finished and before running tests
 - **Testing** Always use the `test-reporter` agent to run backend tests and get results. Always use the `playwright-tester` for E2E tests
-- **Review** Always use the `code-review` after implementation was done to verify code quality
-- **Commit** Always use a Haiku agent to do git commits to keep the context clean and the costs minimal
+- **Commit** Always use the `git-workflow` agent to commit the message to git
 
 ## Project Structure
 
