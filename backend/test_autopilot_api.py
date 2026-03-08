@@ -2046,7 +2046,7 @@ class TestDisableAutopilotCancelsMonitorTask:
                 cancel_calls.append(True)
 
         monkeypatch.setattr("backend.main.asyncio.create_task", lambda coro: (coro.close(), MockTask())[1])
-        monkeypatch.setattr("backend.main.subprocess.Popen",
+        monkeypatch.setattr(subprocess, "Popen",
                             lambda *a, **k: type("P", (), {"pid": 1, "terminate": lambda s: None})())
 
         client.post("/api/autopilot/enable")
@@ -2062,7 +2062,7 @@ class TestDisableAutopilotCancelsMonitorTask:
         import backend.deps as deps_module
 
         monkeypatch.setattr("backend.main.asyncio.create_task", lambda coro: (coro.close(), None)[1])
-        monkeypatch.setattr("backend.main.subprocess.Popen",
+        monkeypatch.setattr(subprocess, "Popen",
                             lambda *a, **k: type("P", (), {"pid": 1, "terminate": lambda s: None})())
 
         client.post("/api/autopilot/enable")
@@ -2095,7 +2095,7 @@ class TestClearAutopilotLog:
         import backend.deps as deps_module
 
         # Populate the log by calling disable (which appends a log entry)
-        monkeypatch.setattr("backend.main.subprocess.Popen",
+        monkeypatch.setattr(subprocess, "Popen",
                             lambda *a, **k: type("P", (), {"pid": 1, "terminate": lambda s: None})())
         client.post("/api/autopilot/disable")
 
@@ -2486,14 +2486,8 @@ class TestAutoPilotPersistence:
 
         client, temp_db_path, config_path = client_with_config
 
-        import subprocess as _subprocess
-        monkeypatch.setattr(
-            main_module, 'subprocess',
-            type('M', (), {
-                'Popen': lambda *a, **kw: type('P', (), {'pid': 1, 'stdout': None, 'stderr': None})(),
-                'PIPE': _subprocess.PIPE,
-            })()
-        )
+        monkeypatch.setattr(subprocess, 'Popen',
+                            lambda *a, **kw: type('P', (), {'pid': 1, 'stdout': None, 'stderr': None})())
 
         response = client.post("/api/autopilot/enable")
         assert response.status_code == 200
@@ -2510,10 +2504,8 @@ class TestAutoPilotPersistence:
 
         client, temp_db_path, config_path = client_with_config
 
-        monkeypatch.setattr(
-            main_module, 'subprocess',
-            type('M', (), {'Popen': lambda *a, **kw: type('P', (), {'pid': 1})()})()
-        )
+        monkeypatch.setattr(subprocess, 'Popen',
+                            lambda *a, **kw: type('P', (), {'pid': 1})())
 
         client.post("/api/autopilot/enable")
         client.post("/api/autopilot/disable")
@@ -2611,7 +2603,7 @@ class TestAutoPilotPersistence:
         def raise_fnf(*args, **kwargs):
             raise FileNotFoundError("claude: command not found")
 
-        monkeypatch.setattr(main_module.subprocess, 'Popen', raise_fnf)
+        monkeypatch.setattr(subprocess, 'Popen', raise_fnf)
 
         response = client.post("/api/autopilot/enable")
         assert response.status_code == 500
@@ -3376,6 +3368,7 @@ class TestManualLaunchTracking:
 
         async def run():
             # Launch and give the monitor task a chance to run
+            import backend.autopilot_engine as ae_module
             state = main_module.get_autopilot_state()
             process = MockProcess()
             state.manual_active = True
@@ -3383,7 +3376,7 @@ class TestManualLaunchTracking:
             state.manual_feature_name = "Feature 1"
             state.manual_feature_model = "sonnet"
             state.manual_process = process
-            task = asyncio.create_task(main_module.monitor_manual_process(state))
+            task = asyncio.create_task(ae_module.monitor_manual_process(state))
             await task
             return state
 
@@ -3400,6 +3393,7 @@ class TestManualLaunchTracking:
         """monitor_manual_process logs a success entry when process exits with code 0."""
         import asyncio
         import backend.main as main_module
+        import backend.autopilot_engine as ae_module
         import backend.deps as deps_module
 
         self._reset_autopilot_state(monkeypatch)
@@ -3416,7 +3410,7 @@ class TestManualLaunchTracking:
             state.manual_feature_name = "My Feature"
             state.manual_feature_model = "sonnet"
             state.manual_process = MockProcess()
-            await main_module.monitor_manual_process(state)
+            await ae_module.monitor_manual_process(state)
             return state
 
         state = asyncio.run(run())
@@ -3429,6 +3423,7 @@ class TestManualLaunchTracking:
         """monitor_manual_process logs an info entry when process exits with non-zero code."""
         import asyncio
         import backend.main as main_module
+        import backend.autopilot_engine as ae_module
         import backend.deps as deps_module
 
         self._reset_autopilot_state(monkeypatch)
@@ -3445,7 +3440,7 @@ class TestManualLaunchTracking:
             state.manual_feature_name = "My Feature"
             state.manual_feature_model = "sonnet"
             state.manual_process = MockProcess()
-            await main_module.monitor_manual_process(state)
+            await ae_module.monitor_manual_process(state)
             return state
 
         state = asyncio.run(run())
