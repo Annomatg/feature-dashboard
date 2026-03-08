@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import backend.interview_state as state_module
 import backend.main as main_module
+import backend.routers.interview as interview_router_module
 from backend.main import app
 
 
@@ -197,7 +198,7 @@ def _claude_get_answer(base_url: str, http_timeout: float = 30.0) -> str | None:
 
     Returns the answer string, or None if the server responded with 408 (timeout).
     The http_timeout controls how long the httpx client waits before giving up.
-    The server-side poll timeout is controlled by main_module._ANSWER_POLL_TIMEOUT_SECONDS.
+    The server-side poll timeout is controlled by interview_router_module._ANSWER_POLL_TIMEOUT_SECONDS.
     """
     with httpx.Client(timeout=http_timeout) as client:
         resp = client.get(f"{base_url}/api/interview/answer")
@@ -625,8 +626,8 @@ class TestErrorCases:
     def test_answer_timeout_returns_408(self, live_server):
         """GET /answer returns 408 when no answer arrives within the poll timeout."""
         base_url = live_server
-        original = main_module._ANSWER_POLL_TIMEOUT_SECONDS
-        main_module._ANSWER_POLL_TIMEOUT_SECONDS = 0.05
+        original = interview_router_module._ANSWER_POLL_TIMEOUT_SECONDS
+        interview_router_module._ANSWER_POLL_TIMEOUT_SECONDS = 0.05
         try:
             _claude_post_question(base_url, "Q?", ["A"])
 
@@ -634,13 +635,13 @@ class TestErrorCases:
                 resp = client.get(f"{base_url}/api/interview/answer")
             assert resp.status_code == 408
         finally:
-            main_module._ANSWER_POLL_TIMEOUT_SECONDS = original
+            interview_router_module._ANSWER_POLL_TIMEOUT_SECONDS = original
 
     def test_answer_timeout_clears_session_state(self, live_server):
         """After a timeout, owner_token and active_question are cleared."""
         base_url = live_server
-        original = main_module._ANSWER_POLL_TIMEOUT_SECONDS
-        main_module._ANSWER_POLL_TIMEOUT_SECONDS = 0.05
+        original = interview_router_module._ANSWER_POLL_TIMEOUT_SECONDS
+        interview_router_module._ANSWER_POLL_TIMEOUT_SECONDS = 0.05
         try:
             _claude_post_question(base_url, "Q?", ["A"])
 
@@ -651,13 +652,13 @@ class TestErrorCases:
             assert session.owner_token is None
             assert session.active_question is None
         finally:
-            main_module._ANSWER_POLL_TIMEOUT_SECONDS = original
+            interview_router_module._ANSWER_POLL_TIMEOUT_SECONDS = original
 
     def test_answer_timeout_broadcasts_session_timeout_sse_event(self, live_server):
         """A timeout broadcasts 'session-timeout' to SSE subscribers."""
         base_url = live_server
-        original = main_module._ANSWER_POLL_TIMEOUT_SECONDS
-        main_module._ANSWER_POLL_TIMEOUT_SECONDS = 0.05
+        original = interview_router_module._ANSWER_POLL_TIMEOUT_SECONDS
+        interview_router_module._ANSWER_POLL_TIMEOUT_SECONDS = 0.05
 
         try:
             _claude_post_question(base_url, "Q?", ["A"])
@@ -689,7 +690,7 @@ class TestErrorCases:
             event_types = [e[0] for e in sse_events]
             assert "session-timeout" in event_types
         finally:
-            main_module._ANSWER_POLL_TIMEOUT_SECONDS = original
+            interview_router_module._ANSWER_POLL_TIMEOUT_SECONDS = original
 
     def test_post_answer_without_active_question_returns_400(self, live_server):
         """Submitting an answer when no question is active returns 400."""

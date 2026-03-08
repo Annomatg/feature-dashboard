@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import backend.interview_state as state_module
 import backend.main as main_module
+import backend.routers.interview as interview_router_module
 import backend.deps as deps_module
 from backend.main import app
 
@@ -387,15 +388,15 @@ class TestSessionTokenGuard:
         session = state_module.get_interview_session()
         assert session.owner_token is not None
 
-        original_soft = main_module._SOFT_TIMEOUT_SECONDS
-        original_hard = main_module._HARD_TIMEOUT_SECONDS
-        main_module._SOFT_TIMEOUT_SECONDS = 0.02
-        main_module._HARD_TIMEOUT_SECONDS = 0.05
+        original_soft = interview_router_module._SOFT_TIMEOUT_SECONDS
+        original_hard = interview_router_module._HARD_TIMEOUT_SECONDS
+        interview_router_module._SOFT_TIMEOUT_SECONDS = 0.02
+        interview_router_module._HARD_TIMEOUT_SECONDS = 0.05
         try:
             client.get("/api/interview/answer")  # triggers timeout
         finally:
-            main_module._SOFT_TIMEOUT_SECONDS = original_soft
-            main_module._HARD_TIMEOUT_SECONDS = original_hard
+            interview_router_module._SOFT_TIMEOUT_SECONDS = original_soft
+            interview_router_module._HARD_TIMEOUT_SECONDS = original_hard
 
         assert session.owner_token is None
 
@@ -650,7 +651,7 @@ class TestGetInterviewQuestionStream:
         import backend.main as main_module
         import backend.deps as deps_module
         base_url, _ = live_server
-        main_module._SSE_HEARTBEAT_SECONDS = 0.05  # fire heartbeat quickly
+        interview_router_module._SSE_HEARTBEAT_SECONDS = 0.05  # fire heartbeat quickly
 
         try:
             session = state_module.get_interview_session()
@@ -671,7 +672,7 @@ class TestGetInterviewQuestionStream:
 
             assert len(session._subscribers) == initial_count
         finally:
-            main_module._SSE_HEARTBEAT_SECONDS = 15.0
+            interview_router_module._SSE_HEARTBEAT_SECONDS = 15.0
 
     def test_stream_heartbeat_sent_when_queue_idle(self, live_server):
         """
@@ -681,7 +682,7 @@ class TestGetInterviewQuestionStream:
         import backend.main as main_module
         import backend.deps as deps_module
         base_url, _ = live_server
-        main_module._SSE_HEARTBEAT_SECONDS = 0.05  # very short for testing
+        interview_router_module._SSE_HEARTBEAT_SECONDS = 0.05  # very short for testing
 
         try:
             with httpx.Client(timeout=5.0) as client:
@@ -691,7 +692,7 @@ class TestGetInterviewQuestionStream:
             assert len(events) == 1
             assert events[0][0] == "heartbeat"
         finally:
-            main_module._SSE_HEARTBEAT_SECONDS = 15.0
+            interview_router_module._SSE_HEARTBEAT_SECONDS = 15.0
 
 
 # ---------------------------------------------------------------------------
@@ -782,7 +783,7 @@ class TestPostInterviewAnswer:
         import backend.main as main_module
         import backend.deps as deps_module
         base_url, _ = live_server
-        main_module._SSE_HEARTBEAT_SECONDS = 15.0
+        interview_router_module._SSE_HEARTBEAT_SECONDS = 15.0
 
         # Set up an active question via the API
         with httpx.Client() as setup_client:
@@ -864,32 +865,32 @@ class TestGetInterviewAnswer:
         # Override timeout to 0.05 s so the test finishes quickly.
         import backend.main as main_module
         import backend.deps as deps_module
-        original_soft = main_module._SOFT_TIMEOUT_SECONDS
-        original_hard = main_module._HARD_TIMEOUT_SECONDS
-        main_module._SOFT_TIMEOUT_SECONDS = 0.02
-        main_module._HARD_TIMEOUT_SECONDS = 0.05
+        original_soft = interview_router_module._SOFT_TIMEOUT_SECONDS
+        original_hard = interview_router_module._HARD_TIMEOUT_SECONDS
+        interview_router_module._SOFT_TIMEOUT_SECONDS = 0.02
+        interview_router_module._HARD_TIMEOUT_SECONDS = 0.05
         try:
             response = client.get("/api/interview/answer")
             assert response.status_code == 408
         finally:
-            main_module._SOFT_TIMEOUT_SECONDS = original_soft
-            main_module._HARD_TIMEOUT_SECONDS = original_hard
+            interview_router_module._SOFT_TIMEOUT_SECONDS = original_soft
+            interview_router_module._HARD_TIMEOUT_SECONDS = original_hard
 
     def test_get_answer_returns_408_on_timeout(self, client):
         """Returns 408 when no answer arrives within the hard timeout."""
         import backend.main as main_module
         import backend.deps as deps_module
-        original_soft = main_module._SOFT_TIMEOUT_SECONDS
-        original_hard = main_module._HARD_TIMEOUT_SECONDS
-        main_module._SOFT_TIMEOUT_SECONDS = 0.02
-        main_module._HARD_TIMEOUT_SECONDS = 0.05
+        original_soft = interview_router_module._SOFT_TIMEOUT_SECONDS
+        original_hard = interview_router_module._HARD_TIMEOUT_SECONDS
+        interview_router_module._SOFT_TIMEOUT_SECONDS = 0.02
+        interview_router_module._HARD_TIMEOUT_SECONDS = 0.05
         try:
             response = client.get("/api/interview/answer")
             assert response.status_code == 408
             assert "timeout" in response.json()["detail"].lower()
         finally:
-            main_module._SOFT_TIMEOUT_SECONDS = original_soft
-            main_module._HARD_TIMEOUT_SECONDS = original_hard
+            interview_router_module._SOFT_TIMEOUT_SECONDS = original_soft
+            interview_router_module._HARD_TIMEOUT_SECONDS = original_hard
 
     def test_get_answer_timeout_clears_session_state(self, client):
         """When GET /answer hard-times out, session state is cleared."""
@@ -897,15 +898,15 @@ class TestGetInterviewAnswer:
         import backend.deps as deps_module
         session = state_module.get_interview_session()
         session.active_question = {"text": "Q?", "options": ["A"]}
-        original_soft = main_module._SOFT_TIMEOUT_SECONDS
-        original_hard = main_module._HARD_TIMEOUT_SECONDS
-        main_module._SOFT_TIMEOUT_SECONDS = 0.02
-        main_module._HARD_TIMEOUT_SECONDS = 0.05
+        original_soft = interview_router_module._SOFT_TIMEOUT_SECONDS
+        original_hard = interview_router_module._HARD_TIMEOUT_SECONDS
+        interview_router_module._SOFT_TIMEOUT_SECONDS = 0.02
+        interview_router_module._HARD_TIMEOUT_SECONDS = 0.05
         try:
             client.get("/api/interview/answer")
         finally:
-            main_module._SOFT_TIMEOUT_SECONDS = original_soft
-            main_module._HARD_TIMEOUT_SECONDS = original_hard
+            interview_router_module._SOFT_TIMEOUT_SECONDS = original_soft
+            interview_router_module._HARD_TIMEOUT_SECONDS = original_hard
 
         assert session.active_question is None
         assert session.pending_answer is None
@@ -918,8 +919,8 @@ class TestGetInterviewAnswer:
         import backend.main as main_module
         import backend.deps as deps_module
         base_url, _ = live_server
-        main_module._SOFT_TIMEOUT_SECONDS = 0.05
-        main_module._HARD_TIMEOUT_SECONDS = 0.1
+        interview_router_module._SOFT_TIMEOUT_SECONDS = 0.05
+        interview_router_module._HARD_TIMEOUT_SECONDS = 0.1
 
         received: list[tuple[str, dict]] = []
         sse_ready = threading.Event()
@@ -960,8 +961,8 @@ class TestGetInterviewAnswer:
         import backend.main as main_module
         import backend.deps as deps_module
         base_url, _ = live_server
-        main_module._SOFT_TIMEOUT_SECONDS = 10.0
-        main_module._HARD_TIMEOUT_SECONDS = 20.0
+        interview_router_module._SOFT_TIMEOUT_SECONDS = 10.0
+        interview_router_module._HARD_TIMEOUT_SECONDS = 20.0
 
         # Set up an active question
         with httpx.Client() as c:
@@ -1006,8 +1007,8 @@ class TestGetInterviewAnswer:
         import backend.main as main_module
         import backend.deps as deps_module
         base_url, _ = live_server
-        main_module._SOFT_TIMEOUT_SECONDS = 0.05
-        main_module._HARD_TIMEOUT_SECONDS = 0.1
+        interview_router_module._SOFT_TIMEOUT_SECONDS = 0.05
+        interview_router_module._HARD_TIMEOUT_SECONDS = 0.1
 
         try:
             with httpx.Client(timeout=5.0) as c:
@@ -1015,8 +1016,8 @@ class TestGetInterviewAnswer:
 
             assert resp.status_code == 408
         finally:
-            main_module._SOFT_TIMEOUT_SECONDS = 300.0
-            main_module._HARD_TIMEOUT_SECONDS = 600.0
+            interview_router_module._SOFT_TIMEOUT_SECONDS = 300.0
+            interview_router_module._HARD_TIMEOUT_SECONDS = 600.0
 
 
 # ---------------------------------------------------------------------------
@@ -1112,8 +1113,8 @@ class TestPostInterviewRevive:
         import backend.main as main_module
         import backend.deps as deps_module
         base_url, _ = live_server
-        main_module._SOFT_TIMEOUT_SECONDS = 0.05
-        main_module._HARD_TIMEOUT_SECONDS = 10.0  # keep hard timeout long
+        interview_router_module._SOFT_TIMEOUT_SECONDS = 0.05
+        interview_router_module._HARD_TIMEOUT_SECONDS = 10.0  # keep hard timeout long
 
         # Post a question to start a session
         with httpx.Client() as c:
@@ -1160,8 +1161,8 @@ class TestPostInterviewRevive:
         with httpx.Client() as c:
             c.post(f"{base_url}/api/interview/answer", json={"value": "A"})
         poll_thread.join(timeout=5.0)
-        main_module._SOFT_TIMEOUT_SECONDS = 300.0
-        main_module._HARD_TIMEOUT_SECONDS = 600.0
+        interview_router_module._SOFT_TIMEOUT_SECONDS = 300.0
+        interview_router_module._HARD_TIMEOUT_SECONDS = 600.0
 
     def test_session_state_preserved_after_soft_timeout(self, client):
         """
@@ -1415,7 +1416,7 @@ class TestInterviewPromptSafety:
         """
         import backend.main as main_module
         import backend.deps as deps_module
-        assert "json.dumps(" in main_module._INTERVIEW_API_SUFFIX, (
+        assert "json.dumps(" in interview_router_module._INTERVIEW_API_SUFFIX, (
             "_INTERVIEW_API_SUFFIX must instruct Claude to use json.dumps() "
             "to build the curl body — never inline '-d '{...}'' strings"
         )
@@ -1428,7 +1429,7 @@ class TestInterviewPromptSafety:
         """
         import backend.main as main_module
         import backend.deps as deps_module
-        assert "get('session_token'" in main_module._INTERVIEW_API_SUFFIX, (
+        assert "get('session_token'" in interview_router_module._INTERVIEW_API_SUFFIX, (
             "_INTERVIEW_API_SUFFIX must use .get('session_token', ...) "
             "instead of direct key access to prevent KeyError on error responses"
         )
@@ -1440,7 +1441,7 @@ class TestInterviewPromptSafety:
         """
         import backend.main as main_module
         import backend.deps as deps_module
-        assert "['session_token']" not in main_module._INTERVIEW_API_SUFFIX, (
+        assert "['session_token']" not in interview_router_module._INTERVIEW_API_SUFFIX, (
             "_INTERVIEW_API_SUFFIX must not use ['session_token'] — "
             "use .get('session_token', '') to handle error responses safely"
         )
@@ -1452,7 +1453,7 @@ class TestInterviewPromptSafety:
         """
         import backend.main as main_module
         import backend.deps as deps_module
-        suffix = main_module._INTERVIEW_API_SUFFIX
+        suffix = interview_router_module._INTERVIEW_API_SUFFIX
         assert "first" in suffix.lower() and "session_token" in suffix, (
             "_INTERVIEW_API_SUFFIX must clarify that session_token is only "
             "returned in the first POST response"
