@@ -3117,8 +3117,7 @@ class TestChildProcessTracking:
     def test_disable_enters_stopping_when_parent_exited_but_children_running(self, client, monkeypatch):
         """stopping=True when parent already exited but child process is still running."""
         self._reset_autopilot_state(monkeypatch)
-        import backend.main as main_module
-        import backend.deps as deps_module
+        import backend.routers.autopilot as autopilot_router
 
         class ExitedParent:
             pid = 42
@@ -3133,7 +3132,7 @@ class TestChildProcessTracking:
 
         monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: ExitedParent())
         # Patch _get_child_procs to return our running child
-        monkeypatch.setattr(main_module, "_get_child_procs", lambda proc: [RunningChild()])
+        monkeypatch.setattr(autopilot_router, "_get_child_procs", lambda proc: [RunningChild()])
 
         client.post("/api/autopilot/enable")
         resp = client.post("/api/autopilot/disable")
@@ -3146,8 +3145,7 @@ class TestChildProcessTracking:
     def test_disable_stopping_log_message_when_only_children_running(self, client, monkeypatch):
         """Log mentions 'waiting for Claude process' even when only children are alive."""
         self._reset_autopilot_state(monkeypatch)
-        import backend.main as main_module
-        import backend.deps as deps_module
+        import backend.routers.autopilot as autopilot_router
 
         class ExitedParent:
             pid = 42
@@ -3161,7 +3159,7 @@ class TestChildProcessTracking:
             def wait(self): return 0
 
         monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: ExitedParent())
-        monkeypatch.setattr(main_module, "_get_child_procs", lambda proc: [RunningChild()])
+        monkeypatch.setattr(autopilot_router, "_get_child_procs", lambda proc: [RunningChild()])
 
         client.post("/api/autopilot/enable")
         resp = client.post("/api/autopilot/disable")
@@ -3171,8 +3169,7 @@ class TestChildProcessTracking:
     def test_disable_no_stopping_when_all_procs_exited(self, client, monkeypatch):
         """stopping=False when parent AND all children have already exited."""
         self._reset_autopilot_state(monkeypatch)
-        import backend.main as main_module
-        import backend.deps as deps_module
+        import backend.routers.autopilot as autopilot_router
 
         class ExitedParent:
             pid = 42
@@ -3186,7 +3183,7 @@ class TestChildProcessTracking:
             def wait(self): return 0
 
         monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: ExitedParent())
-        monkeypatch.setattr(main_module, "_get_child_procs", lambda proc: [DeadChild()])
+        monkeypatch.setattr(autopilot_router, "_get_child_procs", lambda proc: [DeadChild()])
 
         client.post("/api/autopilot/enable")
         resp = client.post("/api/autopilot/disable")

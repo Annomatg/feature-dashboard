@@ -396,8 +396,8 @@ class TestSessionLogEndpoint:
         state.session_start_time = since
         state.session_jsonl_path = None
 
-        with patch('backend.main._get_claude_projects_dir', return_value=tmp_path):
-            with patch('backend.main._find_session_jsonl', return_value=session_file):
+        with patch('backend.routers.autopilot._get_claude_projects_dir', return_value=tmp_path):
+            with patch('backend.routers.autopilot._find_session_jsonl', return_value=session_file):
                 resp = self.client.get('/api/autopilot/session-log?limit=50')
 
         assert resp.status_code == 200
@@ -426,8 +426,8 @@ class TestSessionLogEndpoint:
         state.enabled = True
         state.session_start_time = since
 
-        with patch('backend.main._get_claude_projects_dir', return_value=tmp_path):
-            with patch('backend.main._find_session_jsonl', return_value=session_file):
+        with patch('backend.routers.autopilot._get_claude_projects_dir', return_value=tmp_path):
+            with patch('backend.routers.autopilot._find_session_jsonl', return_value=session_file):
                 resp = self.client.get('/api/autopilot/session-log?limit=3')
 
         assert resp.status_code == 200
@@ -453,8 +453,8 @@ class TestSessionLogEndpoint:
         state.session_start_time = since
         state.session_jsonl_path = None
 
-        with patch('backend.main._get_claude_projects_dir', return_value=tmp_path):
-            with patch('backend.main._find_session_jsonl', return_value=session_file):
+        with patch('backend.routers.autopilot._get_claude_projects_dir', return_value=tmp_path):
+            with patch('backend.routers.autopilot._find_session_jsonl', return_value=session_file):
                 resp = self.client.get('/api/autopilot/session-log')
 
         assert resp.status_code == 200
@@ -498,8 +498,8 @@ class TestSessionLogEndpoint:
             call_count['n'] += 1
             return session_file
 
-        with patch('backend.main._get_claude_projects_dir', return_value=tmp_path):
-            with patch('backend.main._find_session_jsonl', side_effect=counting_find):
+        with patch('backend.routers.autopilot._get_claude_projects_dir', return_value=tmp_path):
+            with patch('backend.routers.autopilot._find_session_jsonl', side_effect=counting_find):
                 self.client.get('/api/autopilot/session-log')
                 self.client.get('/api/autopilot/session-log')
 
@@ -538,8 +538,8 @@ class TestSessionLogEndpoint:
         state.session_start_time = since
         state.session_jsonl_path = None
 
-        with patch('backend.main._get_claude_projects_dir', return_value=tmp_path):
-            with patch('backend.main._find_session_jsonl', return_value=session_file):
+        with patch('backend.routers.autopilot._get_claude_projects_dir', return_value=tmp_path):
+            with patch('backend.routers.autopilot._find_session_jsonl', return_value=session_file):
                 resp = self.client.get('/api/autopilot/session-log')
 
         assert resp.status_code == 200
@@ -567,8 +567,8 @@ class TestSessionLogEndpoint:
         state.session_start_time = since
         state.session_jsonl_path = None
 
-        with patch('backend.main._get_claude_projects_dir', return_value=tmp_path):
-            with patch('backend.main._find_session_jsonl', return_value=session_file):
+        with patch('backend.routers.autopilot._get_claude_projects_dir', return_value=tmp_path):
+            with patch('backend.routers.autopilot._find_session_jsonl', return_value=session_file):
                 resp = self.client.get('/api/autopilot/session-log')
 
         assert resp.status_code == 200
@@ -597,8 +597,8 @@ class TestSessionLogEndpoint:
         state.session_start_time = since
         state.session_jsonl_path = None
 
-        with patch('backend.main._get_claude_projects_dir', return_value=tmp_path):
-            with patch('backend.main._find_session_jsonl', return_value=session_file):
+        with patch('backend.routers.autopilot._get_claude_projects_dir', return_value=tmp_path):
+            with patch('backend.routers.autopilot._find_session_jsonl', return_value=session_file):
                 resp = self.client.get('/api/autopilot/session-log')
 
         assert resp.status_code == 200
@@ -625,8 +625,8 @@ class TestSessionLogEndpoint:
         state.session_start_time = since
         state.session_jsonl_path = None
 
-        with patch('backend.main._get_claude_projects_dir', return_value=tmp_path):
-            with patch('backend.main._find_session_jsonl', return_value=session_file):
+        with patch('backend.routers.autopilot._get_claude_projects_dir', return_value=tmp_path):
+            with patch('backend.routers.autopilot._find_session_jsonl', return_value=session_file):
                 resp = self.client.get('/api/autopilot/session-log')
 
         assert resp.status_code == 200
