@@ -88,6 +88,8 @@ from backend.routers import features as features_router  # noqa: E402
 app.include_router(features_router.router)
 from backend.routers import autopilot as autopilot_router  # noqa: E402
 app.include_router(autopilot_router.router)
+from backend.routers import push as push_router  # noqa: E402
+app.include_router(push_router.router)
 
 
 @app.get("/")
@@ -124,7 +126,12 @@ async def root():
 # CORS middleware for local development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174", "http://127.0.0.1:5174"],
+    allow_origins=[
+        "http://localhost:5173", "http://127.0.0.1:5173",
+        "https://localhost:5173", "https://127.0.0.1:5173",
+        "http://localhost:5174", "http://127.0.0.1:5174",
+        "https://localhost:5174", "https://127.0.0.1:5174",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

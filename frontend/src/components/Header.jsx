@@ -4,6 +4,7 @@ import DatabaseSelector from './DatabaseSelector'
 import AutoPilotToggle from './AutoPilotToggle'
 import ManualRunIndicator from './ManualRunIndicator'
 import AiBudgetBadge from './AiBudgetBadge'
+import PushNotifications from './PushNotifications'
 
 function Header({ onSettingsClick, onPlanTasksClick }) {
   const location = useLocation()
@@ -57,6 +58,9 @@ function Header({ onSettingsClick, onPlanTasksClick }) {
 
           {/* Auto-Pilot toggle */}
           <AutoPilotToggle />
+
+          {/* Push notifications toggle */}
+          <PushNotifications />
 
           {/* Plan Tasks button */}
           <button
