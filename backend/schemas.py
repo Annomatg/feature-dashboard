@@ -291,3 +291,26 @@ class InterviewStartRequest(BaseModel):
 class InterviewStartResponse(BaseModel):
     launched: bool
     model: str
+
+
+# ---------------------------------------------------------------------------
+# Task graph models
+# ---------------------------------------------------------------------------
+
+class GraphNode(BaseModel):
+    """A node in the agent graph (main agent or subagent)."""
+    id: str
+    label: str
+    type: str
+
+
+class GraphEdge(BaseModel):
+    """An edge representing parent-child relationship between agents."""
+    source: str
+    target: str
+
+
+class TaskGraphResponse(BaseModel):
+    """Response for GET /api/tasks/{id}/graph."""
+    nodes: list[GraphNode]
+    edges: list[GraphEdge]

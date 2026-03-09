@@ -90,6 +90,8 @@ from backend.routers import autopilot as autopilot_router  # noqa: E402
 app.include_router(autopilot_router.router)
 from backend.routers import push as push_router  # noqa: E402
 app.include_router(push_router.router)
+from backend.routers import tasks as tasks_router  # noqa: E402
+app.include_router(tasks_router.router)
 
 
 @app.get("/")
@@ -118,7 +120,8 @@ async def root():
             "autopilot_status": "GET /api/autopilot/status",
             "autopilot_log_clear": "POST /api/autopilot/log/clear",
             "get_settings": "GET /api/settings",
-            "update_settings": "PUT /api/settings"
+            "update_settings": "PUT /api/settings",
+            "task_graph": "GET /api/tasks/{id}/graph",
         }
     }
 
