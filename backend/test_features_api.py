@@ -961,3 +961,47 @@ class TestRecentLog:
         r2 = client.get("/api/features/1")
         assert r2.json()["recent_log"] == "Updated log"
 
+
+class TestClaudeSessionId:
+    """Tests for claude_session_id field storage (Feature #181)."""
+
+    def test_feature_has_null_claude_session_id_by_default(self, client):
+        """New features have claude_session_id=None by default."""
+        response = client.get("/api/features/1")
+        assert response.status_code == 200
+        data = response.json()
+        assert "claude_session_id" in data
+        assert data["claude_session_id"] is None
+
+    def test_state_update_stores_claude_session_id(self, client):
+        """PATCH /state with claude_session_id stores it on the feature."""
+        response = client.patch("/api/features/1/state", json={
+            "in_progress": True,
+            "claude_session_id": "test-session-abc123"
+        })
+        assert response.status_code == 200
+        data = response.json()
+        assert data["claude_session_id"] == "test-session-abc123"
+
+    def test_state_update_without_session_id_does_not_clear_existing(self, client):
+        """Updating state without claude_session_id keeps existing value."""
+        # First set a session id
+        client.patch("/api/features/1/state", json={
+            "in_progress": True,
+            "claude_session_id": "existing-session"
+        })
+        # Then update state without session id
+        response = client.patch("/api/features/1/state", json={
+            "passes": False
+        })
+        assert response.status_code == 200
+        data = response.json()
+        assert data["claude_session_id"] == "existing-session"
+
+    def test_claude_session_id_in_list_response(self, client):
+        """GET /api/features includes claude_session_id for each feature."""
+        response = client.get("/api/features")
+        assert response.status_code == 200
+        features = response.json()
+        assert all("claude_session_id" in f for f in features)
+

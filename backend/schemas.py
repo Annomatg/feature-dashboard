@@ -38,6 +38,7 @@ class FeatureResponse(BaseModel):
     passes: bool
     in_progress: bool
     model: Optional[str] = "sonnet"
+    claude_session_id: Optional[str] = None
     created_at: Optional[str] = None
     modified_at: Optional[str] = None
     completed_at: Optional[str] = None
@@ -104,6 +105,7 @@ class UpdateFeatureStateRequest(BaseModel):
     """Request to change feature state (passes/in_progress)."""
     passes: Optional[bool] = None
     in_progress: Optional[bool] = None
+    claude_session_id: Optional[str] = None
 
 
 class UpdateFeaturePriorityRequest(BaseModel):

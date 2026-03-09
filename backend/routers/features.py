@@ -712,6 +712,9 @@ async def update_feature_state(feature_id: int, request: UpdateFeatureStateReque
         if request.in_progress is not None:
             feature.in_progress = request.in_progress
 
+        if request.claude_session_id is not None:
+            feature.claude_session_id = request.claude_session_id
+
         session.commit()
         session.refresh(feature)
 

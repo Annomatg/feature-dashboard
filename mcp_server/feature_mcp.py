@@ -26,7 +26,7 @@ import threading
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Optional
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
@@ -331,7 +331,8 @@ def feature_get_by_id(
 
 @mcp.tool()
 def feature_mark_in_progress(
-    feature_id: Annotated[int, Field(description="The ID of the feature to mark as in-progress", ge=1)]
+    feature_id: Annotated[int, Field(description="The ID of the feature to mark as in-progress", ge=1)],
+    claude_session_id: Annotated[Optional[str], Field(default=None, description="Claude Code session ID from ~/.claude/projects/ to track which session is working on this feature")] = None
 ) -> str:
     """Mark a feature as in-progress.
 
@@ -341,6 +342,7 @@ def feature_mark_in_progress(
 
     Args:
         feature_id: The ID of the feature to mark as in-progress
+        claude_session_id: Optional Claude Code session ID to associate with this feature
 
     Returns:
         JSON with the updated feature details, or error if not found or already in-progress.
@@ -359,6 +361,8 @@ def feature_mark_in_progress(
             return json.dumps({"error": f"Feature with ID {feature_id} is already in-progress"})
 
         feature.in_progress = True
+        if claude_session_id:
+            feature.claude_session_id = claude_session_id
         feature.modified_at = datetime.now()
         session.commit()
         session.refresh(feature)

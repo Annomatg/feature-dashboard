@@ -120,6 +120,7 @@ class Feature(Base):
     passes = Column(Boolean, nullable=False, default=False, index=True)
     in_progress = Column(Boolean, nullable=False, default=False, index=True)
     model = Column(String(20), nullable=True)  # claude model: opus, sonnet, haiku
+    claude_session_id = Column(String(255), nullable=True)  # Claude Code session ID from ~/.claude/projects/
     created_at = Column(DateTime, default=func.now())
     modified_at = Column(DateTime, default=func.now(), onupdate=func.now())
     completed_at = Column(DateTime, nullable=True)
@@ -137,6 +138,7 @@ class Feature(Base):
             "passes": self.passes if self.passes is not None else False,
             "in_progress": self.in_progress if self.in_progress is not None else False,
             "model": self.model or "sonnet",
+            "claude_session_id": self.claude_session_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "modified_at": self.modified_at.isoformat() if self.modified_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
@@ -161,7 +163,7 @@ def get_database_url(project_dir: Path, db_filename: str = "features.db") -> str
 # Numbered migrations
 # ---------------------------------------------------------------------------
 
-LATEST_SCHEMA_VERSION = 10
+LATEST_SCHEMA_VERSION = 11
 
 
 def _migration_v1(engine) -> None:
@@ -328,6 +330,17 @@ def _migration_v10(engine) -> None:
             conn.commit()
 
 
+def _migration_v11(engine) -> None:
+    """v11: Add claude_session_id column to store the Claude Code session ID."""
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(features)"))
+        columns = [row[1] for row in result.fetchall()]
+        if "claude_session_id" not in columns:
+            conn.execute(text("ALTER TABLE features ADD COLUMN claude_session_id VARCHAR(255)"))
+            conn.commit()
+
+
 _MIGRATIONS = [
     (1, _migration_v1),
     (2, _migration_v2),
@@ -339,6 +352,7 @@ _MIGRATIONS = [
     (8, _migration_v8),
     (9, _migration_v9),
     (10, _migration_v10),
+    (11, _migration_v11),
 ]
 
 

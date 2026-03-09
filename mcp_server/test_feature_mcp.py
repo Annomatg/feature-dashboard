@@ -158,6 +158,20 @@ class TestFeatureMarkInProgress:
         assert "error" in result
         assert "999" in result["error"]
 
+    def test_mark_in_progress_stores_claude_session_id(self):
+        """Providing claude_session_id stores it in the feature."""
+        result = json.loads(mcp_module.feature_mark_in_progress(
+            feature_id=1, claude_session_id="abc123session"
+        ))
+        assert result["in_progress"] is True
+        assert result["claude_session_id"] == "abc123session"
+
+    def test_mark_in_progress_without_session_id_leaves_null(self):
+        """Not providing claude_session_id leaves it as None."""
+        result = json.loads(mcp_module.feature_mark_in_progress(feature_id=2))
+        assert result["in_progress"] is True
+        assert result["claude_session_id"] is None
+
 
 # ===========================================================================
 # Workflow: get by ID then mark in progress
