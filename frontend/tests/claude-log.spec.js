@@ -386,5 +386,199 @@ test.describe('Claude Log Section', () => {
       // Log section should be hidden because feature_id is null
       await expect(page.getByTestId('claude-log-section')).not.toBeVisible();
     });
+
+    test('shows historical log for in-progress feature when live session is for a different feature', async ({ page }) => {
+      // Bug fix: if an in-progress feature has a claude_session_id (previous run), the log should
+      // fall back to the historical endpoint even when the live session is for a different feature.
+      const PREV_SESSION_ENTRIES = [
+        { timestamp: '2026-02-27T09:00:01.000000+00:00', entry_type: 'text', text: 'Previous session output.' },
+        { timestamp: '2026-02-27T09:00:02.000000+00:00', entry_type: 'tool_use', tool_name: 'Bash', text: '$ echo hello' },
+      ];
+
+      // Use a static mock response to inject claude_session_id into Feature 2 (in-progress).
+      // The /api/features?passes=false endpoint returns a plain array (no pagination).
+      await page.route(
+        url => url.href.includes('/api/features') && url.href.includes('passes=false') && !url.href.includes('session-log'),
+        route => route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([
+            { id: 1, priority: 1, category: 'Test', name: 'Test Feature with Description', description: 'desc', steps: [], passes: false, in_progress: false, model: 'sonnet', claude_session_id: null, created_at: null, modified_at: null, completed_at: null, comment_count: 0, recent_log: null },
+            { id: 2, priority: 2, category: 'Test', name: 'Test Feature in Progress', description: 'desc', steps: [], passes: false, in_progress: true, model: 'sonnet', claude_session_id: 'prev-session.jsonl', created_at: null, modified_at: null, completed_at: null, comment_count: 0, recent_log: null },
+          ]),
+        })
+      );
+
+      // Live session is for a different feature (99)
+      await page.route('**/api/autopilot/session-log**', route => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ active: true, feature_id: 99, entries: [], session_file: 'other.jsonl' }),
+      }));
+
+      // Historical endpoint for Feature 2 returns previous session entries
+      await page.route('**/api/features/2/session-log**', route => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          active: false,
+          feature_id: 2,
+          entries: PREV_SESSION_ENTRIES,
+          session_file: 'prev-session.jsonl',
+          total_entries: 2,
+        }),
+      }));
+
+      await openInProgressPanel(page);
+
+      // Log section should be visible with historical entries (not hidden)
+      await expect(page.getByTestId('claude-log-section')).toBeVisible();
+      await expect(page.getByTestId('claude-log-lines').getByText('Previous session output.')).toBeVisible();
+      await expect(page.getByTestId('claude-log-lines').getByText('$ echo hello')).toBeVisible();
+    });
+  });
+
+  test.describe('historical log (non-in-progress features with claude_session_id)', () => {
+    const MOCK_HISTORICAL_LOG = {
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        active: false,
+        feature_id: null,
+        entries: [
+          { timestamp: '2026-02-27T10:00:01.000000+00:00', entry_type: 'text', text: 'Fixed the bug.' },
+          { timestamp: '2026-02-27T10:00:02.000000+00:00', entry_type: 'tool_use', tool_name: 'Edit', text: 'Edit: main.py' },
+        ],
+        session_file: 'old-session.jsonl',
+        total_entries: 2,
+      }),
+    };
+
+    test('section shows historical log for a TODO feature with session ID', async ({ page }) => {
+      // Mock the features list to inject claude_session_id into Feature 1 (Test Feature with Description).
+      // The /api/features?passes=false endpoint returns a plain array (no pagination), so we
+      // map the array directly and fulfill with the modified array.
+      await page.route(
+        url => url.href.includes('/api/features') && url.href.includes('passes=false') && !url.href.includes('session-log'),
+        async route => {
+          const response = await route.fetch();
+          const body = await response.json();
+          const modified = body.map(f =>
+            f.id === 1 ? { ...f, claude_session_id: 'old-session.jsonl' } : f
+          );
+          await route.fulfill({ json: modified });
+        }
+      );
+      await page.route('**/api/features/1/session-log**', route => route.fulfill(MOCK_HISTORICAL_LOG));
+
+      await page.goto('/');
+      await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+      const card = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Test Feature with Description' });
+      await card.waitFor({ state: 'visible' });
+      await card.click();
+
+      await expect(page.getByTestId('detail-panel')).toBeVisible();
+      await expect(page.getByTestId('claude-log-section')).toBeVisible();
+      await expect(page.getByTestId('claude-log-lines').getByText('Fixed the bug.')).toBeVisible();
+      await expect(page.getByTestId('claude-log-lines').getByText('Edit: main.py')).toBeVisible();
+    });
+
+    test('section shows historical log for a DONE feature with session ID', async ({ page }) => {
+      // Mock the features list to inject claude_session_id into Feature 3 (Completed Test Feature)
+      await page.route(
+        url => url.href.includes('/api/features') && url.href.includes('passes=true') && !url.href.includes('session-log'),
+        async route => {
+          const response = await route.fetch();
+          const body = await response.json();
+          const modified = (body.features || []).map(f =>
+            f.id === 3 ? { ...f, claude_session_id: 'done-session.jsonl' } : f
+          );
+          await route.fulfill({ json: { ...body, features: modified } });
+        }
+      );
+      await page.route('**/api/features/3/session-log**', route => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          active: false,
+          feature_id: 3,
+          entries: [{ timestamp: '2026-02-27T10:00:01.000000+00:00', entry_type: 'text', text: 'Feature completed.' }],
+          session_file: 'done-session.jsonl',
+          total_entries: 1,
+        }),
+      }));
+
+      await page.goto('/');
+      await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+      const doneTab = page.getByTestId('lane-tab-done');
+      if (await doneTab.isVisible()) await doneTab.click();
+      const card = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Completed Test Feature' });
+      await card.waitFor({ state: 'visible' });
+      await card.click();
+
+      await expect(page.getByTestId('detail-panel')).toBeVisible();
+      await expect(page.getByTestId('claude-log-section')).toBeVisible();
+      await expect(page.getByTestId('claude-log-lines').getByText('Feature completed.')).toBeVisible();
+    });
+
+    test('historical log shows entry count in header', async ({ page }) => {
+      // Mock the features list to inject claude_session_id into Feature 1
+      await page.route(
+        url => url.href.includes('/api/features') && url.href.includes('passes=false') && !url.href.includes('session-log'),
+        async route => {
+          const response = await route.fetch();
+          const body = await response.json();
+          const modified = body.map(f =>
+            f.id === 1 ? { ...f, claude_session_id: 'count-session.jsonl' } : f
+          );
+          await route.fulfill({ json: modified });
+        }
+      );
+      await page.route('**/api/features/1/session-log**', route => route.fulfill(MOCK_HISTORICAL_LOG));
+
+      await page.goto('/');
+      await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+      const card = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Test Feature with Description' });
+      await card.waitFor({ state: 'visible' });
+      await card.click();
+
+      await expect(page.getByTestId('claude-log-section')).toBeVisible();
+      await expect(page.getByTestId('claude-log-toggle')).toContainText('2 entries');
+    });
+
+    test('historical log does not poll (fetches only once)', async ({ page }) => {
+      // Mock the features list to inject claude_session_id into Feature 1
+      await page.route(
+        url => url.href.includes('/api/features') && url.href.includes('passes=false') && !url.href.includes('session-log'),
+        async route => {
+          const response = await route.fetch();
+          const body = await response.json();
+          const modified = body.map(f =>
+            f.id === 1 ? { ...f, claude_session_id: 'nopoll-session.jsonl' } : f
+          );
+          await route.fulfill({ json: modified });
+        }
+      );
+
+      let callCount = 0;
+      await page.route('**/api/features/1/session-log**', route => {
+        callCount++;
+        route.fulfill(MOCK_HISTORICAL_LOG);
+      });
+
+      await page.goto('/');
+      await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
+      const card = page.locator('[data-testid="kanban-card"]').filter({ hasText: 'Test Feature with Description' });
+      await card.waitFor({ state: 'visible' });
+      await card.click();
+
+      await expect(page.getByTestId('claude-log-section')).toBeVisible();
+      // Let initial fetches stabilize (React StrictMode may cause double-invoke in dev)
+      await page.waitForTimeout(500);
+      const countAfterMount = callCount;
+      // Wait longer than one polling interval (3s) — no additional fetches should occur
+      await page.waitForTimeout(3500);
+      expect(callCount).toBe(countAfterMount);
+    });
   });
 });

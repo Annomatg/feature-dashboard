@@ -155,35 +155,76 @@ function EditableField({ value, onSave, multiline = false, className = '', place
 }
 
 
-function ClaudeLogSection({ featureId, inProgress }) {
+function ClaudeLogSection({ featureId, inProgress, claudeSessionId }) {
   const [collapsed, setCollapsed] = useState(false)
-  const [sessionData, setSessionData] = useState(null)
+  const [liveData, setLiveData] = useState(null)   // from /api/autopilot/session-log
+  const [histData, setHistData] = useState(null)   // from /api/features/{id}/session-log
   const [fetchError, setFetchError] = useState(null)
-  const intervalRef = useRef(null)
+  const liveIntervalRef = useRef(null)
   const logContainerRef = useRef(null)
   const atBottomRef = useRef(true)
 
-  const fetchLog = useCallback(async () => {
+  // Live session is for this feature only when in-progress and feature_id matches
+  const liveIsForThisFeature = inProgress && liveData?.feature_id === featureId
+
+  // Display live data when the active session is for this feature; otherwise fall back to historical
+  const displayData = liveIsForThisFeature ? liveData : histData
+  const entries = displayData?.entries ?? []
+
+  const fetchLive = useCallback(async () => {
     try {
-      const response = await fetch(`/api/autopilot/session-log?limit=50`)
-      if (!response.ok) throw new Error('Failed to fetch log')
-      setSessionData(await response.json())
+      const resp = await fetch('/api/autopilot/session-log?limit=50')
+      if (!resp.ok) throw new Error('Failed to fetch log')
+      setLiveData(await resp.json())
       setFetchError(null)
     } catch (err) {
       setFetchError(err.message)
     }
   }, [])
 
-  useEffect(() => {
-    if (!inProgress) return
-    fetchLog()
-    intervalRef.current = setInterval(fetchLog, 3000)
-    return () => clearInterval(intervalRef.current)
-  }, [featureId, inProgress, fetchLog])
+  const fetchHist = useCallback(async () => {
+    try {
+      const resp = await fetch(`/api/features/${featureId}/session-log?limit=50`)
+      if (!resp.ok) throw new Error('Failed to fetch log')
+      setHistData(await resp.json())
+      setFetchError(null)
+    } catch (err) {
+      setFetchError(err.message)
+    }
+  }, [featureId])
 
-  // Only show log if it belongs to this feature
-  const isForThisFeature = sessionData?.feature_id === featureId
-  const entries = isForThisFeature ? (sessionData?.entries ?? []) : []
+  // Poll live session log while in-progress
+  useEffect(() => {
+    if (!inProgress) {
+      clearInterval(liveIntervalRef.current)
+      liveIntervalRef.current = null
+      return
+    }
+    fetchLive()
+    liveIntervalRef.current = setInterval(fetchLive, 3000)
+    return () => {
+      clearInterval(liveIntervalRef.current)
+      liveIntervalRef.current = null
+    }
+  }, [inProgress, fetchLive])
+
+  // Fetch historical log whenever claudeSessionId or featureId changes (one-time, not polled)
+  useEffect(() => {
+    if (!claudeSessionId) return
+    const controller = new AbortController()
+    const load = async () => {
+      try {
+        const resp = await fetch(`/api/features/${featureId}/session-log?limit=50`, { signal: controller.signal })
+        if (!resp.ok) throw new Error('Failed to fetch log')
+        setHistData(await resp.json())
+        setFetchError(null)
+      } catch (err) {
+        if (err.name !== 'AbortError') setFetchError(err.message)
+      }
+    }
+    load()
+    return () => controller.abort()
+  }, [featureId, claudeSessionId])
 
   // Auto-scroll to bottom when new entries arrive — only if already pinned to bottom.
   // useLayoutEffect ensures the scroll fires synchronously after the DOM update and
@@ -210,7 +251,13 @@ function ClaudeLogSection({ featureId, inProgress }) {
     atBottomRef.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 20
   }, [])
 
-  if (!inProgress || !isForThisFeature) return null
+  // Hide if no log source at all
+  if (!inProgress && !claudeSessionId) return null
+  // Hide if in-progress but active session is for another feature AND no historical session
+  if (inProgress && !liveIsForThisFeature && !claudeSessionId) return null
+
+  // Refresh the currently displayed source
+  const handleRefresh = liveIsForThisFeature ? fetchLive : fetchHist
 
   const formatTime = (iso) => {
     try {
@@ -233,7 +280,7 @@ function ClaudeLogSection({ featureId, inProgress }) {
           <ChevronDown size={12} className={`transition-transform ${collapsed ? '-rotate-90' : ''}`} />
         </button>
         <button
-          onClick={fetchLog}
+          onClick={handleRefresh}
           data-testid="claude-log-refresh"
           title="Refresh"
           className="p-1 rounded hover:bg-surface-light transition-colors"
@@ -479,8 +526,8 @@ function DetailPanel({ feature, onClose, onUpdate, onDelete }) {
             />
           </div>
 
-          {/* Claude Log - only shown for IN PROGRESS features */}
-          <ClaudeLogSection featureId={feature.id} inProgress={feature.in_progress} />
+          {/* Claude Log - shown for IN PROGRESS features or features with stored session logs */}
+          <ClaudeLogSection featureId={feature.id} inProgress={feature.in_progress} claudeSessionId={feature.claude_session_id} />
 
           {/* Comments */}
           {comments.length > 0 && (
