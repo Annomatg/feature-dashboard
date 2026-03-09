@@ -365,6 +365,55 @@ def test_get_settings_after_save(client, tmp_path, monkeypatch):
     assert data["plan_tasks_prompt_template"] == custom_plan
 
 
+def test_get_settings_returns_planning_model(client, tmp_path, monkeypatch):
+    """GET /api/settings returns planning_model field."""
+    import backend.deps as deps_module
+    monkeypatch.setattr(deps_module, 'SETTINGS_FILE', tmp_path / "settings_nonexistent.json")
+
+    response = client.get("/api/settings")
+    assert response.status_code == 200
+    data = response.json()
+    assert "planning_model" in data
+    assert data["planning_model"] == deps_module.PLANNING_MODEL
+
+
+def test_put_settings_saves_planning_model(client, tmp_path, monkeypatch):
+    """PUT /api/settings saves and returns planning_model."""
+    import backend.deps as deps_module
+    settings_file = tmp_path / "test_settings.json"
+    monkeypatch.setattr(deps_module, 'SETTINGS_FILE', settings_file)
+
+    response = client.put("/api/settings", json={
+        "claude_prompt_template": "template",
+        "planning_model": "claude-sonnet-4-6",
+    })
+    assert response.status_code == 200
+    data = response.json()
+    assert data["planning_model"] == "claude-sonnet-4-6"
+
+    import json as json_mod
+    saved = json_mod.loads(settings_file.read_text())
+    assert saved["planning_model"] == "claude-sonnet-4-6"
+
+
+def test_put_settings_preserves_planning_model_when_omitted(client, tmp_path, monkeypatch):
+    """PUT /api/settings preserves planning_model when not provided."""
+    import backend.deps as deps_module
+    settings_file = tmp_path / "test_settings.json"
+    monkeypatch.setattr(deps_module, 'SETTINGS_FILE', settings_file)
+
+    # Save a custom planning model first
+    client.put("/api/settings", json={
+        "claude_prompt_template": "original",
+        "planning_model": "claude-haiku-4-5-20251001",
+    })
+
+    # Update without planning_model
+    response = client.put("/api/settings", json={"claude_prompt_template": "updated"})
+    assert response.status_code == 200
+    assert response.json()["planning_model"] == "claude-haiku-4-5-20251001"
+
+
 def test_plan_tasks_uses_settings_template(client, tmp_path, monkeypatch):
     """POST /api/plan-tasks uses the plan_tasks_prompt_template from settings."""
     import backend.main as main_module
@@ -756,6 +805,73 @@ class TestPlanTasks:
 
         expected_dir = str(deps_module._current_db_path.parent)
         assert data["working_directory"] == expected_dir
+
+    def test_uses_opus_model_by_default(self, client, monkeypatch, tmp_path):
+        """Plan-tasks uses the planning model (opus) by default."""
+        import backend.deps as deps_module
+
+        monkeypatch.setattr(deps_module, "SETTINGS_FILE", tmp_path / "settings.json")
+
+        popen_calls = []
+
+        def mock_popen(*args, **kwargs):
+            popen_calls.append({"args": args, "kwargs": kwargs})
+            return type("P", (), {"pid": 1, "wait": lambda self: 0})()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        response = client.post("/api/plan-tasks", json={"description": "Add analytics"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["model"] == deps_module.PLANNING_MODEL
+
+        assert len(popen_calls) == 1
+        cmd_args = popen_calls[0]["args"][0]
+        full_cmd = " ".join(cmd_args) if isinstance(cmd_args, list) else str(cmd_args)
+        assert deps_module.PLANNING_MODEL in full_cmd
+
+    def test_uses_custom_planning_model_from_settings(self, client, monkeypatch, tmp_path):
+        """Plan-tasks respects planning_model override from settings."""
+        import json as json_mod
+        import backend.deps as deps_module
+
+        settings_file = tmp_path / "settings.json"
+        monkeypatch.setattr(deps_module, "SETTINGS_FILE", settings_file)
+
+        # Save a custom planning model
+        settings_file.write_text(json_mod.dumps({"planning_model": "claude-sonnet-4-6"}))
+
+        popen_calls = []
+
+        def mock_popen(*args, **kwargs):
+            popen_calls.append({"args": args, "kwargs": kwargs})
+            return type("P", (), {"pid": 1, "wait": lambda self: 0})()
+
+        monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+        response = client.post("/api/plan-tasks", json={"description": "Add analytics"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["model"] == "claude-sonnet-4-6"
+
+        assert len(popen_calls) == 1
+        cmd_args = popen_calls[0]["args"][0]
+        full_cmd = " ".join(cmd_args) if isinstance(cmd_args, list) else str(cmd_args)
+        assert "claude-sonnet-4-6" in full_cmd
+
+    def test_response_includes_model_field(self, client, monkeypatch, tmp_path):
+        """Plan-tasks response includes the planning model value."""
+        import backend.deps as deps_module
+
+        monkeypatch.setattr(deps_module, "SETTINGS_FILE", tmp_path / "settings.json")
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: type("P", (), {"pid": 1, "wait": lambda self: 0})())
+
+        response = client.post("/api/plan-tasks", json={"description": "Add features"})
+
+        assert response.status_code == 200
+        assert response.json()["model"] == deps_module.PLANNING_MODEL
 
 
 

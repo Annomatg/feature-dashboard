@@ -15,10 +15,10 @@ from fastapi.responses import StreamingResponse
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from backend.deps import PLAN_TASKS_PROMPT_TEMPLATE, load_settings
+from backend.deps import PLAN_TASKS_PROMPT_TEMPLATE, PLANNING_MODEL, load_settings
 import backend.deps as _deps
 from backend.interview_state import get_interview_session, _log_event as _log_interview_event, get_debug_log
-from backend.schemas import InterviewAnswerRequest, InterviewQuestionRequest, InterviewStartRequest
+from backend.schemas import InterviewAnswerRequest, InterviewQuestionRequest, InterviewStartRequest, InterviewStartResponse
 
 router = APIRouter(prefix="/api/interview", tags=["interview"])
 
@@ -371,7 +371,7 @@ Always call this on completion OR on error.
 """
 
 
-@router.post("/start")
+@router.post("/start", response_model=InterviewStartResponse)
 async def start_interview(request: InterviewStartRequest):
     """Launch a dynamic interview session driven by a user-supplied description.
 
@@ -390,6 +390,7 @@ async def start_interview(request: InterviewStartRequest):
     prompt += _INTERVIEW_API_SUFFIX
 
     working_dir = str(_deps._current_db_path.parent)
+    planning_model = settings.get("planning_model", PLANNING_MODEL)
 
     try:
         if sys.platform == "win32":
@@ -400,7 +401,7 @@ async def start_interview(request: InterviewStartRequest):
                 prompt_file = f.name
 
             ps_cmd = (
-                f'claude --dangerously-skip-permissions --print '
+                f"claude --model '{planning_model}' --dangerously-skip-permissions --print "
                 f'(Get-Content -LiteralPath "{prompt_file}" -Raw)'
             )
             launched = False
@@ -424,7 +425,7 @@ async def start_interview(request: InterviewStartRequest):
         else:
             try:
                 subprocess.Popen(
-                    ["claude", "--dangerously-skip-permissions", "--print", prompt],
+                    ["claude", "--model", planning_model, "--dangerously-skip-permissions", "--print", prompt],
                     cwd=working_dir,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -439,4 +440,4 @@ async def start_interview(request: InterviewStartRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to launch Claude: {str(e)}")
 
-    return {"launched": True}
+    return InterviewStartResponse(launched=True, model=planning_model)

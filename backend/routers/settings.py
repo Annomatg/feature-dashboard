@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from backend.deps import PLAN_TASKS_PROMPT_TEMPLATE, load_settings, save_settings
+from backend.deps import PLAN_TASKS_PROMPT_TEMPLATE, PLANNING_MODEL, load_settings, save_settings
 from backend.providers import REGISTRY, get_provider
 from backend.schemas import BudgetPeriodData, BudgetResponse, SettingsResponse, UpdateSettingsRequest
 
@@ -45,6 +45,11 @@ async def update_settings(request: UpdateSettingsRequest):
             ),
             "autopilot_budget_limit": request.autopilot_budget_limit,
             "provider": request.provider,
+            "planning_model": (
+                request.planning_model
+                if request.planning_model is not None
+                else current.get("planning_model", PLANNING_MODEL)
+            ),
         }
         save_settings(settings)
         settings["available_providers"] = sorted(REGISTRY.keys())

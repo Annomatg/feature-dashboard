@@ -153,6 +153,7 @@ class PlanTasksResponse(BaseModel):
     launched: bool
     prompt: str
     working_directory: str
+    model: str
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +167,7 @@ class SettingsResponse(BaseModel):
     autopilot_budget_limit: int = 0
     provider: str = "claude"
     available_providers: list[str] = []
+    planning_model: str = "claude-opus-4-6"
 
 
 class UpdateSettingsRequest(BaseModel):
@@ -174,6 +176,7 @@ class UpdateSettingsRequest(BaseModel):
     plan_tasks_prompt_template: Optional[str] = None
     autopilot_budget_limit: int = 0
     provider: str = "claude"
+    planning_model: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -283,3 +286,8 @@ class InterviewAnswerRequest(BaseModel):
 
 class InterviewStartRequest(BaseModel):
     description: str
+
+
+class InterviewStartResponse(BaseModel):
+    launched: bool
+    model: str

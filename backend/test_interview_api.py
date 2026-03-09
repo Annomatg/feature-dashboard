@@ -1529,14 +1529,16 @@ class TestInterviewStart:
         return popen_calls
 
     def test_start_interview_returns_launched_true(self, client, monkeypatch, tmp_path):
-        """Valid description returns 200 with launched=True."""
+        """Valid description returns 200 with launched=True and the planning model."""
         monkeypatch.setattr(deps_module, "SETTINGS_FILE", tmp_path / "settings.json")
         self._mock_popen(monkeypatch)
 
         response = client.post("/api/interview/start", json={"description": "Build a user login system"})
 
         assert response.status_code == 200
-        assert response.json() == {"launched": True}
+        data = response.json()
+        assert data["launched"] is True
+        assert "model" in data
 
     def test_start_interview_empty_description_returns_400(self, client, monkeypatch):
         """Empty description is rejected before any process is launched."""
@@ -1654,3 +1656,40 @@ class TestInterviewStart:
 
         assert response.status_code == 500
         assert "Claude CLI" in response.json()["detail"]
+
+    def test_start_interview_uses_opus_model_by_default(self, client, monkeypatch, tmp_path):
+        """Interview start uses the planning model (opus) by default."""
+        monkeypatch.setattr(deps_module, "SETTINGS_FILE", tmp_path / "settings.json")
+        popen_calls = self._mock_popen(monkeypatch)
+
+        response = client.post("/api/interview/start", json={"description": "Plan a login system"})
+
+        assert response.status_code == 200
+        assert response.json()["model"] == deps_module.PLANNING_MODEL
+
+        assert len(popen_calls) == 1
+        cmd_args = popen_calls[0]["args"][0]
+        full_cmd = " ".join(cmd_args) if isinstance(cmd_args, list) else str(cmd_args)
+        assert deps_module.PLANNING_MODEL in full_cmd
+
+    def test_start_interview_uses_custom_planning_model_from_settings(self, client, monkeypatch, tmp_path):
+        """Interview start respects planning_model override from settings."""
+        import json as json_mod
+
+        settings_file = tmp_path / "settings.json"
+        monkeypatch.setattr(deps_module, "SETTINGS_FILE", settings_file)
+
+        # Save custom planning model to settings
+        settings_file.write_text(json_mod.dumps({"planning_model": "claude-sonnet-4-6"}))
+
+        popen_calls = self._mock_popen(monkeypatch)
+
+        response = client.post("/api/interview/start", json={"description": "Plan something"})
+
+        assert response.status_code == 200
+        assert response.json()["model"] == "claude-sonnet-4-6"
+
+        assert len(popen_calls) == 1
+        cmd_args = popen_calls[0]["args"][0]
+        full_cmd = " ".join(cmd_args) if isinstance(cmd_args, list) else str(cmd_args)
+        assert "claude-sonnet-4-6" in full_cmd

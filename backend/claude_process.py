@@ -312,7 +312,7 @@ def _launch_claude_terminal(
 
     Raises HTTPException(500) if no suitable executable is found.
     """
-    model_flag = f"--model {model} " if model else ""
+    model_flag = f"--model '{model}' " if model else ""
 
     if sys.platform == "win32":
         with tempfile.NamedTemporaryFile(

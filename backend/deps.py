@@ -47,6 +47,8 @@ PROJECT_DIR = Path(__file__).parent.parent
 CONFIG_FILE = PROJECT_DIR / "dashboards.json"
 SETTINGS_FILE = PROJECT_DIR / "settings.json"
 
+PLANNING_MODEL = "claude-opus-4-6"
+
 DEFAULT_PROMPT_TEMPLATE = (
     "Please work on the following feature:\n\n"
     "Feature #{feature_id} [{category}]: {name}\n\n"
@@ -184,6 +186,7 @@ def load_settings() -> dict:
         "plan_tasks_prompt_template": PLAN_TASKS_PROMPT_TEMPLATE,
         "autopilot_budget_limit": 0,
         "provider": "claude",
+        "planning_model": PLANNING_MODEL,
     }
     if not SETTINGS_FILE.exists():
         return defaults
