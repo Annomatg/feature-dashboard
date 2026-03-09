@@ -6,6 +6,9 @@ venv/
 env/
 .venv/
 
+# Claude
+.claude/settings.local.json
+
 # Python cache
 __pycache__/
 *.py[cod]
@@ -13,20 +16,12 @@ __pycache__/
 *.so
 .Python
 
-# Training artifacts
-logs/
-models/
-*.zip
-*.onnx
-*.pkl
-*.png
-*.json
+# unnecessary setting 
+test_results.json
+settings.json
 
 # Allow PWA icon assets in frontend/public
 !frontend/public/*.png
-
-# Tensorboard
-events.out.tfevents.*
 
 # IDE
 .vscode/
@@ -52,6 +47,7 @@ features.test.db
 
 # E2E Tests
 playwright-report/
+.playwright-mcp/
 test-results/
 
 # .NET build artifacts
