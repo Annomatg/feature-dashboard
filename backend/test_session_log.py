@@ -31,6 +31,7 @@ from backend.claude_process import (
     _parse_jsonl_log,
     _find_session_jsonl,
     _get_claude_projects_dir,
+    _parse_main_agent_metadata,
 )
 
 
@@ -886,3 +887,201 @@ class TestSessionIdPersistence:
 
         # Feature 9999 does not exist - should not raise
         _persist_feature_session_id(9999, 'ghost.jsonl')  # no exception expected
+
+
+# ---------------------------------------------------------------------------
+# _parse_main_agent_metadata tests
+# ---------------------------------------------------------------------------
+
+class TestParseMainAgentMetadata:
+    """Tests for _parse_main_agent_metadata function."""
+
+    def test_empty_file(self, tmp_path):
+        """Returns zeros and None for empty file."""
+        f = tmp_path / 'session.jsonl'
+        f.write_text('')
+        result = _parse_main_agent_metadata(f)
+        assert result['turn_count'] == 0
+        assert result['token_estimate'] == 0
+        assert result['last_tool_used'] is None
+        assert result['agent_type'] is None
+
+    def test_nonexistent_file(self, tmp_path):
+        """Returns zeros and None for nonexistent file."""
+        f = tmp_path / 'nonexistent.jsonl'
+        result = _parse_main_agent_metadata(f)
+        assert result['turn_count'] == 0
+        assert result['token_estimate'] == 0
+        assert result['last_tool_used'] is None
+        assert result['agent_type'] is None
+
+    def test_counts_turns(self, tmp_path):
+        """Counts user and assistant messages as turns."""
+        f = tmp_path / 'session.jsonl'
+        content = (
+            make_jsonl_line({'type': 'user', 'message': {'content': 'hello'}}) +
+            make_jsonl_line({'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': 'hi'}]}}) +
+            make_jsonl_line({'type': 'user', 'message': {'content': 'task'}}) +
+            make_jsonl_line({'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': 'done'}]}})
+        )
+        f.write_text(content)
+        result = _parse_main_agent_metadata(f)
+        assert result['turn_count'] == 4
+
+    def test_estimates_tokens(self, tmp_path):
+        """Estimates tokens from character count (~4 chars per token)."""
+        f = tmp_path / 'session.jsonl'
+        # 400 characters should be ~100 tokens
+        text = 'x' * 400
+        content = make_jsonl_line({
+            'type': 'assistant',
+            'message': {'content': [{'type': 'text', 'text': text}]}
+        })
+        f.write_text(content)
+        result = _parse_main_agent_metadata(f)
+        assert result['token_estimate'] == 100
+
+    def test_extracts_last_tool_used(self, tmp_path):
+        """Extracts the name of the last tool_use block."""
+        f = tmp_path / 'session.jsonl'
+        content = (
+            make_assistant_tool_use('Read', {'file_path': 'main.py'}) +
+            make_assistant_tool_use('Edit', {'file_path': 'utils.py'}) +
+            make_assistant_tool_use('Bash', {'command': 'pytest', 'description': 'Run tests'})
+        )
+        f.write_text(content)
+        result = _parse_main_agent_metadata(f)
+        assert result['last_tool_used'] == 'Bash'
+
+    def test_last_tool_used_none_when_no_tools(self, tmp_path):
+        """Returns None when no tool_use blocks exist."""
+        f = tmp_path / 'session.jsonl'
+        f.write_text(make_assistant_text('Hello world'))
+        result = _parse_main_agent_metadata(f)
+        assert result['last_tool_used'] is None
+
+    def test_extracts_agent_type_from_filename(self, tmp_path):
+        """Extracts agent type from filename pattern (e.g., session--sonnet.jsonl)."""
+        f = tmp_path / 'session-abc123--sonnet.jsonl'
+        f.write_text('{}')
+        result = _parse_main_agent_metadata(f)
+        assert result['agent_type'] == 'sonnet'
+
+    def test_extracts_agent_type_opus_from_filename(self, tmp_path):
+        """Extracts opus agent type from filename."""
+        f = tmp_path / 'test--opus.jsonl'
+        f.write_text('{}')
+        result = _parse_main_agent_metadata(f)
+        assert result['agent_type'] == 'opus'
+
+    def test_extracts_agent_type_haiku_from_filename(self, tmp_path):
+        """Extracts haiku agent type from filename."""
+        f = tmp_path / 'session--haiku.jsonl'
+        f.write_text('{}')
+        result = _parse_main_agent_metadata(f)
+        assert result['agent_type'] == 'haiku'
+
+    def test_agent_type_from_system_message(self, tmp_path):
+        """Extracts agent type from system message if not in filename."""
+        f = tmp_path / 'session.jsonl'
+        content = make_jsonl_line({
+            'type': 'system',
+            'message': {'model': 'claude-sonnet-4-6'}
+        })
+        f.write_text(content)
+        result = _parse_main_agent_metadata(f)
+        assert result['agent_type'] == 'sonnet'
+
+    def test_agent_type_opus_from_system_message(self, tmp_path):
+        """Extracts opus from system message model field."""
+        f = tmp_path / 'session.jsonl'
+        content = make_jsonl_line({
+            'type': 'system',
+            'message': {'model': 'claude-opus-4-6'}
+        })
+        f.write_text(content)
+        result = _parse_main_agent_metadata(f)
+        assert result['agent_type'] == 'opus'
+
+    def test_agent_type_unknown_model_name(self, tmp_path):
+        """Uses full model name when not a known type."""
+        f = tmp_path / 'session.jsonl'
+        content = make_jsonl_line({
+            'type': 'system',
+            'message': {'model': 'gpt-4'}
+        })
+        f.write_text(content)
+        result = _parse_main_agent_metadata(f)
+        assert result['agent_type'] == 'gpt-4'
+
+    def test_filename_takes_precedence_over_system(self, tmp_path):
+        """Filename agent type takes precedence over system message."""
+        f = tmp_path / 'session--sonnet.jsonl'
+        content = make_jsonl_line({
+            'type': 'system',
+            'message': {'model': 'claude-opus-4-6'}
+        })
+        f.write_text(content)
+        result = _parse_main_agent_metadata(f)
+        assert result['agent_type'] == 'sonnet'
+
+    def test_counts_text_in_thinking_blocks(self, tmp_path):
+        """Counts characters from thinking blocks for token estimation."""
+        f = tmp_path / 'session.jsonl'
+        thinking_text = 'x' * 200
+        content = make_jsonl_line({
+            'type': 'assistant',
+            'message': {'content': [{'type': 'thinking', 'thinking': thinking_text}]}
+        })
+        f.write_text(content)
+        result = _parse_main_agent_metadata(f)
+        assert result['token_estimate'] == 50  # 200 chars / 4
+
+    def test_counts_tool_input_json(self, tmp_path):
+        """Counts characters from tool inputs for token estimation."""
+        f = tmp_path / 'session.jsonl'
+        # Tool input with substantial content
+        large_input = {'file_path': 'x' * 200}
+        content = make_assistant_tool_use('Read', large_input)
+        f.write_text(content)
+        result = _parse_main_agent_metadata(f)
+        # Should have counted the tool input JSON
+        assert result['token_estimate'] > 0
+
+    def test_multiple_tools_last_one_wins(self, tmp_path):
+        """The last tool_use in the last assistant message is returned."""
+        f = tmp_path / 'session.jsonl'
+        content = (
+            make_assistant_tool_use('Read', {'file_path': 'a.py'}) +
+            make_assistant_text('Some analysis') +
+            make_assistant_tool_use('Bash', {'command': 'ls'}) +
+            make_assistant_tool_use('Edit', {'file_path': 'b.py'})  # Last tool
+        )
+        f.write_text(content)
+        result = _parse_main_agent_metadata(f)
+        assert result['last_tool_used'] == 'Edit'
+
+    def test_full_metadata_extraction(self, tmp_path):
+        """Complete test with all metadata fields."""
+        f = tmp_path / 'session--sonnet.jsonl'
+        content = (
+            make_jsonl_line({'type': 'user', 'message': {'content': 'Fix bug'}}) +
+            make_assistant_tool_use('Read', {'file_path': 'main.py'}) +
+            make_assistant_tool_use('Edit', {'file_path': 'main.py'}) +
+            make_jsonl_line({'type': 'user', 'message': {'content': 'Run tests'}}) +
+            make_assistant_tool_use('Bash', {'command': 'pytest', 'description': 'Run tests'})
+        )
+        f.write_text(content)
+        result = _parse_main_agent_metadata(f)
+        assert result['turn_count'] == 5  # 2 user + 3 assistant messages
+        assert result['token_estimate'] > 0
+        assert result['last_tool_used'] == 'Bash'
+        assert result['agent_type'] == 'sonnet'
+
+    def test_invalid_json_lines_skipped(self, tmp_path):
+        """Invalid JSON lines are skipped without error."""
+        f = tmp_path / 'session.jsonl'
+        content = 'not valid json\n' + make_assistant_text('valid entry')
+        f.write_text(content)
+        result = _parse_main_agent_metadata(f)
+        assert result['turn_count'] == 1  # Only the valid assistant message

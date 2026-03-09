@@ -294,6 +294,219 @@ def _parse_jsonl_log(jsonl_file: Path, limit: int = 50) -> list[dict]:
     return entries[-limit:] if len(entries) > limit else entries
 
 
+def _parse_main_agent_metadata(jsonl_file: Path) -> dict:
+    """Parse a Claude JSONL session file and extract main agent metadata.
+
+    Returns a dict with:
+    - turn_count: number of turns (user + assistant messages)
+    - token_estimate: rough token count estimated from character lengths
+    - last_tool_used: name of the last tool_use block, or None
+    - agent_type: extracted from filename or first system message
+
+    Token estimation uses ~4 characters per token as a rough approximation.
+    """
+    turn_count = 0
+    token_estimate = 0
+    last_tool_used = None
+    agent_type = None
+    char_count = 0
+
+    try:
+        file_size = jsonl_file.stat().st_size
+    except OSError:
+        return {
+            "turn_count": 0,
+            "token_estimate": 0,
+            "last_tool_used": None,
+            "agent_type": None,
+        }
+
+    # Extract agent type from filename (e.g., "session-abc123--sonnet.jsonl" -> "sonnet")
+    filename = jsonl_file.stem
+    if '--' in filename:
+        parts = filename.split('--')
+        if len(parts) >= 2:
+            potential_type = parts[-1].lower()
+            # Common model identifiers
+            if potential_type in ('sonnet', 'opus', 'haiku', 'claude-sonnet', 'claude-opus', 'claude-haiku'):
+                agent_type = potential_type
+
+    try:
+        with open(jsonl_file, 'r', encoding='utf-8', errors='replace') as f:
+            lines = f.readlines()
+    except (IOError, OSError):
+        return {
+            "turn_count": 0,
+            "token_estimate": 0,
+            "last_tool_used": None,
+            "agent_type": agent_type,
+        }
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        obj_type = obj.get('type', '')
+
+        # Count turns (user and assistant messages)
+        if obj_type in ('user', 'assistant'):
+            turn_count += 1
+
+        # Extract agent type from first system message if not found in filename
+        if agent_type is None and obj_type == 'system':
+            msg = obj.get('message', {})
+            if isinstance(msg, dict):
+                # Look for model info in system message
+                model = msg.get('model', '')
+                if model:
+                    if 'sonnet' in model.lower():
+                        agent_type = 'sonnet'
+                    elif 'opus' in model.lower():
+                        agent_type = 'opus'
+                    elif 'haiku' in model.lower():
+                        agent_type = 'haiku'
+                    else:
+                        agent_type = model
+
+        # Count characters for token estimation
+        msg = obj.get('message', {})
+        if isinstance(msg, dict):
+            content = msg.get('content', '')
+            if isinstance(content, str):
+                char_count += len(content)
+            elif isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict):
+                        # Count text content
+                        text = item.get('text', '') or item.get('thinking', '') or ''
+                        char_count += len(text)
+                        # Count tool inputs (JSON serialized)
+                        tool_input = item.get('input', {})
+                        if tool_input:
+                            char_count += len(json.dumps(tool_input))
+                    elif isinstance(item, str):
+                        char_count += len(item)
+
+        # Track last tool used from assistant messages
+        if obj_type == 'assistant':
+            msg = obj.get('message', {})
+            if isinstance(msg, dict):
+                content = msg.get('content', [])
+                if isinstance(content, list):
+                    # Iterate in reverse to find the last tool_use
+                    for item in reversed(content):
+                        if isinstance(item, dict) and item.get('type') == 'tool_use':
+                            last_tool_used = item.get('name', None)
+                            break
+
+    # Estimate tokens (~4 characters per token is a rough approximation)
+    token_estimate = char_count // 4 if char_count > 0 else 0
+
+    return {
+        "turn_count": turn_count,
+        "token_estimate": token_estimate,
+        "last_tool_used": last_tool_used,
+        "agent_type": agent_type,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Agent graph parsing
+# ---------------------------------------------------------------------------
+
+def _parse_agent_graph(jsonl_file: Path) -> dict:
+    """Parse a Claude JSONL session file and extract an agent graph.
+
+    Returns a dict with:
+    - nodes: list of {id, label, type} - main agent + all subagents
+    - edges: list of {source, target} - parent-child relationships
+
+    The main agent is always node "main". Each Agent tool call creates a
+    subagent node with a unique ID and an edge from the caller to the subagent.
+    """
+    nodes: list[dict] = [{"id": "main", "label": "Main Agent", "type": "main"}]
+    edges: list[dict] = []
+    agent_counter = 0
+    # Track which agent we're currently in (stack for nested agents)
+    agent_stack: list[str] = ["main"]
+
+    try:
+        file_size = jsonl_file.stat().st_size
+    except OSError:
+        return {"nodes": nodes, "edges": edges}
+
+    try:
+        with open(jsonl_file, 'r', encoding='utf-8', errors='replace') as f:
+            if file_size > 500_000:
+                f.seek(max(0, file_size - 100_000))
+                f.readline()  # Skip partial first line
+            lines = f.readlines()
+    except (IOError, OSError):
+        return {"nodes": nodes, "edges": edges}
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        if obj.get('type') != 'assistant':
+            continue
+
+        msg = obj.get('message', {})
+        if not isinstance(msg, dict):
+            continue
+
+        content = msg.get('content', [])
+        if not isinstance(content, list):
+            continue
+
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            if item.get('type') != 'tool_use':
+                continue
+
+            tool_name = item.get('name', '')
+            tool_input = item.get('input', {}) or {}
+
+            # Handle Agent tool calls (subagent spawning)
+            if tool_name == 'Agent':
+                agent_counter += 1
+                subagent_type = tool_input.get('subagent_type', 'general-purpose')
+                description = tool_input.get('description', 'Subagent')
+
+                # Create a unique ID for this agent
+                agent_id = f"agent_{agent_counter}"
+
+                # Create node for the subagent
+                nodes.append({
+                    "id": agent_id,
+                    "label": description[:50] if description else f"Agent {agent_counter}",
+                    "type": subagent_type,
+                })
+
+                # Create edge from current agent to this subagent
+                current_agent = agent_stack[-1] if agent_stack else "main"
+                edges.append({
+                    "source": current_agent,
+                    "target": agent_id,
+                })
+
+                # Push this agent onto the stack (it may spawn more agents)
+                agent_stack.append(agent_id)
+
+    return {"nodes": nodes, "edges": edges}
+
+
 # ---------------------------------------------------------------------------
 # Terminal launcher
 # ---------------------------------------------------------------------------

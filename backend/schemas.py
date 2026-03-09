@@ -314,3 +314,11 @@ class TaskGraphResponse(BaseModel):
     """Response for GET /api/tasks/{id}/graph."""
     nodes: list[GraphNode]
     edges: list[GraphEdge]
+
+
+class TaskMetadataResponse(BaseModel):
+    """Response for GET /api/tasks/{id}/metadata."""
+    turn_count: int
+    token_estimate: int
+    last_tool_used: Optional[str] = None
+    agent_type: Optional[str] = None

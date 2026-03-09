@@ -268,3 +268,196 @@ class TestGetTaskGraph:
         """Returns 404 for negative task_id."""
         response = client.get("/api/tasks/-1/graph")
         assert response.status_code == 404
+
+
+class TestGetTaskMetadata:
+    """Unit tests for GET /api/tasks/{id}/metadata."""
+
+    def test_metadata_task_not_found_returns_404(self, client):
+        """Returns 404 when task ID doesn't exist."""
+        response = client.get("/api/tasks/999/metadata")
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    def test_metadata_task_without_session_returns_404(self, client):
+        """Returns 404 when task has no claude_session_id."""
+        # Feature 1 exists but has no session (claude_session_id is None)
+        response = client.get("/api/tasks/1/metadata")
+        assert response.status_code == 404
+        assert "no session" in response.json()["detail"].lower()
+
+    def test_metadata_success(self, client, monkeypatch, tmp_path):
+        """Returns metadata when session file exists."""
+        import backend.deps as deps_module
+        session = deps_module._session_maker()
+        try:
+            feature = session.query(Feature).filter(Feature.id == 1).first()
+            feature.claude_session_id = "test-session--sonnet.jsonl"
+            session.commit()
+        finally:
+            session.close()
+
+        # Create a real JSONL file for parsing
+        import json
+        session_file = tmp_path / "test-session--sonnet.jsonl"
+        content = (
+            json.dumps({'type': 'user', 'message': {'content': 'Fix bug'}}) + '\n' +
+            json.dumps({
+                'type': 'assistant',
+                'message': {
+                    'content': [{'type': 'tool_use', 'name': 'Bash', 'input': {'command': 'ls'}}]
+                }
+            }) + '\n'
+        )
+        session_file.write_text(content)
+
+        # Create a mock projects directory that returns our session file
+        mock_projects_dir = MagicMock(spec=Path)
+        mock_projects_dir.__truediv__ = MagicMock(return_value=session_file)
+
+        monkeypatch.setattr(
+            "backend.routers.tasks._get_claude_projects_dir",
+            lambda working_dir: mock_projects_dir
+        )
+
+        response = client.get("/api/tasks/1/metadata")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "turn_count" in data
+        assert "token_estimate" in data
+        assert "last_tool_used" in data
+        assert "agent_type" in data
+        assert data["turn_count"] == 2  # 1 user + 1 assistant
+        assert data["last_tool_used"] == "Bash"
+        assert data["agent_type"] == "sonnet"
+
+    def test_metadata_projects_dir_not_found(self, client, monkeypatch):
+        """Returns 404 when Claude projects directory doesn't exist."""
+        import backend.deps as deps_module
+        session = deps_module._session_maker()
+        try:
+            feature = session.query(Feature).filter(Feature.id == 1).first()
+            feature.claude_session_id = "test-session.jsonl"
+            session.commit()
+        finally:
+            session.close()
+
+        monkeypatch.setattr(
+            "backend.routers.tasks._get_claude_projects_dir",
+            lambda working_dir: None
+        )
+
+        response = client.get("/api/tasks/1/metadata")
+
+        assert response.status_code == 404
+        assert "projects directory not found" in response.json()["detail"].lower()
+
+    def test_metadata_session_file_not_found(self, client, monkeypatch):
+        """Returns 404 when the session file doesn't exist on disk."""
+        import backend.deps as deps_module
+        session = deps_module._session_maker()
+        try:
+            feature = session.query(Feature).filter(Feature.id == 1).first()
+            feature.claude_session_id = "missing-session.jsonl"
+            session.commit()
+        finally:
+            session.close()
+
+        # Create a mock session file path that does NOT exist
+        mock_session_file = MagicMock(spec=Path)
+        mock_session_file.exists.return_value = False
+
+        # Create a mock projects directory that returns our session file
+        mock_projects_dir = MagicMock(spec=Path)
+        mock_projects_dir.__truediv__ = MagicMock(return_value=mock_session_file)
+
+        monkeypatch.setattr(
+            "backend.routers.tasks._get_claude_projects_dir",
+            lambda working_dir: mock_projects_dir
+        )
+
+        response = client.get("/api/tasks/1/metadata")
+
+        assert response.status_code == 404
+        assert "session file not found" in response.json()["detail"].lower()
+
+    def test_metadata_invalid_session_id_path_traversal(self, client, monkeypatch):
+        """Returns 400 when session ID contains path traversal characters."""
+        import backend.deps as deps_module
+        session = deps_module._session_maker()
+        try:
+            feature = session.query(Feature).filter(Feature.id == 1).first()
+            feature.claude_session_id = "../../../etc/passwd"
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/tasks/1/metadata")
+
+        assert response.status_code == 400
+        assert "invalid session id" in response.json()["detail"].lower()
+
+    def test_metadata_invalid_session_id_wrong_extension(self, client, monkeypatch):
+        """Returns 400 when session ID doesn't have .jsonl extension."""
+        import backend.deps as deps_module
+        session = deps_module._session_maker()
+        try:
+            feature = session.query(Feature).filter(Feature.id == 1).first()
+            feature.claude_session_id = "session.txt"
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/tasks/1/metadata")
+
+        assert response.status_code == 400
+        assert "invalid session id" in response.json()["detail"].lower()
+
+    def test_metadata_id_zero_returns_404(self, client):
+        """Returns 404 for task_id=0 (invalid ID)."""
+        response = client.get("/api/tasks/0/metadata")
+        assert response.status_code == 404
+
+    def test_metadata_id_negative_returns_404(self, client):
+        """Returns 404 for negative task_id."""
+        response = client.get("/api/tasks/-1/metadata")
+        assert response.status_code == 404
+
+    def test_metadata_parse_error_returns_500(self, client, monkeypatch, tmp_path):
+        """Returns 500 when session file cannot be parsed."""
+        import backend.deps as deps_module
+        session = deps_module._session_maker()
+        try:
+            feature = session.query(Feature).filter(Feature.id == 1).first()
+            feature.claude_session_id = "corrupted-session.jsonl"
+            session.commit()
+        finally:
+            session.close()
+
+        # Create a mock session file that exists
+        mock_session_file = MagicMock(spec=Path)
+        mock_session_file.exists.return_value = True
+
+        # Create a mock projects directory that returns our session file
+        mock_projects_dir = MagicMock(spec=Path)
+        mock_projects_dir.__truediv__ = MagicMock(return_value=mock_session_file)
+
+        monkeypatch.setattr(
+            "backend.routers.tasks._get_claude_projects_dir",
+            lambda working_dir: mock_projects_dir
+        )
+
+        # Mock _parse_main_agent_metadata to raise an exception
+        def raise_parse_error(path):
+            raise ValueError("Invalid JSON in session file")
+
+        monkeypatch.setattr(
+            "backend.routers.tasks._parse_main_agent_metadata",
+            raise_parse_error
+        )
+
+        response = client.get("/api/tasks/1/metadata")
+
+        assert response.status_code == 500
+        assert "failed to parse" in response.json()["detail"].lower()
