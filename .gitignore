@@ -22,6 +22,9 @@ models/
 *.png
 *.json
 
+# Allow PWA icon assets in frontend/public
+!frontend/public/*.png
+
 # Tensorboard
 events.out.tfevents.*
 
