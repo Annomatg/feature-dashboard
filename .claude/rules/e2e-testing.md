@@ -34,16 +34,18 @@ Test database contains 3 features:
 ## Safe Database Mutations
 
 ```javascript
-// Safe to create/delete features in tests
-const response = await page.request.post('http://localhost:8000/api/features', {
-  data: { priority: 999, category: 'Test', name: 'Test', description: '', steps: ['Step 1'], passes: false, in_progress: false }
+// ALWAYS use port 8001 (test backend) — port 8000 is production and must never be touched
+const API = 'http://localhost:8001';
+
+const response = await page.request.post(`${API}/api/features`, {
+  data: { category: 'Test', name: 'My Test Feature', description: '', steps: [] }
 });
 const feature = await response.json();
 
 // Test behavior...
 
-// Clean up
-await page.request.delete(`http://localhost:8000/api/features/${feature.id}`);
+// Clean up after the test
+await page.request.delete(`${API}/api/features/${feature.id}`);
 ```
 
 ## Running Tests

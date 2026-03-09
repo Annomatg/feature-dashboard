@@ -34,6 +34,7 @@ from backend.deps import (
     _feature_subscribers,
 )
 import backend.autopilot_engine as _autopilot_engine
+from backend.claude_process import _get_claude_projects_dir, _parse_jsonl_log
 from backend.schemas import (
     ClaudeLogLineResponse,
     ClaudeLogResponse,
@@ -42,6 +43,8 @@ from backend.schemas import (
     MoveFeatureRequest,
     PaginatedFeaturesResponse,
     ReorderFeatureRequest,
+    SessionLogEntry,
+    SessionLogResponse,
     StatsResponse,
     UpdateFeaturePriorityRequest,
     UpdateFeatureRequest,
@@ -724,6 +727,64 @@ async def update_feature_state(feature_id: int, request: UpdateFeatureStateReque
     except Exception as e:
         session.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to update feature state: {str(e)}")
+    finally:
+        session.close()
+
+
+@router.get("/features/{feature_id}/session-log", response_model=SessionLogResponse)
+async def get_feature_session_log(feature_id: int, limit: int = 50):
+    """Get log entries from the stored Claude JSONL session file for a specific feature.
+
+    Reads the JSONL file identified by the feature's claude_session_id field.
+    Returns log entries even when the feature is no longer in-progress, allowing
+    users to review Claude's work history for completed and TODO tasks.
+
+    Query params:
+    - limit: number of entries to return (1–200, default 50)
+    """
+    session = get_session()
+    try:
+        feature = session.query(Feature).filter(Feature.id == feature_id).first()
+
+        if feature is None:
+            raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
+
+        session_filename = feature.claude_session_id
+        if not session_filename:
+            return SessionLogResponse(
+                active=False, feature_id=feature_id, session_file=None,
+                entries=[], total_entries=0,
+            )
+
+        working_dir = str(_deps._current_db_path.parent)
+        projects_dir = _get_claude_projects_dir(working_dir)
+        if projects_dir is None:
+            return SessionLogResponse(
+                active=False, feature_id=feature_id, session_file=None,
+                entries=[], total_entries=0,
+            )
+
+        session_file = projects_dir / session_filename
+        if not session_file.exists():
+            return SessionLogResponse(
+                active=False, feature_id=feature_id, session_file=None,
+                entries=[], total_entries=0,
+            )
+
+        clamped_limit = max(1, min(limit, 200))
+        entries = _parse_jsonl_log(session_file, limit=clamped_limit)
+
+        return SessionLogResponse(
+            active=False,
+            feature_id=feature_id,
+            session_file=session_filename,
+            entries=[SessionLogEntry(**e) for e in entries],
+            total_entries=len(entries),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read session log: {str(e)}")
     finally:
         session.close()
 

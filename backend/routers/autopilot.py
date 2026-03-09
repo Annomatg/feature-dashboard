@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import backend.deps as _deps
 from backend.deps import get_session, load_settings
+from api.database import Feature
 from backend.autopilot_engine import (
     get_autopilot_state,
     _append_log,
@@ -39,6 +40,29 @@ from backend.schemas import (
 )
 
 router = APIRouter(prefix="/api", tags=["autopilot"])
+
+
+def _persist_feature_session_id(feature_id: int, session_filename: str) -> None:
+    """Persist the JSONL session filename to feature.claude_session_id.
+
+    Called once when the session file is first discovered so that the log
+    remains accessible after the feature leaves in-progress state.
+    Non-critical: errors are silently swallowed.
+
+    Isolation note: get_session() reads backend.deps._session_maker at call
+    time (not at import time), so test fixtures that monkeypatch
+    deps._session_maker correctly redirect writes to the test database.
+    """
+    db_session = get_session()
+    try:
+        feature = db_session.query(Feature).filter(Feature.id == feature_id).first()
+        if feature is not None and feature.claude_session_id != session_filename:
+            feature.claude_session_id = session_filename
+            db_session.commit()
+    except Exception:
+        pass
+    finally:
+        db_session.close()
 
 
 @router.get("/autopilot/session-log", response_model=SessionLogResponse)
@@ -95,6 +119,9 @@ async def get_autopilot_session_log(limit: int = 50):
         )
         if session_file is not None:
             state.session_jsonl_path = session_file  # cache for future polls
+            # Persist to DB so post-session log access works for completed/todo features
+            if feature_id is not None:
+                _persist_feature_session_id(feature_id, session_file.name)
 
     if session_file is None:
         return SessionLogResponse(

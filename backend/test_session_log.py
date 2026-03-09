@@ -8,6 +8,8 @@ Tests cover:
 - _parse_jsonl_log(): JSONL file parsing
 - _find_session_jsonl(): finding session files by timestamp
 - GET /api/autopilot/session-log endpoint
+- GET /api/features/{id}/session-log endpoint
+- Session ID persistence from autopilot endpoint to DB
 """
 
 import json
@@ -354,35 +356,37 @@ class TestFindSessionJsonl:
 # GET /api/autopilot/session-log endpoint tests
 # ---------------------------------------------------------------------------
 
-from fastapi.testclient import TestClient
-
 class TestSessionLogEndpoint:
-    def setup_method(self):
-        self.client = TestClient(main_module.app)
+    """Tests for GET /api/autopilot/session-log.
 
-    def test_returns_empty_when_not_active(self):
+    Uses the isolated ``client`` fixture from conftest.py so that calls to
+    ``_persist_feature_session_id`` (triggered when a JSONL session file is
+    found) write to the test database instead of the production ``features.db``.
+    """
+
+    def test_returns_empty_when_not_active(self, client):
         state = main_module.get_autopilot_state()
         state.enabled = False
         state.manual_active = False
         state.session_start_time = None
-        resp = self.client.get('/api/autopilot/session-log')
+        resp = client.get('/api/autopilot/session-log')
         assert resp.status_code == 200
         data = resp.json()
         assert data['active'] is False
         assert data['entries'] == []
 
-    def test_returns_empty_when_no_start_time(self):
+    def test_returns_empty_when_no_start_time(self, client):
         state = main_module.get_autopilot_state()
         state.enabled = True
         state.session_start_time = None
-        resp = self.client.get('/api/autopilot/session-log')
+        resp = client.get('/api/autopilot/session-log')
         assert resp.status_code == 200
         data = resp.json()
         assert data['entries'] == []
         # Reset
         state.enabled = False
 
-    def test_returns_entries_when_active(self, tmp_path):
+    def test_returns_entries_when_active(self, client, tmp_path):
         # Create a fake projects directory
         since = datetime.now(timezone.utc) - timedelta(seconds=30)
         session_file = tmp_path / 'abc123.jsonl'
@@ -398,7 +402,7 @@ class TestSessionLogEndpoint:
 
         with patch('backend.routers.autopilot._get_claude_projects_dir', return_value=tmp_path):
             with patch('backend.routers.autopilot._find_session_jsonl', return_value=session_file):
-                resp = self.client.get('/api/autopilot/session-log?limit=50')
+                resp = client.get('/api/autopilot/session-log?limit=50')
 
         assert resp.status_code == 200
         data = resp.json()
@@ -412,7 +416,7 @@ class TestSessionLogEndpoint:
         state.session_start_time = None
         state.session_jsonl_path = None
 
-    def test_limit_clamped(self, tmp_path):
+    def test_limit_clamped(self, client, tmp_path):
         since = datetime.now(timezone.utc) - timedelta(seconds=30)
         session_file = tmp_path / 'test.jsonl'
         # Write 10 tool_use entries
@@ -428,7 +432,7 @@ class TestSessionLogEndpoint:
 
         with patch('backend.routers.autopilot._get_claude_projects_dir', return_value=tmp_path):
             with patch('backend.routers.autopilot._find_session_jsonl', return_value=session_file):
-                resp = self.client.get('/api/autopilot/session-log?limit=3')
+                resp = client.get('/api/autopilot/session-log?limit=3')
 
         assert resp.status_code == 200
         data = resp.json()
@@ -437,7 +441,7 @@ class TestSessionLogEndpoint:
         state.enabled = False
         state.session_start_time = None
 
-    def test_returns_entries_when_stopping(self, tmp_path):
+    def test_returns_entries_when_stopping(self, client, tmp_path):
         """Session log stays readable while stopping=True (process still running)."""
         since = datetime.now(timezone.utc) - timedelta(seconds=30)
         session_file = tmp_path / 'stopping_session.jsonl'
@@ -455,7 +459,7 @@ class TestSessionLogEndpoint:
 
         with patch('backend.routers.autopilot._get_claude_projects_dir', return_value=tmp_path):
             with patch('backend.routers.autopilot._find_session_jsonl', return_value=session_file):
-                resp = self.client.get('/api/autopilot/session-log')
+                resp = client.get('/api/autopilot/session-log')
 
         assert resp.status_code == 200
         data = resp.json()
@@ -467,20 +471,20 @@ class TestSessionLogEndpoint:
         state.session_start_time = None
         state.session_jsonl_path = None
 
-    def test_returns_empty_after_stopping_completes(self):
+    def test_returns_empty_after_stopping_completes(self, client):
         """Once stopping completes (stopping=False, enabled=False), log returns empty."""
         state = main_module.get_autopilot_state()
         state.enabled = False
         state.stopping = False
         state.manual_active = False
         state.session_start_time = None
-        resp = self.client.get('/api/autopilot/session-log')
+        resp = client.get('/api/autopilot/session-log')
         assert resp.status_code == 200
         data = resp.json()
         assert data['active'] is False
         assert data['entries'] == []
 
-    def test_caches_session_file_after_first_find(self, tmp_path):
+    def test_caches_session_file_after_first_find(self, client, tmp_path):
         """session_jsonl_path is set on first successful find and reused."""
         since = datetime.now(timezone.utc) - timedelta(seconds=30)
         session_file = tmp_path / 'cached.jsonl'
@@ -500,8 +504,8 @@ class TestSessionLogEndpoint:
 
         with patch('backend.routers.autopilot._get_claude_projects_dir', return_value=tmp_path):
             with patch('backend.routers.autopilot._find_session_jsonl', side_effect=counting_find):
-                self.client.get('/api/autopilot/session-log')
-                self.client.get('/api/autopilot/session-log')
+                client.get('/api/autopilot/session-log')
+                client.get('/api/autopilot/session-log')
 
         # _find_session_jsonl should only be called once; second poll uses cache
         assert call_count['n'] == 1
@@ -512,19 +516,19 @@ class TestSessionLogEndpoint:
         state.session_start_time = None
         state.session_jsonl_path = None
 
-    def test_feature_id_none_when_not_active(self):
+    def test_feature_id_none_when_not_active(self, client):
         """feature_id is None when no session is active."""
         state = main_module.get_autopilot_state()
         state.enabled = False
         state.manual_active = False
         state.stopping = False
         state.session_start_time = None
-        resp = self.client.get('/api/autopilot/session-log')
+        resp = client.get('/api/autopilot/session-log')
         assert resp.status_code == 200
         data = resp.json()
         assert data['feature_id'] is None
 
-    def test_feature_id_from_autopilot(self, tmp_path):
+    def test_feature_id_from_autopilot(self, client, tmp_path):
         """feature_id is current_feature_id when autopilot is enabled."""
         since = datetime.now(timezone.utc) - timedelta(seconds=30)
         session_file = tmp_path / 'autopilot.jsonl'
@@ -534,17 +538,17 @@ class TestSessionLogEndpoint:
         state.enabled = True
         state.manual_active = False
         state.stopping = False
-        state.current_feature_id = 42
+        state.current_feature_id = 1  # Use test DB feature ID
         state.session_start_time = since
         state.session_jsonl_path = None
 
         with patch('backend.routers.autopilot._get_claude_projects_dir', return_value=tmp_path):
             with patch('backend.routers.autopilot._find_session_jsonl', return_value=session_file):
-                resp = self.client.get('/api/autopilot/session-log')
+                resp = client.get('/api/autopilot/session-log')
 
         assert resp.status_code == 200
         data = resp.json()
-        assert data['feature_id'] == 42
+        assert data['feature_id'] == 1
 
         # Reset
         state.enabled = False
@@ -552,7 +556,7 @@ class TestSessionLogEndpoint:
         state.session_start_time = None
         state.session_jsonl_path = None
 
-    def test_feature_id_from_manual_launch(self, tmp_path):
+    def test_feature_id_from_manual_launch(self, client, tmp_path):
         """feature_id is manual_feature_id when manual launch is active."""
         since = datetime.now(timezone.utc) - timedelta(seconds=30)
         session_file = tmp_path / 'manual.jsonl'
@@ -562,19 +566,19 @@ class TestSessionLogEndpoint:
         state.enabled = False
         state.manual_active = True
         state.stopping = False
-        state.manual_feature_id = 99
-        state.current_feature_id = 42  # Should NOT be used
+        state.manual_feature_id = 2  # Use test DB feature IDs
+        state.current_feature_id = 1  # Should NOT be used
         state.session_start_time = since
         state.session_jsonl_path = None
 
         with patch('backend.routers.autopilot._get_claude_projects_dir', return_value=tmp_path):
             with patch('backend.routers.autopilot._find_session_jsonl', return_value=session_file):
-                resp = self.client.get('/api/autopilot/session-log')
+                resp = client.get('/api/autopilot/session-log')
 
         assert resp.status_code == 200
         data = resp.json()
         # Manual feature_id takes priority over current_feature_id
-        assert data['feature_id'] == 99
+        assert data['feature_id'] == 2
 
         # Reset
         state.manual_active = False
@@ -583,7 +587,7 @@ class TestSessionLogEndpoint:
         state.session_start_time = None
         state.session_jsonl_path = None
 
-    def test_feature_id_from_stopping_state(self, tmp_path):
+    def test_feature_id_from_stopping_state(self, client, tmp_path):
         """feature_id is current_feature_id when in stopping state."""
         since = datetime.now(timezone.utc) - timedelta(seconds=30)
         session_file = tmp_path / 'stopping.jsonl'
@@ -593,17 +597,17 @@ class TestSessionLogEndpoint:
         state.enabled = False
         state.manual_active = False
         state.stopping = True
-        state.current_feature_id = 55
+        state.current_feature_id = 4  # Use test DB feature ID
         state.session_start_time = since
         state.session_jsonl_path = None
 
         with patch('backend.routers.autopilot._get_claude_projects_dir', return_value=tmp_path):
             with patch('backend.routers.autopilot._find_session_jsonl', return_value=session_file):
-                resp = self.client.get('/api/autopilot/session-log')
+                resp = client.get('/api/autopilot/session-log')
 
         assert resp.status_code == 200
         data = resp.json()
-        assert data['feature_id'] == 55
+        assert data['feature_id'] == 4
 
         # Reset
         state.stopping = False
@@ -611,7 +615,7 @@ class TestSessionLogEndpoint:
         state.session_start_time = None
         state.session_jsonl_path = None
 
-    def test_feature_id_none_when_no_feature_set(self, tmp_path):
+    def test_feature_id_none_when_no_feature_set(self, client, tmp_path):
         """feature_id is None when active but no feature id is set."""
         since = datetime.now(timezone.utc) - timedelta(seconds=30)
         session_file = tmp_path / 'no_feature.jsonl'
@@ -627,7 +631,7 @@ class TestSessionLogEndpoint:
 
         with patch('backend.routers.autopilot._get_claude_projects_dir', return_value=tmp_path):
             with patch('backend.routers.autopilot._find_session_jsonl', return_value=session_file):
-                resp = self.client.get('/api/autopilot/session-log')
+                resp = client.get('/api/autopilot/session-log')
 
         assert resp.status_code == 200
         data = resp.json()
@@ -728,3 +732,157 @@ class TestFindSessionJsonlContentMatch:
 
         result = _find_session_jsonl(tmp_path, since, prompt_snippet='Feature #99')
         assert result == f2
+
+
+# ---------------------------------------------------------------------------
+# GET /api/features/{id}/session-log endpoint tests
+# ---------------------------------------------------------------------------
+
+class TestFeatureSessionLogEndpoint:
+    """Tests for GET /api/features/{id}/session-log."""
+
+    def test_not_found(self, client):
+        """Returns 404 for unknown feature."""
+        resp = client.get('/api/features/9999/session-log')
+        assert resp.status_code == 404
+        assert 'not found' in resp.json()['detail'].lower()
+
+    def test_no_session_id(self, client):
+        """Returns empty response when feature has no claude_session_id."""
+        # Feature 1 has no session ID in the test fixture
+        resp = client.get('/api/features/1/session-log')
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data['active'] is False
+        assert data['session_file'] is None
+        assert data['entries'] == []
+        assert data['total_entries'] == 0
+        assert data['feature_id'] == 1
+
+    def test_session_file_not_found(self, client, tmp_path):
+        """Returns empty response when the JSONL file no longer exists on disk."""
+
+        # Set a session ID on feature 1
+        client.patch('/api/features/1/state', json={'claude_session_id': 'missing.jsonl'})
+
+        with patch('backend.routers.features._get_claude_projects_dir', return_value=tmp_path):
+            resp = client.get('/api/features/1/session-log')
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data['session_file'] is None
+        assert data['entries'] == []
+
+    def test_returns_entries_from_jsonl(self, client, tmp_path):
+        """Returns log entries from the stored JSONL session file."""
+        # Set session ID on feature 1
+        client.patch('/api/features/1/state', json={'claude_session_id': 'abc123.jsonl'})
+
+        # Create a JSONL file in tmp_path
+        session_file = tmp_path / 'abc123.jsonl'
+        session_file.write_text(
+            make_assistant_tool_use('Bash', {'command': 'ls', 'description': 'List files'}) +
+            make_assistant_text('I will now fix the issue.')
+        )
+
+        with patch('backend.routers.features._get_claude_projects_dir', return_value=tmp_path):
+            resp = client.get('/api/features/1/session-log')
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data['active'] is False
+        assert data['feature_id'] == 1
+        assert data['session_file'] == 'abc123.jsonl'
+        assert len(data['entries']) == 2
+        assert data['entries'][0]['entry_type'] == 'tool_use'
+        assert data['entries'][1]['entry_type'] == 'text'
+        assert data['total_entries'] == 2
+
+    def test_limit_parameter(self, client, tmp_path):
+        """Respects the limit query parameter."""
+        client.patch('/api/features/1/state', json={'claude_session_id': 'limit_test.jsonl'})
+
+        session_file = tmp_path / 'limit_test.jsonl'
+        lines = ''.join(
+            make_assistant_tool_use('Bash', {'command': f'cmd{i}'}, f'2026-01-01T00:00:0{i}Z')
+            for i in range(8)
+        )
+        session_file.write_text(lines)
+
+        with patch('backend.routers.features._get_claude_projects_dir', return_value=tmp_path):
+            resp = client.get('/api/features/1/session-log?limit=3')
+
+        assert resp.status_code == 200
+        assert len(resp.json()['entries']) == 3
+
+    def test_no_projects_dir(self, client):
+        """Returns empty response when projects directory does not exist."""
+        client.patch('/api/features/2/state', json={'claude_session_id': 'somefile.jsonl'})
+
+        with patch('backend.routers.features._get_claude_projects_dir', return_value=None):
+            resp = client.get('/api/features/2/session-log')
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data['session_file'] is None
+        assert data['entries'] == []
+
+    def test_done_feature_returns_entries(self, client, tmp_path):
+        """DONE features (passes=True) can still return their historical log."""
+        # Feature 3 is DONE (passes=True)
+        client.patch('/api/features/3/state', json={'claude_session_id': 'done_session.jsonl'})
+
+        session_file = tmp_path / 'done_session.jsonl'
+        session_file.write_text(make_assistant_text('Feature completed successfully.'))
+
+        with patch('backend.routers.features._get_claude_projects_dir', return_value=tmp_path):
+            resp = client.get('/api/features/3/session-log')
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data['feature_id'] == 3
+        assert len(data['entries']) == 1
+        assert 'completed successfully' in data['entries'][0]['text']
+
+
+# ---------------------------------------------------------------------------
+# Session ID persistence tests (autopilot endpoint -> DB)
+# ---------------------------------------------------------------------------
+
+class TestSessionIdPersistence:
+    """Tests that _persist_feature_session_id saves the session file name to the DB."""
+
+    def test_persist_saves_session_filename(self, client):
+        """claude_session_id is updated when _persist_feature_session_id is called."""
+        from backend.routers.autopilot import _persist_feature_session_id
+
+        # Feature 1 starts with no session ID (conftest fixture)
+        resp = client.get('/api/features/1')
+        assert resp.json()['claude_session_id'] is None
+
+        # Call the helper directly - it uses get_session() which the client fixture patches
+        _persist_feature_session_id(1, 'abc-session.jsonl')
+
+        # Verify the DB was updated
+        resp = client.get('/api/features/1')
+        assert resp.json()['claude_session_id'] == 'abc-session.jsonl'
+
+    def test_persist_no_op_when_same_filename(self, client):
+        """Does not update DB when the filename is already stored."""
+        from backend.routers.autopilot import _persist_feature_session_id
+
+        # Set a session ID first
+        client.patch('/api/features/1/state', json={'claude_session_id': 'same.jsonl'})
+
+        # Call again with the same name - should be a no-op
+        _persist_feature_session_id(1, 'same.jsonl')
+
+        resp = client.get('/api/features/1')
+        assert resp.json()['claude_session_id'] == 'same.jsonl'
+
+    def test_persist_silently_ignores_missing_feature(self, client):
+        """Does not raise for unknown feature IDs."""
+        from backend.routers.autopilot import _persist_feature_session_id
+
+        # Feature 9999 does not exist - should not raise
+        _persist_feature_session_id(9999, 'ghost.jsonl')  # no exception expected

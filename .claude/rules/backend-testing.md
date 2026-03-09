@@ -9,17 +9,27 @@ When running tests always use the `test-reporter` agent.
 
 ## Database Isolation (CRITICAL)
 
-**NEVER modify the monkeypatch pattern** - it prevents production data corruption.
+**NEVER use `TestClient(app)` directly** — always use the `client` fixture from `conftest.py`. Direct `TestClient(app)` writes to the production database.
+
+The `client` fixture patches `backend.deps` (not `backend.main`):
 
 ```python
+# conftest.py — actual pattern (DO NOT change)
 @pytest.fixture
-def client(test_db, monkeypatch):
+def client(monkeypatch):
     import backend.main as main_module
-    monkeypatch.setattr(main_module, '_session_maker', test_db)
+    import backend.deps as deps_module
+    temp_dir = tempfile.mkdtemp()
+    temp_db_path = Path(temp_dir) / "features.db"
+    engine, session_maker = create_database(Path(temp_dir))
+    monkeypatch.setattr(deps_module, '_session_maker', session_maker)
+    monkeypatch.setattr(deps_module, '_current_db_path', temp_db_path)
+    monkeypatch.setattr(main_module.asyncio, 'create_task',
+                        lambda coro: (coro.close(), None)[1])
     yield TestClient(app)
 ```
 
-**Why?** Backend uses direct `session = get_session()` calls, not FastAPI `Depends()`, so `app.dependency_overrides` won't work.
+**Why `deps_module`?** `get_session()` lives in `backend.deps` and all routers import it from there. Patching `main_module._session_maker` has no effect.
 
 ## Test Data Structure
 
