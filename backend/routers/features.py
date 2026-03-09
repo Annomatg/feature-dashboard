@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text as sa_text
 
@@ -34,6 +34,7 @@ from backend.deps import (
     _feature_subscribers,
 )
 import backend.autopilot_engine as _autopilot_engine
+from backend.routers.push import send_push_to_all as _send_push_to_all
 from backend.claude_process import _get_claude_projects_dir, _parse_jsonl_log
 from backend.schemas import (
     ClaudeLogLineResponse,
@@ -688,12 +689,12 @@ async def delete_feature(feature_id: int):
 # ---------------------------------------------------------------------------
 
 @router.patch("/features/{feature_id}/state", response_model=FeatureResponse)
-async def update_feature_state(feature_id: int, request: UpdateFeatureStateRequest):
+async def update_feature_state(feature_id: int, request: UpdateFeatureStateRequest, background_tasks: BackgroundTasks):
     """
     Update feature state (passes/in_progress).
 
     This is used to move features between lanes (TODO, In Progress, Done).
-    When setting passes=True, sets completed_at timestamp.
+    When setting passes=True, sets completed_at timestamp and sends a push notification.
     When setting passes=False, clears completed_at timestamp.
     """
     session = get_session()
@@ -702,6 +703,8 @@ async def update_feature_state(feature_id: int, request: UpdateFeatureStateReque
 
         if feature is None:
             raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
+
+        newly_passing = request.passes is True and not feature.passes
 
         # Update state fields
         if request.passes is not None:
@@ -720,6 +723,15 @@ async def update_feature_state(feature_id: int, request: UpdateFeatureStateReque
 
         session.commit()
         session.refresh(feature)
+
+        if newly_passing:
+            push_payload = {
+                "title": "Feature Done",
+                "body": f"#{feature.id}: {feature.name}",
+                "tag": "feature-done",
+                "url": "/",
+            }
+            background_tasks.add_task(_send_push_to_all, push_payload)
 
         return feature_to_response(feature, get_comment_counts(session, [feature.id]), get_recent_logs(session, [feature.id]))
     except HTTPException:

@@ -4,6 +4,7 @@ import tempfile
 import shutil
 import json
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
@@ -462,6 +463,55 @@ class TestUpdateFeatureState:
         })
 
         assert response.status_code == 404
+
+    def test_marking_done_triggers_push_notification(self, client):
+        """Test that marking a feature as passing triggers a push notification."""
+        with patch("backend.routers.features._send_push_to_all", new_callable=AsyncMock) as mock_push:
+            response = client.patch("/api/features/1/state", json={
+                "passes": True,
+                "in_progress": False,
+            })
+
+        assert response.status_code == 200
+        mock_push.assert_called_once()
+        payload = mock_push.call_args[0][0]
+        assert payload["title"] == "Feature Done"
+        assert "#1" in payload["body"]
+        assert payload["tag"] == "feature-done"
+
+    def test_push_payload_contains_feature_name(self, client):
+        """Test that push payload contains the feature name."""
+        with patch("backend.routers.features._send_push_to_all", new_callable=AsyncMock) as mock_push:
+            client.patch("/api/features/1/state", json={"passes": True})
+
+        payload = mock_push.call_args[0][0]
+        # body should include feature name (fixture features start with "Feature ")
+        assert "Feature " in payload["body"]
+
+    def test_no_push_when_already_passing(self, client):
+        """Test that no push is sent when feature is already passing (idempotent)."""
+        # Feature 3 is already passing in fixtures
+        with patch("backend.routers.features._send_push_to_all", new_callable=AsyncMock) as mock_push:
+            response = client.patch("/api/features/3/state", json={"passes": True})
+
+        assert response.status_code == 200
+        mock_push.assert_not_called()
+
+    def test_no_push_when_marking_not_passing(self, client):
+        """Test that no push is sent when moving a feature out of done."""
+        with patch("backend.routers.features._send_push_to_all", new_callable=AsyncMock) as mock_push:
+            response = client.patch("/api/features/1/state", json={"passes": False})
+
+        assert response.status_code == 200
+        mock_push.assert_not_called()
+
+    def test_no_push_when_only_updating_in_progress(self, client):
+        """Test that no push is sent for in_progress-only state changes."""
+        with patch("backend.routers.features._send_push_to_all", new_callable=AsyncMock) as mock_push:
+            response = client.patch("/api/features/1/state", json={"in_progress": True})
+
+        assert response.status_code == 200
+        mock_push.assert_not_called()
 
 
 class TestUpdateFeaturePriority:
