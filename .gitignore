@@ -64,3 +64,9 @@ obj/
 *.xml
 *.runtimeconfig.json
 *.deps.json
+
+# Frontend
+frontend/dev-dist/
+
+# test output
+*test_output*.txt
