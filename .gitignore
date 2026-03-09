@@ -19,6 +19,8 @@ __pycache__/
 # unnecessary setting 
 test_results.json
 settings.json
+dashboards.json
+features.db
 
 # Allow PWA icon assets in frontend/public
 !frontend/public/*.png
