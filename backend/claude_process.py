@@ -416,6 +416,47 @@ def _parse_main_agent_metadata(jsonl_file: Path) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Subagent log discovery
+# ---------------------------------------------------------------------------
+
+def _discover_subagent_logs(projects_dir: Path, session_id: str) -> list[dict]:
+    """Discover all subagent log files for a given session.
+
+    Subagent logs live at:
+        {projects_dir}/{session_stem}/subagents/agent-{id}.jsonl
+
+    where session_stem is the session filename without the .jsonl extension.
+
+    Args:
+        projects_dir: The ~/.claude/projects/{slug}/ directory.
+        session_id: The session filename, e.g. "abc123.jsonl".
+
+    Returns:
+        List of {"agent_id": str, "file_path": str} records, one per
+        agent-*.jsonl file found.  Returns an empty list when the
+        subagents/ directory does not exist.
+    """
+    session_stem = Path(session_id).stem
+    subagents_dir = projects_dir / session_stem / 'subagents'
+
+    if not subagents_dir.is_dir():
+        return []
+
+    results: list[dict] = []
+    for f in sorted(subagents_dir.glob('agent-*.jsonl'), key=lambda p: p.name):
+        # agent_id is the part after the "agent-" prefix, e.g. "abc123"
+        agent_id = f.stem[len('agent-'):]
+        if not agent_id:
+            continue
+        results.append({
+            "agent_id": agent_id,
+            "file_path": str(f),
+        })
+
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Agent graph parsing
 # ---------------------------------------------------------------------------
 

@@ -461,3 +461,143 @@ class TestGetTaskMetadata:
 
         assert response.status_code == 500
         assert "failed to parse" in response.json()["detail"].lower()
+
+
+class TestGetTaskSubagents:
+    """Unit tests for GET /api/tasks/{id}/subagents."""
+
+    def test_task_not_found_returns_404(self, client):
+        """Returns 404 when task ID doesn't exist."""
+        response = client.get("/api/tasks/999/subagents")
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    def test_task_without_session_returns_404(self, client):
+        """Returns 404 when task has no claude_session_id."""
+        response = client.get("/api/tasks/1/subagents")
+        assert response.status_code == 404
+        assert "no session" in response.json()["detail"].lower()
+
+    def test_invalid_session_id_path_traversal_returns_400(self, client):
+        """Returns 400 when session ID contains path traversal characters."""
+        import backend.deps as deps_module
+        session = deps_module._session_maker()
+        try:
+            feature = session.query(Feature).filter(Feature.id == 1).first()
+            feature.claude_session_id = "../../../etc/passwd"
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/tasks/1/subagents")
+        assert response.status_code == 400
+        assert "invalid session id" in response.json()["detail"].lower()
+
+    def test_invalid_session_id_wrong_extension_returns_400(self, client):
+        """Returns 400 when session ID doesn't have .jsonl extension."""
+        import backend.deps as deps_module
+        session = deps_module._session_maker()
+        try:
+            feature = session.query(Feature).filter(Feature.id == 1).first()
+            feature.claude_session_id = "session.txt"
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/tasks/1/subagents")
+        assert response.status_code == 400
+        assert "invalid session id" in response.json()["detail"].lower()
+
+    def test_projects_dir_not_found_returns_404(self, client, monkeypatch):
+        """Returns 404 when Claude projects directory doesn't exist."""
+        import backend.deps as deps_module
+        session = deps_module._session_maker()
+        try:
+            feature = session.query(Feature).filter(Feature.id == 1).first()
+            feature.claude_session_id = "test-session.jsonl"
+            session.commit()
+        finally:
+            session.close()
+
+        monkeypatch.setattr(
+            "backend.routers.tasks._get_claude_projects_dir",
+            lambda working_dir: None
+        )
+
+        response = client.get("/api/tasks/1/subagents")
+        assert response.status_code == 404
+        assert "projects directory not found" in response.json()["detail"].lower()
+
+    def test_returns_empty_list_when_no_subagents(self, client, monkeypatch):
+        """Returns empty subagents list when no subagent directory exists."""
+        import backend.deps as deps_module
+        session = deps_module._session_maker()
+        try:
+            feature = session.query(Feature).filter(Feature.id == 1).first()
+            feature.claude_session_id = "test-session.jsonl"
+            session.commit()
+        finally:
+            session.close()
+
+        mock_projects_dir = MagicMock(spec=Path)
+
+        monkeypatch.setattr(
+            "backend.routers.tasks._get_claude_projects_dir",
+            lambda working_dir: mock_projects_dir
+        )
+        monkeypatch.setattr(
+            "backend.routers.tasks._discover_subagent_logs",
+            lambda projects_dir, session_id: []
+        )
+
+        response = client.get("/api/tasks/1/subagents")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "subagents" in data
+        assert data["subagents"] == []
+
+    def test_returns_subagent_list(self, client, monkeypatch):
+        """Returns list of subagent records when subagents exist."""
+        import backend.deps as deps_module
+        session = deps_module._session_maker()
+        try:
+            feature = session.query(Feature).filter(Feature.id == 1).first()
+            feature.claude_session_id = "test-session.jsonl"
+            session.commit()
+        finally:
+            session.close()
+
+        mock_projects_dir = MagicMock(spec=Path)
+        monkeypatch.setattr(
+            "backend.routers.tasks._get_claude_projects_dir",
+            lambda working_dir: mock_projects_dir
+        )
+
+        fake_subagents = [
+            {"agent_id": "abc123", "file_path": "/path/to/agent-abc123.jsonl"},
+            {"agent_id": "def456", "file_path": "/path/to/agent-def456.jsonl"},
+        ]
+        monkeypatch.setattr(
+            "backend.routers.tasks._discover_subagent_logs",
+            lambda projects_dir, session_id: fake_subagents
+        )
+
+        response = client.get("/api/tasks/1/subagents")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["subagents"]) == 2
+        assert data["subagents"][0]["agent_id"] == "abc123"
+        assert data["subagents"][0]["file_path"] == "/path/to/agent-abc123.jsonl"
+        assert data["subagents"][1]["agent_id"] == "def456"
+
+    def test_task_id_zero_returns_404(self, client):
+        """Returns 404 for task_id=0."""
+        response = client.get("/api/tasks/0/subagents")
+        assert response.status_code == 404
+
+    def test_task_id_negative_returns_404(self, client):
+        """Returns 404 for negative task_id."""
+        response = client.get("/api/tasks/-1/subagents")
+        assert response.status_code == 404

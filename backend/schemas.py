@@ -342,3 +342,14 @@ class TaskMetadataResponse(BaseModel):
     token_estimate: int
     last_tool_used: Optional[str] = None
     agent_type: Optional[str] = None
+
+
+class SubagentLogEntry(BaseModel):
+    """A single subagent log file entry."""
+    agent_id: str
+    file_path: str
+
+
+class TaskSubagentsResponse(BaseModel):
+    """Response for GET /api/tasks/{id}/subagents."""
+    subagents: list[SubagentLogEntry]

@@ -32,6 +32,7 @@ from backend.claude_process import (
     _find_session_jsonl,
     _get_claude_projects_dir,
     _parse_main_agent_metadata,
+    _discover_subagent_logs,
 )
 
 
@@ -1085,3 +1086,97 @@ class TestParseMainAgentMetadata:
         f.write_text(content)
         result = _parse_main_agent_metadata(f)
         assert result['turn_count'] == 1  # Only the valid assistant message
+
+
+# ---------------------------------------------------------------------------
+# _discover_subagent_logs tests
+# ---------------------------------------------------------------------------
+
+class TestDiscoverSubagentLogs:
+    """Unit tests for _discover_subagent_logs()."""
+
+    def test_returns_empty_list_when_no_subagents_dir(self, tmp_path):
+        """Returns empty list when the subagents/ directory does not exist."""
+        projects_dir = tmp_path
+        result = _discover_subagent_logs(projects_dir, 'abc123.jsonl')
+        assert result == []
+
+    def test_returns_empty_list_when_no_agent_files(self, tmp_path):
+        """Returns empty list when subagents/ directory exists but has no agent files."""
+        projects_dir = tmp_path
+        subagents_dir = projects_dir / 'abc123' / 'subagents'
+        subagents_dir.mkdir(parents=True)
+        result = _discover_subagent_logs(projects_dir, 'abc123.jsonl')
+        assert result == []
+
+    def test_discovers_single_agent_file(self, tmp_path):
+        """Discovers a single agent-*.jsonl file and returns correct record."""
+        projects_dir = tmp_path
+        subagents_dir = projects_dir / 'abc123' / 'subagents'
+        subagents_dir.mkdir(parents=True)
+        agent_file = subagents_dir / 'agent-deadbeef.jsonl'
+        agent_file.write_text('')
+
+        result = _discover_subagent_logs(projects_dir, 'abc123.jsonl')
+
+        assert len(result) == 1
+        assert result[0]['agent_id'] == 'deadbeef'
+        assert result[0]['file_path'] == str(agent_file)
+
+    def test_discovers_multiple_agent_files(self, tmp_path):
+        """Discovers multiple agent-*.jsonl files and returns them sorted."""
+        projects_dir = tmp_path
+        subagents_dir = projects_dir / 'mysession' / 'subagents'
+        subagents_dir.mkdir(parents=True)
+        (subagents_dir / 'agent-aaa.jsonl').write_text('')
+        (subagents_dir / 'agent-bbb.jsonl').write_text('')
+        (subagents_dir / 'agent-ccc.jsonl').write_text('')
+
+        result = _discover_subagent_logs(projects_dir, 'mysession.jsonl')
+
+        assert len(result) == 3
+        agent_ids = [r['agent_id'] for r in result]
+        assert 'aaa' in agent_ids
+        assert 'bbb' in agent_ids
+        assert 'ccc' in agent_ids
+
+    def test_ignores_non_agent_files(self, tmp_path):
+        """Files not matching agent-*.jsonl pattern are ignored."""
+        projects_dir = tmp_path
+        subagents_dir = projects_dir / 'sess' / 'subagents'
+        subagents_dir.mkdir(parents=True)
+        (subagents_dir / 'agent-abc.jsonl').write_text('')
+        (subagents_dir / 'other-file.jsonl').write_text('')
+        (subagents_dir / 'agent-abc.txt').write_text('')
+
+        result = _discover_subagent_logs(projects_dir, 'sess.jsonl')
+
+        assert len(result) == 1
+        assert result[0]['agent_id'] == 'abc'
+
+    def test_session_id_without_jsonl_extension(self, tmp_path):
+        """Works correctly when session_id does not have .jsonl extension."""
+        projects_dir = tmp_path
+        subagents_dir = projects_dir / 'mysession' / 'subagents'
+        subagents_dir.mkdir(parents=True)
+        (subagents_dir / 'agent-xyz.jsonl').write_text('')
+
+        result = _discover_subagent_logs(projects_dir, 'mysession')
+
+        assert len(result) == 1
+        assert result[0]['agent_id'] == 'xyz'
+
+    def test_each_record_has_agent_id_and_file_path(self, tmp_path):
+        """Each returned record has exactly agent_id and file_path keys."""
+        projects_dir = tmp_path
+        subagents_dir = projects_dir / 'sess' / 'subagents'
+        subagents_dir.mkdir(parents=True)
+        (subagents_dir / 'agent-foo.jsonl').write_text('')
+
+        result = _discover_subagent_logs(projects_dir, 'sess.jsonl')
+
+        assert len(result) == 1
+        record = result[0]
+        assert 'agent_id' in record
+        assert 'file_path' in record
+        assert record['agent_id'] == 'foo'

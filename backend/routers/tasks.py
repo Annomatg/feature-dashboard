@@ -16,10 +16,11 @@ from backend.deps import get_session
 from api.database import Feature
 from backend.claude_process import (
     _get_claude_projects_dir,
+    _discover_subagent_logs,
     _parse_agent_graph,
     _parse_main_agent_metadata,
 )
-from backend.schemas import TaskGraphResponse, TaskMetadataResponse
+from backend.schemas import TaskGraphResponse, TaskMetadataResponse, TaskSubagentsResponse, SubagentLogEntry
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
@@ -170,6 +171,62 @@ async def get_task_metadata(task_id: int):
             token_estimate=metadata["token_estimate"],
             last_tool_used=metadata["last_tool_used"],
             agent_type=metadata["agent_type"],
+        )
+    finally:
+        session.close()
+
+
+@router.get("/{task_id}/subagents", response_model=TaskSubagentsResponse)
+async def get_task_subagents(task_id: int):
+    """Discover subagent log files for a task session.
+
+    Returns a list of subagent log files found under the session's
+    subagents/ subdirectory.  Returns an empty list when the directory
+    does not exist (task ran without subagents).
+
+    Args:
+        task_id: The feature/task ID to discover subagents for
+
+    Returns:
+        TaskSubagentsResponse with a list of {agent_id, file_path} records
+
+    Raises:
+        404: If task not found, no session file, or Claude projects dir missing
+        400: If session ID format is invalid
+    """
+    session = get_session()
+    try:
+        feature = session.query(Feature).filter(Feature.id == task_id).first()
+
+        if feature is None:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+        if not feature.claude_session_id:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No session file available for task {task_id}"
+            )
+
+        # Validate session ID format to prevent path traversal
+        session_id = feature.claude_session_id
+        if '/' in session_id or '\\' in session_id or not session_id.endswith('.jsonl'):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid session ID format"
+            )
+
+        working_dir = str(_deps._current_db_path.parent)
+        projects_dir = _get_claude_projects_dir(working_dir)
+
+        if projects_dir is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Claude projects directory not found"
+            )
+
+        subagents = _discover_subagent_logs(projects_dir, session_id)
+        return TaskSubagentsResponse(
+            subagents=[SubagentLogEntry(**s) for s in subagents]
         )
     finally:
         session.close()
