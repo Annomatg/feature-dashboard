@@ -601,3 +601,197 @@ class TestGetTaskSubagents:
         """Returns 404 for negative task_id."""
         response = client.get("/api/tasks/-1/subagents")
         assert response.status_code == 404
+
+
+class TestGetTaskNodeLog:
+    """Unit tests for GET /api/tasks/{id}/node-log/{node_id}."""
+
+    def _set_session_id(self, client, session_id):
+        import backend.deps as deps_module
+        session = deps_module._session_maker()
+        try:
+            feature = session.query(Feature).filter(Feature.id == 1).first()
+            feature.claude_session_id = session_id
+            session.commit()
+        finally:
+            session.close()
+
+    def test_task_not_found_returns_404(self, client):
+        """Returns 404 when task ID doesn't exist."""
+        response = client.get("/api/tasks/999/node-log/main")
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    def test_task_without_session_returns_404(self, client):
+        """Returns 404 when task has no claude_session_id."""
+        response = client.get("/api/tasks/1/node-log/main")
+        assert response.status_code == 404
+        assert "no session" in response.json()["detail"].lower()
+
+    def test_invalid_session_id_path_traversal_returns_400(self, client):
+        """Returns 400 when session ID contains path traversal characters."""
+        self._set_session_id(client, "../../../etc/passwd")
+        response = client.get("/api/tasks/1/node-log/main")
+        assert response.status_code == 400
+        assert "invalid session id" in response.json()["detail"].lower()
+
+    def test_projects_dir_not_found_returns_404(self, client, monkeypatch):
+        """Returns 404 when Claude projects directory doesn't exist."""
+        self._set_session_id(client, "test-session.jsonl")
+        monkeypatch.setattr(
+            "backend.routers.tasks._get_claude_projects_dir",
+            lambda working_dir: None
+        )
+        response = client.get("/api/tasks/1/node-log/main")
+        assert response.status_code == 404
+        assert "projects directory not found" in response.json()["detail"].lower()
+
+    def test_main_node_success(self, client, monkeypatch, tmp_path):
+        """Returns log entries for the main node."""
+        import json
+        self._set_session_id(client, "test-session.jsonl")
+
+        session_file = tmp_path / "test-session.jsonl"
+        content = json.dumps({
+            'type': 'assistant',
+            'timestamp': '2024-01-01T00:00:00Z',
+            'message': {
+                'content': [
+                    {'type': 'text', 'text': 'Hello from main agent'}
+                ]
+            }
+        }) + '\n'
+        session_file.write_text(content)
+
+        mock_projects_dir = MagicMock(spec=Path)
+        mock_projects_dir.__truediv__ = MagicMock(return_value=session_file)
+        monkeypatch.setattr(
+            "backend.routers.tasks._get_claude_projects_dir",
+            lambda working_dir: mock_projects_dir
+        )
+
+        response = client.get("/api/tasks/1/node-log/main")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "entries" in data
+        assert data["feature_id"] == 1
+        assert len(data["entries"]) == 1
+        assert data["entries"][0]["entry_type"] == "text"
+        assert "Hello from main agent" in data["entries"][0]["text"]
+
+    def test_main_node_session_file_not_found_returns_404(self, client, monkeypatch):
+        """Returns 404 when main session file doesn't exist."""
+        self._set_session_id(client, "missing.jsonl")
+
+        mock_file = MagicMock(spec=Path)
+        mock_file.exists.return_value = False
+
+        mock_projects_dir = MagicMock(spec=Path)
+        mock_projects_dir.__truediv__ = MagicMock(return_value=mock_file)
+        monkeypatch.setattr(
+            "backend.routers.tasks._get_claude_projects_dir",
+            lambda working_dir: mock_projects_dir
+        )
+
+        response = client.get("/api/tasks/1/node-log/main")
+        assert response.status_code == 404
+        assert "session file not found" in response.json()["detail"].lower()
+
+    def test_subagent_node_success(self, client, monkeypatch, tmp_path):
+        """Returns log entries for a subagent node."""
+        import json
+        self._set_session_id(client, "test-session.jsonl")
+
+        subagent_file = tmp_path / "agent-abc123.jsonl"
+        content = json.dumps({
+            'type': 'assistant',
+            'timestamp': '2024-01-01T00:01:00Z',
+            'message': {
+                'content': [
+                    {'type': 'tool_use', 'name': 'Bash', 'input': {'command': 'ls'}}
+                ]
+            }
+        }) + '\n'
+        subagent_file.write_text(content)
+
+        mock_projects_dir = MagicMock(spec=Path)
+        monkeypatch.setattr(
+            "backend.routers.tasks._get_claude_projects_dir",
+            lambda working_dir: mock_projects_dir
+        )
+        monkeypatch.setattr(
+            "backend.routers.tasks._discover_subagent_logs",
+            lambda projects_dir, session_id: [
+                {"agent_id": "abc123", "file_path": str(subagent_file)}
+            ]
+        )
+
+        response = client.get("/api/tasks/1/node-log/abc123")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["entries"]) == 1
+        assert data["entries"][0]["entry_type"] == "tool_use"
+        assert data["entries"][0]["tool_name"] == "Bash"
+        assert data["session_file"] == "agent-abc123.jsonl"
+
+    def test_subagent_node_not_found_returns_404(self, client, monkeypatch):
+        """Returns 404 when the requested node_id is not in subagents list."""
+        self._set_session_id(client, "test-session.jsonl")
+
+        mock_projects_dir = MagicMock(spec=Path)
+        monkeypatch.setattr(
+            "backend.routers.tasks._get_claude_projects_dir",
+            lambda working_dir: mock_projects_dir
+        )
+        monkeypatch.setattr(
+            "backend.routers.tasks._discover_subagent_logs",
+            lambda projects_dir, session_id: []
+        )
+
+        response = client.get("/api/tasks/1/node-log/nonexistent")
+        assert response.status_code == 404
+        assert "nonexistent" in response.json()["detail"].lower()
+
+    def test_subagent_file_missing_on_disk_returns_404(self, client, monkeypatch, tmp_path):
+        """Returns 404 when the subagent log file doesn't exist on disk."""
+        self._set_session_id(client, "test-session.jsonl")
+
+        missing_file = tmp_path / "agent-abc123.jsonl"
+        # Not creating the file
+
+        mock_projects_dir = MagicMock(spec=Path)
+        monkeypatch.setattr(
+            "backend.routers.tasks._get_claude_projects_dir",
+            lambda working_dir: mock_projects_dir
+        )
+        monkeypatch.setattr(
+            "backend.routers.tasks._discover_subagent_logs",
+            lambda projects_dir, session_id: [
+                {"agent_id": "abc123", "file_path": str(missing_file)}
+            ]
+        )
+
+        response = client.get("/api/tasks/1/node-log/abc123")
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    def test_limit_parameter_clamped(self, client, monkeypatch, tmp_path):
+        """Limit parameter is clamped to 1–200."""
+        import json
+        self._set_session_id(client, "test-session.jsonl")
+
+        session_file = tmp_path / "test-session.jsonl"
+        session_file.write_text("")
+
+        mock_projects_dir = MagicMock(spec=Path)
+        mock_projects_dir.__truediv__ = MagicMock(return_value=session_file)
+        monkeypatch.setattr(
+            "backend.routers.tasks._get_claude_projects_dir",
+            lambda working_dir: mock_projects_dir
+        )
+
+        # limit=999 should not raise — clamped to 200
+        response = client.get("/api/tasks/1/node-log/main?limit=999")
+        assert response.status_code == 200

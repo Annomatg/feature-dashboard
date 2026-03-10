@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import cytoscape from 'cytoscape'
 import dagre from 'cytoscape-dagre'
+import LogSidePanel from '../components/LogSidePanel'
 
 cytoscape.use(dagre)
 
@@ -35,6 +36,15 @@ function GraphView() {
   const [error, setError] = useState(null)
   const [nodeCount, setNodeCount] = useState(0)
   const [edgeCount, setEdgeCount] = useState(0)
+  const [selectedNode, setSelectedNode] = useState(null)
+
+  const handleClosePanel = useCallback(() => {
+    setSelectedNode(null)
+    // Deselect all nodes in the graph
+    if (cyRef.current) {
+      cyRef.current.$(':selected').unselect()
+    }
+  }, [])
 
   useEffect(() => {
     let destroyed = false
@@ -130,6 +140,21 @@ function GraphView() {
           maxZoom: 4,
         })
 
+        // Attach tap handler to open log side panel on node click
+        cyRef.current.on('tap', 'node', (evt) => {
+          const node = evt.target
+          setSelectedNode({
+            id: node.data('id'),
+            label: node.data('label'),
+            type: node.data('type'),
+          })
+        })
+
+        // Expose cy instance on container for E2E testing
+        if (containerRef.current) {
+          containerRef.current._cy = cyRef.current
+        }
+
         setNodeCount(nodes.length)
         setEdgeCount(edges.length)
         setStatus('success')
@@ -196,6 +221,15 @@ function GraphView() {
               <p className="text-gray-500 font-mono text-xs">{error}</p>
             </div>
           </div>
+        )}
+
+        {/* Log side panel — shown when a node is selected */}
+        {selectedNode && (
+          <LogSidePanel
+            taskId={id}
+            node={selectedNode}
+            onClose={handleClosePanel}
+          />
         )}
       </div>
 
