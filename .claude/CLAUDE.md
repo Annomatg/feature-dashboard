@@ -33,31 +33,7 @@
 
 ## Project Structure
 
-```
-feature-dashboard/
-├── frontend/               # React + Vite frontend
-│   ├── src/
-│   │   ├── components/    # Reusable UI components
-│   │   ├── pages/         # Page components
-│   │   ├── App.jsx        # Main app component
-│   │   └── main.jsx       # Entry point
-│   └── package.json
-├── backend/               # FastAPI backend
-│   ├── main.py           # API server
-│   └── requirements.txt
-├── api/                   # Database models and utilities
-│   ├── database.py       # SQLAlchemy models
-│   └── migration.py      # JSON to SQLite migration
-├── mcp_server/           # MCP feature management server
-│   └── feature_mcp.py
-├── DevServer/            # C# auto-reload server for backend
-│   ├── Program.cs        # DevServer implementation
-│   └── DevServer.csproj
-├── .mcp.json             # MCP server configuration
-├── dashboards.json       # Multi-database configuration
-├── features.db           # SQLite database (created on first run)
-└── .claude/              # Claude configuration
-```
+See `project.json` for full structure, key files, services, API endpoints, and database schema.
 
 ## Feature Management
 
@@ -136,20 +112,7 @@ Query parameters for `/api/features`:
 
 ## Data Source
 
-All feature data comes from `features.db`, a SQLite database with the following schema:
-
-```sql
-CREATE TABLE features (
-  id INTEGER PRIMARY KEY,
-  priority INTEGER NOT NULL,
-  category VARCHAR(100) NOT NULL,
-  name VARCHAR(255) NOT NULL,
-  description TEXT NOT NULL,
-  steps JSON NOT NULL,
-  passes BOOLEAN NOT NULL DEFAULT 0,
-  in_progress BOOLEAN NOT NULL DEFAULT 0
-);
-```
+All feature data comes from `features.db` (SQLite). Schema is documented in `project.json` under `database_schema`.
 
 ## Important Notes
 

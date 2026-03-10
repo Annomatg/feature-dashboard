@@ -1,0 +1,81 @@
+{
+  "name": "Feature Dashboard",
+  "description": "Web application for visualizing and managing project features and backlog items stored in a SQLite database.",
+  "tech_stack": {
+    "frontend": {
+      "framework": "React 18 + Vite",
+      "router": "React Router",
+      "data_fetching": "TanStack Query",
+      "styling": "Tailwind CSS (dark theme)",
+      "icons": "Lucide React",
+      "testing": "Playwright (Chromium only)"
+    },
+    "backend": {
+      "framework": "FastAPI",
+      "orm": "SQLAlchemy",
+      "database": "SQLite (features.db)",
+      "server": "Uvicorn (managed by DevServer)"
+    },
+    "dev_tools": {
+      "dev_server": "C# .NET 8.0 — auto-restarts backend on file changes",
+      "mcp_server": "Python — feature management via Claude MCP tools",
+      "linting": "ESLint"
+    }
+  },
+  "structure": {
+    "frontend/": "React + Vite frontend (port 5173)",
+    "frontend/src/components/": "Reusable UI components",
+    "frontend/src/pages/": "Page-level components (Dashboard, InterviewPage)",
+    "frontend/src/hooks/": "Custom React hooks",
+    "backend/": "FastAPI backend (port 8000)",
+    "backend/routers/": "API route modules (features, autopilot, claude, tasks, git, etc.)",
+    "backend/tests/": "Backend pytest tests",
+    "api/": "Database models and utilities (SQLAlchemy, migration)",
+    "mcp_server/": "MCP feature management server",
+    "DevServer/": "C# auto-reload server for backend",
+    "DevServer.Tests/": "C# tests for DevServer",
+    "scripts/": "Utility scripts"
+  },
+  "key_files": {
+    "backend/main.py": "FastAPI app entry point",
+    "api/database.py": "SQLAlchemy models and DB session",
+    "mcp_server/feature_mcp.py": "MCP server implementation",
+    "DevServer/Program.cs": "DevServer implementation",
+    "dashboards.json": "Multi-database configuration (copy from dashboards.json.template)",
+    "features.db": "Production SQLite database",
+    "features.test.db": "Isolated test database",
+    "playwright.config.js": "Playwright E2E test config",
+    ".mcp.json": "MCP server configuration for Claude"
+  },
+  "services": {
+    "backend_api": "http://localhost:8000",
+    "frontend_dev": "http://localhost:5173",
+    "api_proxy": "Frontend /api/* proxied to backend"
+  },
+  "database_schema": {
+    "table": "features",
+    "columns": {
+      "id": "INTEGER PRIMARY KEY",
+      "priority": "INTEGER NOT NULL",
+      "category": "VARCHAR(100) NOT NULL",
+      "name": "VARCHAR(255) NOT NULL",
+      "description": "TEXT NOT NULL",
+      "steps": "JSON NOT NULL",
+      "passes": "BOOLEAN DEFAULT 0",
+      "in_progress": "BOOLEAN DEFAULT 0",
+      "model": "VARCHAR",
+      "claude_session_id": "VARCHAR",
+      "created_at": "DATETIME",
+      "modified_at": "DATETIME",
+      "completed_at": "DATETIME"
+    }
+  },
+  "api_endpoints": {
+    "GET /api/features": "List features (filters: passes, in_progress, category)",
+    "GET /api/features/stats": "Feature completion statistics",
+    "GET /api/features/{id}": "Single feature by ID",
+    "GET /api/databases": "List configured databases",
+    "GET /api/databases/active": "Currently active database",
+    "POST /api/databases/select": "Switch active database"
+  }
+}
