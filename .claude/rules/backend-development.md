@@ -17,7 +17,7 @@ When writing or modifying backend functionality:
 
 ```bash
 # After making backend changes, ALWAYS run:
-./venv/Scripts/python.exe -m pytest backend/test_crud_api.py -v
+./venv/Scripts/python.exe -m pytest backend/tests/ -v
 ```
 
 **All tests must pass before committing.**

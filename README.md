@@ -110,7 +110,7 @@ New migrations go in `api/database.py` — increment `LATEST_SCHEMA_VERSION` and
 
 ```bash
 # Backend unit tests
-./venv/Scripts/python.exe -m pytest backend/test_crud_api.py -v
+./venv/Scripts/python.exe -m pytest backend/tests/ -v
 
 # E2E tests (requires frontend + backend running)
 cd frontend && npm test

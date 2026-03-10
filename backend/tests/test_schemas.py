@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from backend.main import app
 from api.database import CategoryToken, create_database, DescriptionBigram, DescriptionToken, Feature, NameBigram, NameToken
@@ -73,7 +73,7 @@ class TestSchemas:
 
     def test_no_basemodel_in_main(self):
         """main.py must not define any BaseModel subclass directly."""
-        main_py = Path(__file__).parent / "main.py"
+        main_py = Path(__file__).parent.parent / "main.py"
         source = main_py.read_text(encoding="utf-8")
         assert "class " not in source.split("from backend.schemas import")[0].split("BaseModel")[-1] or \
                "BaseModel" not in source or \

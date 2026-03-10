@@ -30,7 +30,7 @@ import pytest
 import uvicorn
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import backend.interview_state as state_module
 import backend.main as main_module

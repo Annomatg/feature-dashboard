@@ -74,12 +74,19 @@ When reviewing code, you will systematically evaluate against these criteria:
    - Run any project-specific quality tools
    - Report all findings from these tools
 
-2. **Then, conduct manual review:**
+2. **As next do code similarity checks:**
+   - Use the code-similarity MCP
+   - index_repository first
+   - analyze_new_code to check for similarity of the whole method
+   - chunk_repository first
+   - analye_chunks with the new code
+
+3. **Then, conduct manual review:**
    - Read through the code thoroughly
    - Identify issues in each of the categories above
    - Note both critical issues and minor improvements
 
-3. **Provide structured feedback:**
+4. **Provide structured feedback:**
    - Categorize issues by severity: CRITICAL, HIGH, MEDIUM, LOW
    - For each issue, provide:
      - Location (file, line number if applicable)

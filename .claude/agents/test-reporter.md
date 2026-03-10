@@ -15,7 +15,7 @@ Run automated test suites and report results without attempting fixes.
 - Document environment state
 
 ### Phase 2: Run Backend Tests
-- Execute: `./venv/Scripts/python.exe -m pytest backend/test_crud_api.py -v --tb=short` from project root
+- Execute: `./venv/Scripts/python.exe -m pytest backend/tests/ -v --tb=short` from project root
 - Capture all output (stdout, stderr)
 - Note any timeouts, failures, or errors
 - If ANY failure or timeout occurs, proceed immediately to Phase 4 (do NOT run frontend tests)
@@ -47,7 +47,7 @@ Run automated test suites and report results without attempting fixes.
 
 3. **Environment Paths**:
    - Project root: `F:\Work\Godot\feature-dashboard`
-   - Backend tests: `./venv/Scripts/python.exe -m pytest backend/test_crud_api.py -v --tb=short`
+   - Backend tests: `./venv/Scripts/python.exe -m pytest backend/tests/ -v --tb=short`
    - Frontend tests: `cd frontend && npx playwright test --reporter=list`
 
 4. **Timeout Handling**: If a test times out, report it explicitly with test name and timeout value.
@@ -62,7 +62,7 @@ Run automated test suites and report results without attempting fixes.
 
 **Backend (pytest)**:
 ```
-./venv/Scripts/python.exe -m pytest backend/test_crud_api.py -v --tb=short
+./venv/Scripts/python.exe -m pytest backend/tests/ -v --tb=short
 ```
 From: `F:\Work\Godot\feature-dashboard`
 
@@ -88,7 +88,7 @@ Backend Tests: 12 passed, 3 failed
 Frontend Tests: Not run (backend failure)
 
 Failures:
-1. backend/test_crud_api.py::test_get_features
+1. backend/tests/test_features_api.py::test_get_features
    Error: AssertionError: Expected 4 features, got 0
 
 2. frontend/tests/card-movement.spec.js::Move card from IN PROGRESS to DONE via drag

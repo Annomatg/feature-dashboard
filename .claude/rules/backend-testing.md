@@ -59,7 +59,7 @@ class TestNewEndpoint:
 
 Always run after backend changes:
 ```bash
-./venv/Scripts/python.exe -m pytest backend/test_crud_api.py -v
+./venv/Scripts/python.exe -m pytest backend/tests/ -v
 ```
 
 See `.claude/docs/backend-testing.md` for full guide.

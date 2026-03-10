@@ -5,10 +5,10 @@
 ### Running Tests
 ```bash
 # All tests
-./venv/Scripts/python.exe -m pytest backend/test_crud_api.py -v
+./venv/Scripts/python.exe -m pytest backend/tests/ -v
 
 # Specific test
-./venv/Scripts/python.exe -m pytest backend/test_crud_api.py::TestCreateFeature::test_create_feature_success -v
+./venv/Scripts/python.exe -m pytest backend/tests/::TestCreateFeature::test_create_feature_success -v
 ```
 
 ## Database Isolation (CRITICAL)
@@ -70,11 +70,11 @@ class TestNewEndpoint:
 
 ```bash
 # Verbose
-./venv/Scripts/python.exe -m pytest backend/test_crud_api.py -vv
+./venv/Scripts/python.exe -m pytest backend/tests/ -vv
 
 # With prints
-./venv/Scripts/python.exe -m pytest backend/test_crud_api.py -s
+./venv/Scripts/python.exe -m pytest backend/tests/ -s
 
 # With debugger
-./venv/Scripts/python.exe -m pytest backend/test_crud_api.py --pdb
+./venv/Scripts/python.exe -m pytest backend/tests/ --pdb
 ```

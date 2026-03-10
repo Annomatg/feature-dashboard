@@ -24,7 +24,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 # Ensure project root is on sys.path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from backend.providers import REGISTRY, get_provider
 from backend.providers.claude import ClaudeProvider
