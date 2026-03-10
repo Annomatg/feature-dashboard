@@ -92,6 +92,8 @@ from backend.routers import push as push_router  # noqa: E402
 app.include_router(push_router.router)
 from backend.routers import tasks as tasks_router  # noqa: E402
 app.include_router(tasks_router.router)
+from backend.routers import git as git_router  # noqa: E402
+app.include_router(git_router.router)
 
 
 @app.get("/")
@@ -122,6 +124,7 @@ async def root():
             "get_settings": "GET /api/settings",
             "update_settings": "PUT /api/settings",
             "task_graph": "GET /api/tasks/{id}/graph",
+            "git_update": "POST /api/git/update",
         }
     }
 

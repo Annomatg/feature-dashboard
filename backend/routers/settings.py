@@ -50,6 +50,11 @@ async def update_settings(request: UpdateSettingsRequest):
                 if request.planning_model is not None
                 else current.get("planning_model", PLANNING_MODEL)
             ),
+            "runner_path": (
+                request.runner_path
+                if request.runner_path is not None
+                else current.get("runner_path", "")
+            ),
         }
         save_settings(settings)
         settings["available_providers"] = sorted(REGISTRY.keys())

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, RotateCcw, Save } from 'lucide-react'
+import { X, RotateCcw, Save, GitBranch, RefreshCw, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react'
 
 const DEFAULT_PROMPT_TEMPLATE =
   'Please work on the following feature:\n\nFeature #{feature_id} [{category}]: {name}\n\nDescription:\n{description}\n\nSteps:\n{steps}'
@@ -26,6 +26,35 @@ async function saveSettings(settings) {
   return response.json()
 }
 
+async function runGitUpdate() {
+  const response = await fetch('/api/git/update', { method: 'POST' })
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.detail || 'Git update failed')
+  }
+  return response.json()
+}
+
+// Compact single-line result display for a git operation
+function GitOpResult({ label, result }) {
+  if (!result) return null
+  return (
+    <div className="flex items-start gap-2 text-xs font-mono">
+      <span className="text-text-secondary shrink-0 w-10">{label}</span>
+      {result.success ? (
+        <CheckCircle2 size={12} className="text-green-400 mt-0.5 shrink-0" />
+      ) : (
+        <AlertCircle size={12} className="text-error mt-0.5 shrink-0" />
+      )}
+      <span className={result.success ? 'text-green-400' : 'text-error'}>
+        {result.success
+          ? result.stdout || 'OK'
+          : result.stderr || result.stdout || 'Failed'}
+      </span>
+    </div>
+  )
+}
+
 function SettingsPanel({ onClose }) {
   const [promptTemplate, setPromptTemplate] = useState('')
   const [savedTemplate, setSavedTemplate] = useState('')
@@ -33,9 +62,17 @@ function SettingsPanel({ onClose }) {
   const [savedPlanTemplate, setSavedPlanTemplate] = useState('')
   const [budgetLimit, setBudgetLimit] = useState(0)
   const [savedBudgetLimit, setSavedBudgetLimit] = useState(0)
+  const [runnerPath, setRunnerPath] = useState('')
+  const [savedRunnerPath, setSavedRunnerPath] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [saveMessage, setSaveMessage] = useState(null)
+
+  // Git update state
+  const [isUpdating, setIsUpdating] = useState(false)
+  const [gitResult, setGitResult] = useState(null)   // API response shape
+  const [gitError, setGitError] = useState(null)     // network/HTTP error string
+
   const panelRef = useRef(null)
 
   // Load settings on mount
@@ -49,6 +86,9 @@ function SettingsPanel({ onClose }) {
         const limit = data.autopilot_budget_limit ?? 0
         setBudgetLimit(limit)
         setSavedBudgetLimit(limit)
+        const rp = data.runner_path ?? ''
+        setRunnerPath(rp)
+        setSavedRunnerPath(rp)
       })
       .catch(() => {
         setPromptTemplate(DEFAULT_PROMPT_TEMPLATE)
@@ -57,6 +97,8 @@ function SettingsPanel({ onClose }) {
         setSavedPlanTemplate(DEFAULT_PLAN_TASKS_TEMPLATE)
         setBudgetLimit(0)
         setSavedBudgetLimit(0)
+        setRunnerPath('')
+        setSavedRunnerPath('')
       })
       .finally(() => setIsLoading(false))
   }, [])
@@ -70,7 +112,11 @@ function SettingsPanel({ onClose }) {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
 
-  const isDirty = promptTemplate !== savedTemplate || planTemplate !== savedPlanTemplate || budgetLimit !== savedBudgetLimit
+  const isDirty =
+    promptTemplate !== savedTemplate ||
+    planTemplate !== savedPlanTemplate ||
+    budgetLimit !== savedBudgetLimit ||
+    runnerPath !== savedRunnerPath
 
   const handleSave = async () => {
     setIsSaving(true)
@@ -80,16 +126,32 @@ function SettingsPanel({ onClose }) {
         claude_prompt_template: promptTemplate,
         plan_tasks_prompt_template: planTemplate,
         autopilot_budget_limit: budgetLimit,
+        runner_path: runnerPath,
       })
       setSavedTemplate(promptTemplate)
       setSavedPlanTemplate(planTemplate)
       setSavedBudgetLimit(budgetLimit)
+      setSavedRunnerPath(runnerPath)
       setSaveMessage({ type: 'success', text: 'Settings saved!' })
     } catch (err) {
       setSaveMessage({ type: 'error', text: err.message || 'Failed to save' })
     } finally {
       setIsSaving(false)
       setTimeout(() => setSaveMessage(null), 3000)
+    }
+  }
+
+  const handleGitUpdate = async () => {
+    setIsUpdating(true)
+    setGitResult(null)
+    setGitError(null)
+    try {
+      const result = await runGitUpdate()
+      setGitResult(result)
+    } catch (err) {
+      setGitError(err.message || 'Git update failed')
+    } finally {
+      setIsUpdating(false)
     }
   }
 
@@ -156,6 +218,78 @@ function SettingsPanel({ onClose }) {
                   onChange={(e) => setBudgetLimit(Math.max(0, parseInt(e.target.value, 10) || 0))}
                   className="w-32 bg-background border border-border rounded px-3 py-2 text-sm text-text-primary font-mono focus:outline-none focus:border-primary transition-colors"
                 />
+              </div>
+
+              {/* Git Update */}
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <GitBranch size={14} className="text-text-secondary" />
+                  <label className="block text-xs font-mono text-text-secondary uppercase tracking-wide">
+                    Git Update
+                  </label>
+                </div>
+                <p className="text-xs text-text-secondary mb-3 leading-relaxed">
+                  Push the feature-dashboard repo, then pull the runner project.
+                  Set the runner folder path below (leave empty to skip pull).
+                </p>
+
+                {/* Runner path input */}
+                <div className="mb-3">
+                  <label className="block text-xs font-mono text-text-secondary mb-1.5">
+                    Runner folder path
+                  </label>
+                  <input
+                    type="text"
+                    data-testid="runner-path-input"
+                    value={runnerPath}
+                    onChange={(e) => setRunnerPath(e.target.value)}
+                    placeholder="e.g. F:/Work/Godot/feature-dashboard-runner"
+                    className="w-full bg-background border border-border rounded px-3 py-2 text-sm text-text-primary font-mono focus:outline-none focus:border-primary transition-colors placeholder:text-text-secondary/40"
+                  />
+                </div>
+
+                {/* Git Update button */}
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={handleGitUpdate}
+                    disabled={isUpdating || runnerPath !== savedRunnerPath}
+                    data-testid="git-update-btn"
+                    title={runnerPath !== savedRunnerPath ? 'Save settings first to apply runner path changes' : undefined}
+                    className="flex items-center gap-2 px-4 py-2 rounded font-mono text-sm font-semibold border border-border text-text-secondary hover:border-primary hover:text-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isUpdating ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <RefreshCw size={14} />
+                    )}
+                    {isUpdating ? 'Updating...' : 'Git Update'}
+                  </button>
+                  {runnerPath !== savedRunnerPath && (
+                    <span className="text-xs font-mono text-text-secondary">
+                      save first
+                    </span>
+                  )}
+                </div>
+
+                {/* Git result / error display */}
+                {(gitResult || gitError) && (
+                  <div
+                    data-testid="git-update-result"
+                    className="mt-3 bg-background border border-border rounded px-3 py-2.5 space-y-1.5"
+                  >
+                    {gitError ? (
+                      <div className="flex items-center gap-2 text-xs font-mono text-error">
+                        <AlertCircle size={12} className="shrink-0" />
+                        {gitError}
+                      </div>
+                    ) : (
+                      <>
+                        <GitOpResult label="push" result={gitResult.push} />
+                        <GitOpResult label="pull" result={gitResult.pull} />
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Autopilot prompt template */}

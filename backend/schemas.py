@@ -168,6 +168,7 @@ class SettingsResponse(BaseModel):
     provider: str = "claude"
     available_providers: list[str] = []
     planning_model: str = "claude-opus-4-6"
+    runner_path: str = ""
 
 
 class UpdateSettingsRequest(BaseModel):
@@ -177,6 +178,25 @@ class UpdateSettingsRequest(BaseModel):
     autopilot_budget_limit: int = 0
     provider: str = "claude"
     planning_model: Optional[str] = None
+    runner_path: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Git models
+# ---------------------------------------------------------------------------
+
+class GitOperationResult(BaseModel):
+    """Result of a single git operation."""
+    success: bool
+    returncode: int
+    stdout: str
+    stderr: str
+
+
+class GitUpdateResponse(BaseModel):
+    """Response for POST /api/git/update."""
+    push: GitOperationResult
+    pull: Optional[GitOperationResult] = None
 
 
 # ---------------------------------------------------------------------------
