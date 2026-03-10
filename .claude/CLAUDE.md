@@ -1,6 +1,6 @@
 # Feature Dashboard
 
-See `project.json` for tech stack, structure, key files, API endpoints, and database schema.
+ALWAYS read the `project.json` first for tech stack, structure, key files, API endpoints, and database schema.
 
 ## Development Workflow
 
