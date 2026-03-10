@@ -457,6 +457,133 @@ def _discover_subagent_logs(projects_dir: Path, session_id: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Delegation edge extraction
+# ---------------------------------------------------------------------------
+
+def _extract_delegation_edges(
+    jsonl_file: Path,
+    source_id: str = "main",
+    subagent_log_infos: Optional[list[dict]] = None,
+) -> list[dict]:
+    """Extract delegation edges from Agent tool calls in a JSONL session file.
+
+    Scans the file for ``tool_use`` blocks with ``name == 'Agent'`` and builds
+    edge records representing caller→subagent delegation relationships.
+
+    Subagent IDs are resolved in this order:
+    1. The ``resume`` field in the Agent tool call input (actual session ID).
+    2. The corresponding entry in *subagent_log_infos* by call order
+       (as returned by :func:`_discover_subagent_logs`).
+    3. Synthetic fallback: ``agent_<N>`` where N is the 1-based call position.
+
+    Edges are deduplicated — if the same (source, target) pair appears more
+    than once only one edge record is returned.
+
+    For nested delegations the function is called recursively on each
+    *subagent_log_infos* entry whose file exists.  Note: deeply nested
+    real-ID resolution (sub-subagents) requires the caller to supply
+    nested ``subagent_log_infos`` for those levels; the recursive call
+    here passes no further log-info, so second-level delegations use
+    synthetic IDs unless ``resume`` fields are present in the nested log.
+
+    Args:
+        jsonl_file: Path to the JSONL session file to parse.
+        source_id: ID label for the agent whose log is being parsed
+            (``"main"`` for the top-level session).
+        subagent_log_infos: List of ``{"agent_id": str, "file_path": str}``
+            records as returned by :func:`_discover_subagent_logs`.  When
+            ``None`` no subagent files are consulted and synthetic IDs are
+            used for all Agent calls.
+
+    Returns:
+        Deduplicated list of ``{"source": str, "target": str}`` edge dicts,
+        including edges from nested subagent logs.
+    """
+    if subagent_log_infos is None:
+        subagent_log_infos = []
+
+    edges: list[dict] = []
+    seen: set[tuple] = set()
+
+    # _add_edge is a closure over `edges` and `seen` so that the recursive
+    # merge below (re-passing nested edges through _add_edge) naturally
+    # deduplicates across all levels rather than just within each level.
+    def _add_edge(src: str, tgt: str) -> None:
+        key = (src, tgt)
+        if key not in seen:
+            seen.add(key)
+            edges.append({"source": src, "target": tgt})
+
+    # Separate counters: position tracks correlation with subagent_log_infos;
+    # synthetic_counter counts only calls that fall through to the fallback ID
+    # so that synthetic suffixes reflect "which new agent", not call position.
+    agent_call_position = 0
+    synthetic_counter = 0
+
+    try:
+        with open(jsonl_file, 'r', encoding='utf-8', errors='replace') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                if obj.get('type') != 'assistant':
+                    continue
+
+                msg = obj.get('message', {})
+                if not isinstance(msg, dict):
+                    continue
+
+                content = msg.get('content', [])
+                if not isinstance(content, list):
+                    continue
+
+                for item in content:
+                    if not isinstance(item, dict):
+                        continue
+                    if item.get('type') != 'tool_use':
+                        continue
+                    if item.get('name') != 'Agent':
+                        continue
+
+                    tool_input = item.get('input', {}) or {}
+
+                    # 1. Prefer the resume field — it IS the real subagent session ID.
+                    subagent_id: Optional[str] = tool_input.get('resume') or None
+
+                    # 2. Correlate by call order with discovered subagent log files.
+                    if not subagent_id and agent_call_position < len(subagent_log_infos):
+                        subagent_id = subagent_log_infos[agent_call_position]['agent_id']
+
+                    # 3. Synthetic fallback — increment a dedicated counter so that
+                    #    the suffix always reflects unique new-agent ordinal, not raw
+                    #    call position.
+                    if not subagent_id:
+                        synthetic_counter += 1
+                        subagent_id = f"agent_{synthetic_counter}"
+
+                    _add_edge(source_id, subagent_id)
+                    agent_call_position += 1
+    except (IOError, OSError):
+        return []
+
+    # Recursively extract edges from discovered subagent logs.  Merge via
+    # _add_edge (not list.extend) so cross-level duplicates are also removed.
+    for info in subagent_log_infos:
+        sub_path = Path(info['file_path'])
+        if sub_path.exists():
+            nested = _extract_delegation_edges(sub_path, source_id=info['agent_id'])
+            for edge in nested:
+                _add_edge(edge['source'], edge['target'])
+
+    return edges
+
+
+# ---------------------------------------------------------------------------
 # Agent graph parsing
 # ---------------------------------------------------------------------------
 
