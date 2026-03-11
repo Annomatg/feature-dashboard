@@ -94,6 +94,8 @@ from backend.routers import tasks as tasks_router  # noqa: E402
 app.include_router(tasks_router.router)
 from backend.routers import git as git_router  # noqa: E402
 app.include_router(git_router.router)
+from backend.routers import feature_commits as feature_commits_router  # noqa: E402
+app.include_router(feature_commits_router.router)
 
 
 @app.get("/")

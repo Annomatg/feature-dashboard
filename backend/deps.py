@@ -10,8 +10,9 @@ Public API
 ----------
 - get_session()                           SQLAlchemy session factory
 - get_comment_counts(session, ids)        batch comment-count query
+- get_commit_counts(session, ids)         batch commit-count query
 - get_recent_logs(session, ids)           batch most-recent-log query
-- feature_to_response(feature, c, l)     ORM → FeatureResponse conversion
+- feature_to_response(feature, c, l, cc) ORM → FeatureResponse conversion
 - load_settings() / save_settings(s)     settings.json I/O
 - load_dashboards_config()               dashboards.json I/O
 - validate_db_path(path)                 DB path validation
@@ -39,7 +40,7 @@ from sqlalchemy.orm import sessionmaker
 # Add parent directory to path for api/ package imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from api.database import Comment, Feature, create_database
+from api.database import Comment, Feature, FeatureCommit, create_database
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -167,12 +168,26 @@ def get_recent_logs(session, feature_ids: list) -> dict:
     return {fid: content for fid, content in rows}
 
 
-def feature_to_response(feature, comment_counts: dict, recent_logs: Optional[dict] = None):
-    """Convert a Feature ORM object to FeatureResponse including comment_count and recent_log."""
+def get_commit_counts(session, feature_ids: list) -> dict:
+    """Return a mapping of feature_id -> commit_count for the given feature IDs."""
+    if not feature_ids:
+        return {}
+    rows = (
+        session.query(FeatureCommit.feature_id, sa_func.count(FeatureCommit.id))
+        .filter(FeatureCommit.feature_id.in_(feature_ids))
+        .group_by(FeatureCommit.feature_id)
+        .all()
+    )
+    return {fid: count for fid, count in rows}
+
+
+def feature_to_response(feature, comment_counts: dict, recent_logs: Optional[dict] = None, commit_counts: Optional[dict] = None):
+    """Convert a Feature ORM object to FeatureResponse including comment_count, commit_count, and recent_log."""
     # Import here to avoid potential circular imports at module load time
     from backend.schemas import FeatureResponse
     d = feature.to_dict()
     d["comment_count"] = comment_counts.get(feature.id, 0)
+    d["commit_count"] = (commit_counts or {}).get(feature.id, 0)
     d["recent_log"] = (recent_logs or {}).get(feature.id)
     return FeatureResponse(**d)
 

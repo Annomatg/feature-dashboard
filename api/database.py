@@ -105,6 +105,26 @@ class Comment(Base):
         }
 
 
+class FeatureCommit(Base):
+    """Git commit ID attached to a feature to record implementation history."""
+
+    __tablename__ = "feature_commits"
+
+    id = Column(Integer, primary_key=True, index=True)
+    feature_id = Column(Integer, ForeignKey("features.id", ondelete="CASCADE"), nullable=False, index=True)
+    commit_hash = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=func.now())
+
+    def to_dict(self) -> dict:
+        """Convert commit to dictionary for JSON serialization."""
+        return {
+            "id": self.id,
+            "feature_id": self.feature_id,
+            "commit_hash": self.commit_hash,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
 class Feature(Base):
     """Feature model representing a test case/feature to implement."""
 
@@ -163,7 +183,7 @@ def get_database_url(project_dir: Path, db_filename: str = "features.db") -> str
 # Numbered migrations
 # ---------------------------------------------------------------------------
 
-LATEST_SCHEMA_VERSION = 11
+LATEST_SCHEMA_VERSION = 12
 
 
 def _migration_v1(engine) -> None:
@@ -341,6 +361,26 @@ def _migration_v11(engine) -> None:
             conn.commit()
 
 
+def _migration_v12(engine) -> None:
+    """v12: Create feature_commits table for storing git commit IDs attached to features."""
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='feature_commits'"))
+        if result.fetchone() is None:
+            conn.execute(text("""
+                CREATE TABLE feature_commits (
+                    id INTEGER PRIMARY KEY,
+                    feature_id INTEGER NOT NULL REFERENCES features(id) ON DELETE CASCADE,
+                    commit_hash VARCHAR(255) NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            conn.execute(text("CREATE INDEX ix_feature_commits_id ON feature_commits (id)"))
+            conn.execute(text("CREATE INDEX ix_feature_commits_feature_id ON feature_commits (feature_id)"))
+            conn.commit()
+
+
 _MIGRATIONS = [
     (1, _migration_v1),
     (2, _migration_v2),
@@ -353,6 +393,7 @@ _MIGRATIONS = [
     (9, _migration_v9),
     (10, _migration_v10),
     (11, _migration_v11),
+    (12, _migration_v12),
 ]
 
 

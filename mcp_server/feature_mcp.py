@@ -35,7 +35,7 @@ from sqlalchemy.sql.expression import func
 # Add parent directory to path so we can import from api module
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from api.database import Comment, Feature, create_database
+from api.database import Comment, Feature, FeatureCommit, create_database
 from api.migration import migrate_json_to_sqlite
 
 # Configuration from environment
@@ -551,6 +551,46 @@ def feature_add_comment(
         session.refresh(comment)
 
         return json.dumps(comment.to_dict(), indent=2)
+    except Exception as e:
+        session.rollback()
+        return json.dumps({"error": str(e)})
+    finally:
+        session.close()
+
+
+@mcp.tool()
+def feature_add_commit(
+    feature_id: Annotated[int, Field(description="The ID of the feature to attach the commit to", ge=1)],
+    commit_hash: Annotated[str, Field(description="The git commit hash (full or abbreviated) to attach")]
+) -> str:
+    """Attach a git commit ID to a feature to record what was implemented.
+
+    Use this instead of adding a text comment — the frontend will look up
+    the commit message automatically, keeping the database lean.
+
+    Args:
+        feature_id: The ID of the feature to attach the commit to
+        commit_hash: The git commit hash (e.g. 'abc1234' or full 40-char hash)
+
+    Returns:
+        JSON with the created commit record details, or error if feature not found.
+    """
+    commit_hash = commit_hash.strip()
+    if not commit_hash:
+        return json.dumps({"error": "Commit hash cannot be empty"})
+
+    session = get_session()
+    try:
+        feature = session.query(Feature).filter(Feature.id == feature_id).first()
+        if feature is None:
+            return json.dumps({"error": f"Feature with ID {feature_id} not found"})
+
+        commit = FeatureCommit(feature_id=feature_id, commit_hash=commit_hash)
+        session.add(commit)
+        session.commit()
+        session.refresh(commit)
+
+        return json.dumps(commit.to_dict(), indent=2)
     except Exception as e:
         session.rollback()
         return json.dumps({"error": str(e)})

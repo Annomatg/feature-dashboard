@@ -43,6 +43,7 @@ class FeatureResponse(BaseModel):
     modified_at: Optional[str] = None
     completed_at: Optional[str] = None
     comment_count: int = 0
+    commit_count: int = 0
     recent_log: Optional[str] = None
 
 
@@ -214,6 +215,33 @@ class CommentResponse(BaseModel):
 class CreateCommentRequest(BaseModel):
     """Request to add a comment to a feature."""
     content: str
+
+
+# ---------------------------------------------------------------------------
+# Feature commit models
+# ---------------------------------------------------------------------------
+
+class FeatureCommitResponse(BaseModel):
+    """Git commit ID attached to a feature."""
+    id: int
+    feature_id: int
+    commit_hash: str
+    created_at: Optional[str] = None
+
+
+class AddCommitRequest(BaseModel):
+    """Request to attach a git commit ID to a feature."""
+    commit_hash: str
+
+
+class GitCommitInfoResponse(BaseModel):
+    """Resolved details for a single git commit hash."""
+    hash: str
+    short_hash: str
+    message: str
+    author: str
+    date: str
+    error: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

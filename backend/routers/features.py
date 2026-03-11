@@ -29,6 +29,7 @@ import backend.deps as _deps
 from backend.deps import (
     get_session,
     get_comment_counts,
+    get_commit_counts,
     get_recent_logs,
     feature_to_response,
     _feature_subscribers,
@@ -147,10 +148,11 @@ async def get_features(
             features = query.limit(actual_limit).offset(actual_offset).all()
             fids = [f.id for f in features]
             counts = get_comment_counts(session, fids)
+            commits = get_commit_counts(session, fids)
             logs = get_recent_logs(session, fids)
 
             return PaginatedFeaturesResponse(
-                features=[feature_to_response(f, counts, logs) for f in features],
+                features=[feature_to_response(f, counts, logs, commits) for f in features],
                 total=total,
                 limit=actual_limit,
                 offset=actual_offset
@@ -160,8 +162,9 @@ async def get_features(
         features = query.all()
         fids = [f.id for f in features]
         counts = get_comment_counts(session, fids)
+        commits = get_commit_counts(session, fids)
         logs = get_recent_logs(session, fids)
-        return [feature_to_response(f, counts, logs) for f in features]
+        return [feature_to_response(f, counts, logs, commits) for f in features]
     finally:
         session.close()
 
@@ -428,8 +431,9 @@ async def get_feature(feature_id: int):
             raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
 
         counts = get_comment_counts(session, [feature_id])
+        commits = get_commit_counts(session, [feature_id])
         logs = get_recent_logs(session, [feature_id])
-        return feature_to_response(feature, counts, logs)
+        return feature_to_response(feature, counts, logs, commits)
     finally:
         session.close()
 
@@ -556,7 +560,7 @@ async def create_feature(request: CreateFeatureRequest):
                 session.add(CategoryToken(token=token, usage_count=1))
         session.commit()
 
-        return feature_to_response(new_feature, {})
+        return feature_to_response(new_feature, {}, None, {})
     except HTTPException:
         raise
     except Exception as e:
@@ -647,7 +651,7 @@ async def update_feature(feature_id: int, request: UpdateFeatureRequest):
                     session.add(CategoryToken(token=token, usage_count=1))
             session.commit()
 
-        return feature_to_response(feature, get_comment_counts(session, [feature.id]), get_recent_logs(session, [feature.id]))
+        return feature_to_response(feature, get_comment_counts(session, [feature.id]), get_recent_logs(session, [feature.id]), get_commit_counts(session, [feature.id]))
     except HTTPException:
         raise
     except Exception as e:
@@ -733,7 +737,7 @@ async def update_feature_state(feature_id: int, request: UpdateFeatureStateReque
             }
             background_tasks.add_task(_send_push_to_all, push_payload)
 
-        return feature_to_response(feature, get_comment_counts(session, [feature.id]), get_recent_logs(session, [feature.id]))
+        return feature_to_response(feature, get_comment_counts(session, [feature.id]), get_recent_logs(session, [feature.id]), get_commit_counts(session, [feature.id]))
     except HTTPException:
         raise
     except Exception as e:
@@ -823,7 +827,7 @@ async def update_feature_priority(feature_id: int, request: UpdateFeaturePriorit
         session.commit()
         session.refresh(feature)
 
-        return feature_to_response(feature, get_comment_counts(session, [feature.id]), get_recent_logs(session, [feature.id]))
+        return feature_to_response(feature, get_comment_counts(session, [feature.id]), get_recent_logs(session, [feature.id]), get_commit_counts(session, [feature.id]))
     except HTTPException:
         raise
     except Exception as e:
@@ -881,7 +885,7 @@ async def move_feature(feature_id: int, request: MoveFeatureRequest):
         session.commit()
         session.refresh(feature)
 
-        return feature_to_response(feature, get_comment_counts(session, [feature.id]), get_recent_logs(session, [feature.id]))
+        return feature_to_response(feature, get_comment_counts(session, [feature.id]), get_recent_logs(session, [feature.id]), get_commit_counts(session, [feature.id]))
     except HTTPException:
         raise
     except Exception as e:
@@ -936,7 +940,7 @@ async def reorder_feature(feature_id: int, request: ReorderFeatureRequest):
         session.commit()
         session.refresh(feature)
 
-        return feature_to_response(feature, get_comment_counts(session, [feature.id]), get_recent_logs(session, [feature.id]))
+        return feature_to_response(feature, get_comment_counts(session, [feature.id]), get_recent_logs(session, [feature.id]), get_commit_counts(session, [feature.id]))
     except HTTPException:
         raise
     except Exception as e:

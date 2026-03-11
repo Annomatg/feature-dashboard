@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from backend.deps import PROJECT_DIR, load_settings
-from backend.schemas import GitOperationResult, GitUpdateResponse
+from backend.schemas import GitCommitInfoResponse, GitOperationResult, GitUpdateResponse
 
 router = APIRouter(prefix="/api", tags=["git"])
 
@@ -84,3 +84,41 @@ async def git_update():
 
     pull = await _run_git(["pull"], cwd=runner_dir)
     return GitUpdateResponse(push=push, pull=pull)
+
+
+@router.get("/git/commit/{commit_hash}", response_model=GitCommitInfoResponse)
+async def get_commit_info(commit_hash: str):
+    """Get details for a single git commit by its hash.
+
+    Looks up the commit in the feature-dashboard repository and returns
+    the full hash, abbreviated hash, commit message, author name, and date.
+    Returns a 200 with an error field set if the commit hash is not found.
+    """
+    result = await _run_git(
+        ["show", "--no-patch", "--format=%H%n%s%n%an%n%ai", commit_hash],
+        cwd=PROJECT_DIR,
+    )
+
+    if not result.success or not result.stdout:
+        return GitCommitInfoResponse(
+            hash=commit_hash,
+            short_hash=commit_hash[:7] if len(commit_hash) >= 7 else commit_hash,
+            message="",
+            author="",
+            date="",
+            error=result.stderr or f"Commit {commit_hash!r} not found",
+        )
+
+    lines = result.stdout.splitlines()
+    full_hash = lines[0] if len(lines) > 0 else commit_hash
+    message = lines[1] if len(lines) > 1 else ""
+    author = lines[2] if len(lines) > 2 else ""
+    date = lines[3] if len(lines) > 3 else ""
+
+    return GitCommitInfoResponse(
+        hash=full_hash,
+        short_hash=full_hash[:7],
+        message=message,
+        author=author,
+        date=date,
+    )

@@ -135,6 +135,62 @@ class TestGitUpdateWithRunnerPath:
         assert str(missing_dir) in data["pull"]["stderr"]
 
 
+class TestGitCommitInfo:
+    """GET /api/git/commit/{hash}"""
+
+    def test_returns_commit_info_on_success(self, client):
+        """Returns 200 with commit details when git show succeeds."""
+        mock_result = GitOperationResult(
+            success=True,
+            returncode=0,
+            stdout="abcdef1234567890abcdef1234567890abcdef12\nfix: add git commit ids\nAlice\n2026-03-11 09:00:00 +0000",
+            stderr="",
+        )
+        with patch("backend.routers.git._run_git", new=AsyncMock(return_value=mock_result)):
+            resp = client.get("/api/git/commit/abcdef1")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["hash"] == "abcdef1234567890abcdef1234567890abcdef12"
+        assert data["short_hash"] == "abcdef1"
+        assert data["message"] == "fix: add git commit ids"
+        assert data["author"] == "Alice"
+        assert data["date"] == "2026-03-11 09:00:00 +0000"
+        assert data["error"] is None
+
+    def test_returns_error_field_when_commit_not_found(self, client):
+        """Returns 200 with error field when git show fails (commit not found)."""
+        mock_result = GitOperationResult(
+            success=False,
+            returncode=128,
+            stdout="",
+            stderr="fatal: bad object badbeef",
+        )
+        with patch("backend.routers.git._run_git", new=AsyncMock(return_value=mock_result)):
+            resp = client.get("/api/git/commit/badbeef")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["error"] == "fatal: bad object badbeef"
+        assert data["message"] == ""
+        assert data["short_hash"] == "badbeef"
+
+    def test_response_has_all_fields(self, client):
+        """Response always includes hash, short_hash, message, author, date, error."""
+        mock_result = GitOperationResult(
+            success=True,
+            returncode=0,
+            stdout="1234567890123456789012345678901234567890\nchore: test\nBob\n2026-01-01 00:00:00 +0000",
+            stderr="",
+        )
+        with patch("backend.routers.git._run_git", new=AsyncMock(return_value=mock_result)):
+            resp = client.get("/api/git/commit/1234567")
+
+        data = resp.json()
+        for field in ("hash", "short_hash", "message", "author", "date", "error"):
+            assert field in data, f"Missing field: {field}"
+
+
 class TestGitUpdateResponseShape:
     """Verify the response shape matches the schema."""
 

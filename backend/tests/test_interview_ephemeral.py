@@ -146,7 +146,7 @@ class TestNoDatabaseModel:
         from api.database import Base
         table_names = set(Base.metadata.tables.keys())
         expected = {
-            'features', 'comments',
+            'features', 'comments', 'feature_commits',
             'name_tokens', 'description_tokens',
             'name_bigrams', 'description_bigrams', 'category_tokens',
         }

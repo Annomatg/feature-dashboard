@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { FileText, MessageSquare } from 'lucide-react'
+import { FileText, GitCommit, MessageSquare } from 'lucide-react'
 
 // Detect touch-only devices once at module load time.
 // On touch devices the HTML5 drag-and-drop API is not triggered by touch events,
@@ -174,6 +174,18 @@ function KanbanCard({
               size={14}
               style={{ color: `${accentColor}80` }}
             />
+          )}
+          {feature.commit_count > 0 && (
+            <span
+              className="flex items-center gap-0.5"
+              title={`${feature.commit_count} commit${feature.commit_count !== 1 ? 's' : ''}`}
+              data-testid="commit-indicator"
+            >
+              <GitCommit size={14} style={{ color: `${accentColor}80` }} />
+              <span className="font-mono text-xs" style={{ color: `${accentColor}80` }}>
+                {feature.commit_count}
+              </span>
+            </span>
           )}
           {feature.comment_count > 0 && (
             <span

@@ -1,11 +1,23 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
-import { X, Trash2, Check, RotateCcw, Terminal, MessageSquare, ChevronDown, RefreshCw } from 'lucide-react'
+import { X, Trash2, Check, RotateCcw, Terminal, MessageSquare, ChevronDown, RefreshCw, GitCommit } from 'lucide-react'
 import EditableSteps from './EditableSteps'
 import GhostTextArea from './GhostTextArea'
 
 async function fetchComments(featureId) {
   const response = await fetch(`/api/features/${featureId}/comments`)
   if (!response.ok) throw new Error('Failed to fetch comments')
+  return response.json()
+}
+
+async function fetchCommits(featureId) {
+  const response = await fetch(`/api/features/${featureId}/commits`)
+  if (!response.ok) throw new Error('Failed to fetch commits')
+  return response.json()
+}
+
+async function fetchCommitInfo(hash) {
+  const response = await fetch(`/api/git/commit/${encodeURIComponent(hash)}`)
+  if (!response.ok) throw new Error('Failed to fetch commit info')
   return response.json()
 }
 
@@ -336,6 +348,52 @@ function ClaudeLogSection({ featureId, inProgress, claudeSessionId }) {
 }
 
 
+function CommitItem({ commit }) {
+  const [info, setInfo] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    fetchCommitInfo(commit.commit_hash)
+      .then(data => { if (!cancelled) { setInfo(data); setLoading(false) } })
+      .catch(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [commit.commit_hash])
+
+  const shortHash = info?.short_hash || commit.commit_hash.slice(0, 7)
+  const message = info?.message || (loading ? null : '(unable to resolve)')
+  const hasError = info?.error && !info.message
+
+  return (
+    <div
+      data-testid="commit-item"
+      className="bg-background rounded p-3 border border-border flex items-start gap-3"
+    >
+      <span
+        className="font-mono text-xs px-1.5 py-0.5 rounded bg-surface-light text-primary flex-shrink-0 mt-0.5 select-all"
+        title={commit.commit_hash}
+      >
+        {shortHash}
+      </span>
+      <div className="min-w-0 flex-1">
+        {loading ? (
+          <span className="text-xs font-mono text-text-secondary italic animate-pulse">resolving…</span>
+        ) : hasError ? (
+          <span className="text-xs font-mono text-text-secondary italic">{info.error}</span>
+        ) : (
+          <span className="text-sm text-text-primary break-words leading-relaxed">{message}</span>
+        )}
+        {commit.created_at && (
+          <p className="text-xs font-mono text-text-secondary mt-1">
+            {new Date(commit.created_at).toLocaleString()}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+
 function DetailPanel({ feature, onClose, onUpdate, onDelete }) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
@@ -343,12 +401,16 @@ function DetailPanel({ feature, onClose, onUpdate, onDelete }) {
   const [launchMessage, setLaunchMessage] = useState(null)
   const [hiddenExecution, setHiddenExecution] = useState(true)
   const [comments, setComments] = useState([])
+  const [commits, setCommits] = useState([])
   const panelRef = useRef(null)
 
   useEffect(() => {
     fetchComments(feature.id)
       .then(setComments)
       .catch(() => setComments([]))
+    fetchCommits(feature.id)
+      .then(setCommits)
+      .catch(() => setCommits([]))
   }, [feature.id])
 
   // Close on Escape key
@@ -528,6 +590,21 @@ function DetailPanel({ feature, onClose, onUpdate, onDelete }) {
 
           {/* Claude Log - shown for IN PROGRESS features or features with stored session logs */}
           <ClaudeLogSection featureId={feature.id} inProgress={feature.in_progress} claudeSessionId={feature.claude_session_id} />
+
+          {/* Commits */}
+          {commits.length > 0 && (
+            <div data-testid="commits-section">
+              <label className="block text-xs font-mono text-text-secondary mb-2 uppercase tracking-wide flex items-center gap-1.5">
+                <GitCommit size={12} />
+                Commits ({commits.length})
+              </label>
+              <div className="space-y-2">
+                {commits.map((commit) => (
+                  <CommitItem key={commit.id} commit={commit} />
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Comments */}
           {comments.length > 0 && (

@@ -68,12 +68,22 @@
       "created_at": "DATETIME",
       "modified_at": "DATETIME",
       "completed_at": "DATETIME"
+    },
+    "table_feature_commits": {
+      "id": "INTEGER PRIMARY KEY",
+      "feature_id": "INTEGER FK features(id) CASCADE",
+      "commit_hash": "VARCHAR(255) NOT NULL",
+      "created_at": "DATETIME"
     }
   },
   "api_endpoints": {
     "GET /api/features": "List features (filters: passes, in_progress, category)",
     "GET /api/features/stats": "Feature completion statistics",
     "GET /api/features/{id}": "Single feature by ID",
+    "GET /api/features/{id}/commits": "List git commit IDs attached to a feature",
+    "POST /api/features/{id}/commits": "Attach a git commit ID to a feature",
+    "DELETE /api/features/{id}/commits/{commit_id}": "Remove a commit ID from a feature",
+    "GET /api/git/commit/{hash}": "Resolve a git commit hash to message/author/date",
     "GET /api/databases": "List configured databases",
     "GET /api/databases/active": "Currently active database",
     "POST /api/databases/select": "Switch active database"
