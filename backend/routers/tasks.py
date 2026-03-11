@@ -1,9 +1,10 @@
 """
 Task-related HTTP endpoints router.
 
-Provides endpoints for accessing task-specific data like agent graphs.
+Provides endpoints for accessing task-specific data like agent graphs and logs.
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -36,6 +37,111 @@ from backend.schemas import (
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
 
+# ---------------------------------------------------------------------------
+# Validation helpers
+# ---------------------------------------------------------------------------
+
+# Strict allowlist: alphanumeric, hyphens, underscores, dots — no path components.
+_SAFE_SESSION_RE = re.compile(r'^[a-zA-Z0-9_\-.]+\.jsonl$')
+_SAFE_AGENT_RE = re.compile(r'^[a-zA-Z0-9_\-.]+$')
+
+
+def _validate_session_id(session_id: str) -> None:
+    """Raise HTTPException(400) if session_id is not safe to use as a filename.
+
+    Enforces a strict allowlist AND checks that Path(session_id).name == session_id
+    to catch any directory component that might survive URL decoding or encoding tricks.
+    """
+    if not _SAFE_SESSION_RE.match(session_id) or Path(session_id).name != session_id:
+        raise HTTPException(status_code=400, detail="Invalid session ID format")
+
+
+def _validate_agent_id(agent_id: str) -> None:
+    """Raise HTTPException(400) if agent_id contains unsafe characters.
+
+    'main' is always accepted. Other values must match the strict allowlist
+    (alphanumeric, hyphens, underscores, dots — no path separators or null bytes).
+    """
+    if agent_id != "main" and not _SAFE_AGENT_RE.match(agent_id):
+        raise HTTPException(status_code=400, detail="Invalid agent ID format")
+
+
+# ---------------------------------------------------------------------------
+# Resolution helpers
+# ---------------------------------------------------------------------------
+
+def _resolve_session_context(task_id: int, db_session) -> tuple[str, Path]:
+    """Look up the task, validate its session ID, and resolve the projects dir.
+
+    Returns:
+        (session_id, projects_dir)
+
+    Raises:
+        HTTPException 404: task not found, no session ID, or projects dir missing
+        HTTPException 400: session ID fails validation
+    """
+    feature = db_session.query(Feature).filter(Feature.id == task_id).first()
+
+    if feature is None:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+    if not feature.claude_session_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No session file available for task {task_id}",
+        )
+
+    session_id = feature.claude_session_id
+    _validate_session_id(session_id)
+
+    working_dir = str(_deps._current_db_path.parent)
+    projects_dir = _get_claude_projects_dir(working_dir)
+
+    if projects_dir is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Claude projects directory not found",
+        )
+
+    return session_id, projects_dir
+
+
+def _resolve_main_file(session_id: str, projects_dir: Path) -> Path:
+    """Return the main session file path or raise HTTPException(404)."""
+    session_file = projects_dir / session_id
+    if not session_file.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Session file not found: {session_id}",
+        )
+    return session_file
+
+
+def _resolve_subagent_file(agent_id: str, session_id: str, projects_dir: Path) -> Path:
+    """Look up a subagent log file by agent_id or raise HTTPException(404)."""
+    subagents = _discover_subagent_logs(projects_dir, session_id)
+    match = next((s for s in subagents if s["agent_id"] == agent_id), None)
+
+    if match is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Agent '{agent_id}' not found for this task",
+        )
+
+    subagent_file = Path(match["file_path"])
+    if not subagent_file.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Subagent log file not found for agent '{agent_id}'",
+        )
+
+    return subagent_file
+
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
 @router.get("/{task_id}/graph", response_model=TaskGraphResponse)
 async def get_task_graph(task_id: int):
     """Get the agent graph for a task session.
@@ -43,138 +149,51 @@ async def get_task_graph(task_id: int):
     Returns a graph JSON object with {nodes: [...], edges: [...]} representing
     the main agent and all its subagents for a given task session.
 
-    Args:
-        task_id: The feature/task ID to get the graph for
-
-    Returns:
-        TaskGraphResponse with nodes and edges
-
     Raises:
         404: If task not found or no session file available
+        400: If session ID format is invalid
+        500: If the session file cannot be parsed
     """
-    session = get_session()
+    db_session = get_session()
     try:
-        feature = session.query(Feature).filter(Feature.id == task_id).first()
+        session_id, projects_dir = _resolve_session_context(task_id, db_session)
+        session_file = _resolve_main_file(session_id, projects_dir)
 
-        if feature is None:
-            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-
-        # Check if the feature has a session ID
-        if not feature.claude_session_id:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No session file available for task {task_id}"
-            )
-
-        # Validate session ID format to prevent path traversal
-        session_id = feature.claude_session_id
-        if '/' in session_id or '\\' in session_id or not session_id.endswith('.jsonl'):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid session ID format"
-            )
-
-        # Get the Claude projects directory
-        working_dir = str(_deps._current_db_path.parent)
-        projects_dir = _get_claude_projects_dir(working_dir)
-
-        if projects_dir is None:
-            raise HTTPException(
-                status_code=404,
-                detail="Claude projects directory not found"
-            )
-
-        # Find the session file
-        session_file = projects_dir / feature.claude_session_id
-        if not session_file.exists():
-            raise HTTPException(
-                status_code=404,
-                detail=f"Session file not found: {feature.claude_session_id}"
-            )
-
-        # Parse the agent graph
         try:
             graph = _parse_agent_graph(session_file)
         except Exception as e:
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to parse session file: {str(e)}"
+                detail=f"Failed to parse session file: {str(e)}",
             )
 
-        return TaskGraphResponse(
-            nodes=graph["nodes"],
-            edges=graph["edges"],
-        )
+        return TaskGraphResponse(nodes=graph["nodes"], edges=graph["edges"])
     finally:
-        session.close()
+        db_session.close()
 
 
 @router.get("/{task_id}/metadata", response_model=TaskMetadataResponse)
 async def get_task_metadata(task_id: int):
     """Get metadata for a task session.
 
-    Returns metadata about the main agent session including:
-    - turn_count: number of turns (user + assistant messages)
-    - token_estimate: rough token count estimated from character lengths
-    - last_tool_used: name of the last tool_use block, or None
-    - agent_type: extracted from filename or first system message
-
-    Args:
-        task_id: The feature/task ID to get metadata for
-
-    Returns:
-        TaskMetadataResponse with metadata fields
+    Returns turn_count, token_estimate, last_tool_used, and agent_type.
 
     Raises:
         404: If task not found or no session file available
+        400: If session ID format is invalid
+        500: If the session file cannot be parsed
     """
-    session = get_session()
+    db_session = get_session()
     try:
-        feature = session.query(Feature).filter(Feature.id == task_id).first()
+        session_id, projects_dir = _resolve_session_context(task_id, db_session)
+        session_file = _resolve_main_file(session_id, projects_dir)
 
-        if feature is None:
-            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-
-        # Check if the feature has a session ID
-        if not feature.claude_session_id:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No session file available for task {task_id}"
-            )
-
-        # Validate session ID format to prevent path traversal
-        session_id = feature.claude_session_id
-        if '/' in session_id or '\\' in session_id or not session_id.endswith('.jsonl'):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid session ID format"
-            )
-
-        # Get the Claude projects directory
-        working_dir = str(_deps._current_db_path.parent)
-        projects_dir = _get_claude_projects_dir(working_dir)
-
-        if projects_dir is None:
-            raise HTTPException(
-                status_code=404,
-                detail="Claude projects directory not found"
-            )
-
-        # Find the session file
-        session_file = projects_dir / feature.claude_session_id
-        if not session_file.exists():
-            raise HTTPException(
-                status_code=404,
-                detail=f"Session file not found: {feature.claude_session_id}"
-            )
-
-        # Parse the metadata
         try:
             metadata = _parse_main_agent_metadata(session_file)
         except Exception as e:
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to parse session file: {str(e)}"
+                detail=f"Failed to parse session file: {str(e)}",
             )
 
         return TaskMetadataResponse(
@@ -184,7 +203,7 @@ async def get_task_metadata(task_id: int):
             agent_type=metadata["agent_type"],
         )
     finally:
-        session.close()
+        db_session.close()
 
 
 @router.get("/{task_id}/subagents", response_model=TaskSubagentsResponse)
@@ -192,55 +211,20 @@ async def get_task_subagents(task_id: int):
     """Discover subagent log files for a task session.
 
     Returns a list of subagent log files found under the session's
-    subagents/ subdirectory.  Returns an empty list when the directory
+    subagents/ subdirectory. Returns an empty list when the directory
     does not exist (task ran without subagents).
-
-    Args:
-        task_id: The feature/task ID to discover subagents for
-
-    Returns:
-        TaskSubagentsResponse with a list of {agent_id, file_path} records
 
     Raises:
         404: If task not found, no session file, or Claude projects dir missing
         400: If session ID format is invalid
     """
-    session = get_session()
+    db_session = get_session()
     try:
-        feature = session.query(Feature).filter(Feature.id == task_id).first()
-
-        if feature is None:
-            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-
-        if not feature.claude_session_id:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No session file available for task {task_id}"
-            )
-
-        # Validate session ID format to prevent path traversal
-        session_id = feature.claude_session_id
-        if '/' in session_id or '\\' in session_id or not session_id.endswith('.jsonl'):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid session ID format"
-            )
-
-        working_dir = str(_deps._current_db_path.parent)
-        projects_dir = _get_claude_projects_dir(working_dir)
-
-        if projects_dir is None:
-            raise HTTPException(
-                status_code=404,
-                detail="Claude projects directory not found"
-            )
-
+        session_id, projects_dir = _resolve_session_context(task_id, db_session)
         subagents = _discover_subagent_logs(projects_dir, session_id)
-        return TaskSubagentsResponse(
-            subagents=[SubagentLogEntry(**s) for s in subagents]
-        )
+        return TaskSubagentsResponse(subagents=[SubagentLogEntry(**s) for s in subagents])
     finally:
-        session.close()
+        db_session.close()
 
 
 @router.get("/{task_id}/node-log/{node_id}", response_model=SessionLogResponse)
@@ -255,79 +239,28 @@ async def get_task_node_log(task_id: int, node_id: str, limit: int = 50):
         node_id: The node ID from the graph — "main" or a subagent ID
         limit: Max entries to return (1–200, default 50)
 
-    Returns:
-        SessionLogResponse with log entries for the selected node
-
     Raises:
         404: If task not found, no session file, or node_id not found
-        400: If session ID format is invalid
+        400: If session ID or node_id format is invalid
     """
+    _validate_agent_id(node_id)
     db_session = get_session()
     try:
-        feature = db_session.query(Feature).filter(Feature.id == task_id).first()
-
-        if feature is None:
-            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-
-        if not feature.claude_session_id:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No session file available for task {task_id}"
-            )
-
-        session_id = feature.claude_session_id
-        if '/' in session_id or '\\' in session_id or not session_id.endswith('.jsonl'):
-            raise HTTPException(status_code=400, detail="Invalid session ID format")
-
-        working_dir = str(_deps._current_db_path.parent)
-        projects_dir = _get_claude_projects_dir(working_dir)
-
-        if projects_dir is None:
-            raise HTTPException(
-                status_code=404,
-                detail="Claude projects directory not found"
-            )
-
+        session_id, projects_dir = _resolve_session_context(task_id, db_session)
         clamped_limit = max(1, min(limit, 200))
 
         if node_id == "main":
-            session_file = projects_dir / session_id
-            if not session_file.exists():
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Session file not found: {session_id}"
-                )
-            entries = _parse_jsonl_log(session_file, limit=clamped_limit)
-            return SessionLogResponse(
-                active=False,
-                feature_id=task_id,
-                session_file=session_id,
-                entries=[SessionLogEntry(**e) for e in entries],
-                total_entries=len(entries),
-            )
+            log_file = _resolve_main_file(session_id, projects_dir)
+            file_name = session_id
+        else:
+            log_file = _resolve_subagent_file(node_id, session_id, projects_dir)
+            file_name = log_file.name
 
-        # Subagent node — find the matching log file
-        subagents = _discover_subagent_logs(projects_dir, session_id)
-        match = next((s for s in subagents if s["agent_id"] == node_id), None)
-
-        if match is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Node '{node_id}' not found for task {task_id}"
-            )
-
-        subagent_file = Path(match["file_path"])
-        if not subagent_file.exists():
-            raise HTTPException(
-                status_code=404,
-                detail=f"Subagent log file not found for node '{node_id}'"
-            )
-
-        entries = _parse_jsonl_log(subagent_file, limit=clamped_limit)
+        entries = _parse_jsonl_log(log_file, limit=clamped_limit)
         return SessionLogResponse(
             active=False,
             feature_id=task_id,
-            session_file=subagent_file.name,
+            session_file=file_name,
             entries=[SessionLogEntry(**e) for e in entries],
             total_entries=len(entries),
         )
@@ -350,72 +283,22 @@ async def get_agent_log(task_id: int, agent_id: str, limit: int = 50):
         agent_id: The agent ID — "main" or a subagent UUID/ID
         limit: Max turns to return (1–200, default 50)
 
-    Returns:
-        AgentTurnsResponse with structured turn cards
-
     Raises:
         404: If task not found, no session file, or agent_id not found
-        400: If session ID format is invalid
+        400: If session ID or agent_id format is invalid
     """
+    _validate_agent_id(agent_id)
     db_session = get_session()
     try:
-        feature = db_session.query(Feature).filter(Feature.id == task_id).first()
-
-        if feature is None:
-            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-
-        if not feature.claude_session_id:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No session file available for task {task_id}"
-            )
-
-        session_id = feature.claude_session_id
-        if '/' in session_id or '\\' in session_id or not session_id.endswith('.jsonl'):
-            raise HTTPException(status_code=400, detail="Invalid session ID format")
-
-        working_dir = str(_deps._current_db_path.parent)
-        projects_dir = _get_claude_projects_dir(working_dir)
-
-        if projects_dir is None:
-            raise HTTPException(
-                status_code=404,
-                detail="Claude projects directory not found"
-            )
-
+        session_id, projects_dir = _resolve_session_context(task_id, db_session)
         clamped_limit = max(1, min(limit, 200))
 
         if agent_id == "main":
-            session_file = projects_dir / session_id
-            if not session_file.exists():
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Session file not found: {session_id}"
-                )
-            turns = _parse_agent_turns(session_file, limit=clamped_limit)
-            return AgentTurnsResponse(
-                turns=[AgentTurn(**t) for t in turns],
-                total_turns=len(turns),
-            )
+            log_file = _resolve_main_file(session_id, projects_dir)
+        else:
+            log_file = _resolve_subagent_file(agent_id, session_id, projects_dir)
 
-        # Subagent — find the matching log file
-        subagents = _discover_subagent_logs(projects_dir, session_id)
-        match = next((s for s in subagents if s["agent_id"] == agent_id), None)
-
-        if match is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Agent '{agent_id}' not found for task {task_id}"
-            )
-
-        subagent_file = Path(match["file_path"])
-        if not subagent_file.exists():
-            raise HTTPException(
-                status_code=404,
-                detail=f"Subagent log file not found for agent '{agent_id}'"
-            )
-
-        turns = _parse_agent_turns(subagent_file, limit=clamped_limit)
+        turns = _parse_agent_turns(log_file, limit=clamped_limit)
         return AgentTurnsResponse(
             turns=[AgentTurn(**t) for t in turns],
             total_turns=len(turns),

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { X, RefreshCw, MessageSquare } from 'lucide-react'
 
 const NODE_COLOR = {
@@ -101,7 +101,7 @@ function LogSidePanel({ taskId, node, onClose }) {
   const [error, setError] = useState(null)
   const logRef = useRef(null)
 
-  async function fetchLog() {
+  const fetchLog = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
@@ -117,11 +117,11 @@ function LogSidePanel({ taskId, node, onClose }) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [taskId, node.id])
 
   useEffect(() => {
     fetchLog()
-  }, [taskId, node.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fetchLog])
 
   // Scroll to bottom when turns load
   useEffect(() => {
@@ -150,11 +150,10 @@ function LogSidePanel({ taskId, node, onClose }) {
         data-testid="log-panel-backdrop"
       />
 
-      {/* Panel */}
+      {/* Panel — uses .animate-slide-in-right from index.css */}
       <div
         data-testid="log-side-panel"
-        className="absolute top-0 right-0 h-full w-full md:w-[420px] bg-gray-950 border-l border-gray-800 z-20 flex flex-col shadow-2xl"
-        style={{ animation: 'slideInRight 0.18s ease-out' }}
+        className="absolute top-0 right-0 h-full w-full md:w-[420px] bg-gray-950 border-l border-gray-800 z-20 flex flex-col shadow-2xl animate-slide-in-right"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -223,18 +222,15 @@ function LogSidePanel({ taskId, node, onClose }) {
             </p>
           ) : (
             turns.map((turn, i) => (
-              <TurnCard key={i} turn={turn} index={i} />
+              <TurnCard
+                key={`${turn.role}-${turn.timestamp}-${i}`}
+                turn={turn}
+                index={i}
+              />
             ))
           )}
         </div>
       </div>
-
-      <style>{`
-        @keyframes slideInRight {
-          from { transform: translateX(100%); opacity: 0; }
-          to { transform: translateX(0); opacity: 1; }
-        }
-      `}</style>
     </>
   )
 }

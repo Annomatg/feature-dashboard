@@ -5,7 +5,7 @@ All BaseModel classes are defined here to keep main.py free of data-class
 noise.  Only pydantic and stdlib imports are used — no circular dependencies.
 """
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 
@@ -357,7 +357,7 @@ class TaskSubagentsResponse(BaseModel):
 
 class AgentTurn(BaseModel):
     """A single conversation turn from a Claude JSONL session."""
-    role: str       # 'user' | 'assistant' | 'system'
+    role: Literal['user', 'assistant', 'system']
     content: str
     timestamp: str
 
@@ -365,4 +365,4 @@ class AgentTurn(BaseModel):
 class AgentTurnsResponse(BaseModel):
     """Response for GET /api/tasks/{id}/agent/{agent_id}/log."""
     turns: list[AgentTurn]
-    total_turns: int
+    total_turns: int  # Count of turns returned (after limit is applied)

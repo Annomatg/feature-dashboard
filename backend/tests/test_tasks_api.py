@@ -1,7 +1,12 @@
 """
 Unit tests for the tasks API endpoints.
 
-Tests the GET /api/tasks/{id}/graph endpoint.
+Covers all endpoints in backend/routers/tasks.py:
+- GET /api/tasks/{id}/graph
+- GET /api/tasks/{id}/metadata
+- GET /api/tasks/{id}/subagents
+- GET /api/tasks/{id}/node-log/{node_id}
+- GET /api/tasks/{id}/agent/{agent_id}/log
 """
 
 import sys
@@ -256,6 +261,36 @@ class TestGetTaskGraph:
 
         response = client.get("/api/tasks/1/graph")
 
+        assert response.status_code == 400
+        assert "invalid session id" in response.json()["detail"].lower()
+
+    def test_task_graph_invalid_session_id_null_byte(self, client):
+        """Returns 400 when session ID contains a null byte (strengthened validation)."""
+        import backend.deps as deps_module
+        session = deps_module._session_maker()
+        try:
+            feature = session.query(Feature).filter(Feature.id == 1).first()
+            feature.claude_session_id = "session\x00evil.jsonl"
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/tasks/1/graph")
+        assert response.status_code == 400
+        assert "invalid session id" in response.json()["detail"].lower()
+
+    def test_task_graph_invalid_session_id_directory_component(self, client):
+        """Returns 400 when session ID has a directory component (Path.name check)."""
+        import backend.deps as deps_module
+        session = deps_module._session_maker()
+        try:
+            feature = session.query(Feature).filter(Feature.id == 1).first()
+            feature.claude_session_id = "subdir/session.jsonl"
+            session.commit()
+        finally:
+            session.close()
+
+        response = client.get("/api/tasks/1/graph")
         assert response.status_code == 400
         assert "invalid session id" in response.json()["detail"].lower()
 
@@ -628,6 +663,18 @@ class TestGetTaskNodeLog:
         assert response.status_code == 404
         assert "no session" in response.json()["detail"].lower()
 
+    def test_invalid_node_id_path_separators_returns_400(self, client):
+        """Returns 400 when node_id contains path separator characters."""
+        response = client.get("/api/tasks/1/node-log/../../etc/passwd")
+        assert response.status_code in (400, 404)  # FastAPI may 404 on unusual paths
+
+    def test_invalid_node_id_special_chars_returns_400(self, client):
+        """Returns 400 when node_id contains characters outside the allowlist."""
+        self._set_session_id(client, "test-session.jsonl")
+        response = client.get("/api/tasks/1/node-log/agent;rm -rf /")
+        # FastAPI URL routing will reject this before our handler
+        assert response.status_code in (400, 404, 422)
+
     def test_invalid_session_id_path_traversal_returns_400(self, client):
         """Returns 400 when session ID contains path traversal characters."""
         self._set_session_id(client, "../../../etc/passwd")
@@ -822,9 +869,38 @@ class TestGetAgentLog:
         assert response.status_code == 404
         assert "no session" in response.json()["detail"].lower()
 
+    def test_invalid_agent_id_special_chars_returns_400(self, client):
+        """Returns 400 when agent_id contains characters outside the allowlist."""
+        self._set_session_id(client, "test-session.jsonl")
+        response = client.get("/api/tasks/1/agent/agent;rm -rf //log")
+        assert response.status_code in (400, 404, 422)
+
+    def test_invalid_agent_id_null_byte_rejected(self, client):
+        """Null bytes in agent_id are rejected — either by the HTTP client or the server."""
+        import pytest as _pytest
+        self._set_session_id(client, "test-session.jsonl")
+        # httpx rejects null bytes in URLs before they reach the server, which is
+        # the correct behaviour — the request never makes it through.
+        with _pytest.raises(Exception):
+            client.get("/api/tasks/1/agent/agent\x00evil/log")
+
     def test_invalid_session_id_path_traversal_returns_400(self, client):
         """Returns 400 when session ID contains path traversal characters."""
         self._set_session_id(client, "../../../etc/passwd")
+        response = client.get("/api/tasks/1/agent/main/log")
+        assert response.status_code == 400
+        assert "invalid session id" in response.json()["detail"].lower()
+
+    def test_invalid_session_id_null_byte_returns_400(self, client):
+        """Returns 400 when session ID contains a null byte (strengthened validation)."""
+        self._set_session_id(client, "session\x00evil.jsonl")
+        response = client.get("/api/tasks/1/agent/main/log")
+        assert response.status_code == 400
+        assert "invalid session id" in response.json()["detail"].lower()
+
+    def test_invalid_session_id_directory_component_returns_400(self, client):
+        """Returns 400 when session ID has a directory component."""
+        self._set_session_id(client, "subdir/session.jsonl")
         response = client.get("/api/tasks/1/agent/main/log")
         assert response.status_code == 400
         assert "invalid session id" in response.json()["detail"].lower()

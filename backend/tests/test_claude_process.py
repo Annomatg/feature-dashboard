@@ -25,6 +25,7 @@ from backend.claude_process import (
     _format_tool_call,
     _get_claude_projects_dir,
     _get_claude_projects_slug,
+    _iter_jsonl_lines,
     _jsonl_contains_prompt,
     _parse_jsonl_log,
     _parse_agent_turns,
@@ -256,15 +257,52 @@ class TestParseJsonlLog:
 # _extract_turn_content
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# _iter_jsonl_lines
+# ---------------------------------------------------------------------------
+
+class TestIterJsonlLines:
+    def test_yields_parsed_dicts(self, tmp_path):
+        p = tmp_path / "f.jsonl"
+        p.write_text('{"type": "user"}\n{"type": "assistant"}\n')
+        results = list(_iter_jsonl_lines(p))
+        assert len(results) == 2
+        assert results[0]["type"] == "user"
+        assert results[1]["type"] == "assistant"
+
+    def test_skips_blank_lines(self, tmp_path):
+        p = tmp_path / "f.jsonl"
+        p.write_text('{"type": "user"}\n\n{"type": "assistant"}\n')
+        results = list(_iter_jsonl_lines(p))
+        assert len(results) == 2
+
+    def test_skips_invalid_json(self, tmp_path):
+        p = tmp_path / "f.jsonl"
+        p.write_text('not json\n{"type": "user"}\n')
+        results = list(_iter_jsonl_lines(p))
+        assert len(results) == 1
+        assert results[0]["type"] == "user"
+
+    def test_yields_nothing_for_missing_file(self, tmp_path):
+        results = list(_iter_jsonl_lines(tmp_path / "ghost.jsonl"))
+        assert results == []
+
+    def test_yields_nothing_for_empty_file(self, tmp_path):
+        p = tmp_path / "f.jsonl"
+        p.write_text("")
+        results = list(_iter_jsonl_lines(p))
+        assert results == []
+
+
 class TestExtractTurnContent:
     def test_string_content(self):
         result = _extract_turn_content("user", "Hello world")
         assert result == "Hello world"
 
     def test_string_content_truncated(self):
-        long = "x" * 600
+        long = "x" * 1200
         result = _extract_turn_content("user", long)
-        assert len(result) <= 500
+        assert len(result) <= 1000
 
     def test_text_item(self):
         content = [{"type": "text", "text": "Hello"}]

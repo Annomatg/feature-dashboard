@@ -227,8 +227,9 @@ test.describe('Graph View', () => {
     const assistantCards = page.locator('[data-role="assistant"]')
     await expect(assistantCards).toHaveCount(1)
 
-    // Content should be visible
+    // Content should be visible — assert both lines of the multi-line assistant turn
     await expect(page.getByText('Fix the authentication bug')).toBeVisible()
+    await expect(page.getByText('[Bash] $ git status')).toBeVisible()
     await expect(page.getByText('I will fix the bug now.')).toBeVisible()
   })
 

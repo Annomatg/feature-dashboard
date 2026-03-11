@@ -16,7 +16,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 from fastapi import HTTPException
 
@@ -171,6 +171,36 @@ def _jsonl_contains_prompt(jsonl_file: Path, prompt_snippet: str) -> bool:
 # JSONL log parsing
 # ---------------------------------------------------------------------------
 
+def _iter_jsonl_lines(jsonl_file: Path) -> Iterator[dict]:
+    """Yield parsed JSON dicts from a JSONL file.
+
+    For large files (>500KB), reads only the last 100KB to limit memory use.
+    Skips blank lines and lines that fail JSON decoding.
+    Yields nothing when the file is missing or unreadable.
+    """
+    file_size = 0
+    try:
+        file_size = jsonl_file.stat().st_size
+    except OSError:
+        return
+
+    try:
+        with open(jsonl_file, 'r', encoding='utf-8', errors='replace') as f:
+            if file_size > 500_000:
+                f.seek(max(0, file_size - 100_000))
+                f.readline()  # Skip partial first line after seek
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    yield json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+    except (IOError, OSError):
+        return
+
+
 def _format_tool_call(tool_name: str, tool_input: dict) -> str:
     """Format a Claude tool call into a human-readable string."""
     if tool_name == 'Bash':
@@ -213,9 +243,14 @@ def _format_tool_call(tool_name: str, tool_input: dict) -> str:
 
 
 def _extract_turn_content(role: str, content) -> str:
-    """Extract human-readable text from a JSONL message content field."""
+    """Extract human-readable text from a JSONL message content field.
+
+    Per-item limits prevent a single large item from dominating; the combined
+    cap ensures the final string stays reasonable.  Both limits are generous so
+    no meaningful content is silently truncated.
+    """
     if isinstance(content, str):
-        return content.strip()[:500]
+        return content.strip()[:1000]
 
     if not isinstance(content, list):
         return ''
@@ -228,7 +263,7 @@ def _extract_turn_content(role: str, content) -> str:
         if item_type == 'text':
             text = item.get('text', '').strip()
             if text:
-                parts.append(text[:300])
+                parts.append(text[:400])
         elif item_type == 'thinking':
             thinking = item.get('thinking', '').strip()
             if thinking:
@@ -241,16 +276,16 @@ def _extract_turn_content(role: str, content) -> str:
             result_content = item.get('content', '')
             if isinstance(result_content, str):
                 text = result_content.strip()
-                parts.append(f'[result] {text[:200]}' if text else '[result] (empty)')
+                parts.append(f'[result] {text[:300]}' if text else '[result] (empty)')
             elif isinstance(result_content, list):
                 for c in result_content:
                     if isinstance(c, dict) and c.get('type') == 'text':
                         text = c.get('text', '').strip()
-                        parts.append(f'[result] {text[:200]}' if text else '[result] (empty)')
+                        parts.append(f'[result] {text[:300]}' if text else '[result] (empty)')
                         break
 
     combined = '\n'.join(parts)
-    return combined[:500] if combined else ''
+    return combined[:1000] if combined else ''
 
 
 def _parse_agent_turns(jsonl_file: Path, limit: int = 50) -> list[dict]:
@@ -262,33 +297,11 @@ def _parse_agent_turns(jsonl_file: Path, limit: int = 50) -> list[dict]:
     - timestamp: ISO 8601 timestamp
 
     For large files (>500KB), reads only the last 100KB for performance.
-    Returns turns in chronological order (last `limit` turns).
+    Returns the last `limit` turns in chronological order.
     """
     turns: list[dict] = []
-    file_size = 0
-    try:
-        file_size = jsonl_file.stat().st_size
-    except OSError:
-        return []
 
-    try:
-        with open(jsonl_file, 'r', encoding='utf-8', errors='replace') as f:
-            if file_size > 500_000:
-                f.seek(max(0, file_size - 100_000))
-                f.readline()  # Skip partial first line
-            lines = f.readlines()
-    except (IOError, OSError):
-        return []
-
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-
+    for obj in _iter_jsonl_lines(jsonl_file):
         role = obj.get('type', '')
         if role not in ('user', 'assistant', 'system'):
             continue
@@ -318,30 +331,8 @@ def _parse_jsonl_log(jsonl_file: Path, limit: int = 50) -> list[dict]:
     Returns entries in chronological order.
     """
     entries: list[dict] = []
-    file_size = 0
-    try:
-        file_size = jsonl_file.stat().st_size
-    except OSError:
-        return []
 
-    try:
-        with open(jsonl_file, 'r', encoding='utf-8', errors='replace') as f:
-            if file_size > 500_000:
-                f.seek(max(0, file_size - 100_000))
-                f.readline()  # Skip partial first line
-            lines = f.readlines()
-    except (IOError, OSError):
-        return []
-
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-
+    for obj in _iter_jsonl_lines(jsonl_file):
         if obj.get('type') != 'assistant':
             continue
 
@@ -379,7 +370,6 @@ def _parse_jsonl_log(jsonl_file: Path, limit: int = 50) -> list[dict]:
                         'text': text[:200],
                     })
             elif item_type == 'thinking':
-                # Handle "thinking" content type from extended thinking models
                 thinking_text = item.get('thinking', '').strip()
                 if thinking_text:
                     thinking_text = thinking_text.replace('\n', ' ').replace('\r', '')
