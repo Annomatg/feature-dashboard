@@ -99,23 +99,19 @@ test.describe('Graph View', () => {
       })
     })
 
-    await page.route('**/api/tasks/1/node-log/**', async (route) => {
+    await page.route('**/api/tasks/1/agent/**', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          active: false,
-          feature_id: 1,
-          session_file: 'test.jsonl',
-          entries: [
+          turns: [
             {
+              role: 'user',
+              content: 'Fix the authentication bug',
               timestamp: '2024-01-01T00:00:00Z',
-              entry_type: 'text',
-              tool_name: null,
-              text: 'Hello from main agent',
             },
           ],
-          total_entries: 1,
+          total_turns: 1,
         }),
       })
     })
@@ -152,16 +148,13 @@ test.describe('Graph View', () => {
       })
     })
 
-    await page.route('**/api/tasks/1/node-log/**', async (route) => {
+    await page.route('**/api/tasks/1/agent/**', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          active: false,
-          feature_id: 1,
-          session_file: 'test.jsonl',
-          entries: [],
-          total_entries: 0,
+          turns: [],
+          total_turns: 0,
         }),
       })
     })
@@ -185,7 +178,7 @@ test.describe('Graph View', () => {
     await expect(page.getByTestId('log-side-panel')).not.toBeVisible({ timeout: 3000 })
   })
 
-  test('log side panel shows log entries', async ({ page }) => {
+  test('log side panel shows turn cards with role badges', async ({ page }) => {
     await page.route('**/api/tasks/1/graph', async (route) => {
       await route.fulfill({
         status: 200,
@@ -197,19 +190,17 @@ test.describe('Graph View', () => {
       })
     })
 
-    await page.route('**/api/tasks/1/node-log/**', async (route) => {
+    await page.route('**/api/tasks/1/agent/**', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          active: false,
-          feature_id: 1,
-          session_file: 'test.jsonl',
-          entries: [
-            { timestamp: '2024-01-01T00:00:00Z', entry_type: 'tool_use', tool_name: 'Bash', text: 'ls -la' },
-            { timestamp: '2024-01-01T00:00:01Z', entry_type: 'text', tool_name: null, text: 'Done!' },
+          turns: [
+            { role: 'user', content: 'Fix the authentication bug', timestamp: '2024-01-01T00:00:00Z' },
+            { role: 'assistant', content: '[Bash] $ git status\nI will fix the bug now.', timestamp: '2024-01-01T00:00:01Z' },
+            { role: 'user', content: '[result] On branch main', timestamp: '2024-01-01T00:00:02Z' },
           ],
-          total_entries: 2,
+          total_turns: 3,
         }),
       })
     })
@@ -225,9 +216,20 @@ test.describe('Graph View', () => {
     })
 
     await expect(page.getByTestId('log-side-panel')).toBeVisible({ timeout: 5000 })
-    // Log entries should be rendered
-    const entries = page.getByTestId('log-panel-entry')
-    await expect(entries).toHaveCount(2, { timeout: 5000 })
+
+    // Turn cards should be rendered
+    const cards = page.getByTestId('log-panel-turn-card')
+    await expect(cards).toHaveCount(3, { timeout: 5000 })
+
+    // Role badges should be present
+    const userCards = page.locator('[data-role="user"]')
+    await expect(userCards).toHaveCount(2)
+    const assistantCards = page.locator('[data-role="assistant"]')
+    await expect(assistantCards).toHaveCount(1)
+
+    // Content should be visible
+    await expect(page.getByText('Fix the authentication bug')).toBeVisible()
+    await expect(page.getByText('I will fix the bug now.')).toBeVisible()
   })
 
   test('shows node and edge count after successful render', async ({ page }) => {

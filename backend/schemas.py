@@ -353,3 +353,16 @@ class SubagentLogEntry(BaseModel):
 class TaskSubagentsResponse(BaseModel):
     """Response for GET /api/tasks/{id}/subagents."""
     subagents: list[SubagentLogEntry]
+
+
+class AgentTurn(BaseModel):
+    """A single conversation turn from a Claude JSONL session."""
+    role: str       # 'user' | 'assistant' | 'system'
+    content: str
+    timestamp: str
+
+
+class AgentTurnsResponse(BaseModel):
+    """Response for GET /api/tasks/{id}/agent/{agent_id}/log."""
+    turns: list[AgentTurn]
+    total_turns: int

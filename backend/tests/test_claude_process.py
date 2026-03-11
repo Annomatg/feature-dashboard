@@ -27,6 +27,8 @@ from backend.claude_process import (
     _get_claude_projects_slug,
     _jsonl_contains_prompt,
     _parse_jsonl_log,
+    _parse_agent_turns,
+    _extract_turn_content,
 )
 
 
@@ -248,3 +250,178 @@ class TestParseJsonlLog:
         ])
         entries = _parse_jsonl_log(p, limit=10)
         assert len(entries[0]["text"]) <= 200
+
+
+# ---------------------------------------------------------------------------
+# _extract_turn_content
+# ---------------------------------------------------------------------------
+
+class TestExtractTurnContent:
+    def test_string_content(self):
+        result = _extract_turn_content("user", "Hello world")
+        assert result == "Hello world"
+
+    def test_string_content_truncated(self):
+        long = "x" * 600
+        result = _extract_turn_content("user", long)
+        assert len(result) <= 500
+
+    def test_text_item(self):
+        content = [{"type": "text", "text": "Hello"}]
+        result = _extract_turn_content("assistant", content)
+        assert "Hello" in result
+
+    def test_thinking_item(self):
+        content = [{"type": "thinking", "thinking": "I think deeply"}]
+        result = _extract_turn_content("assistant", content)
+        assert "[thinking]" in result
+        assert "I think deeply" in result
+
+    def test_tool_use_item(self):
+        content = [{"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}]
+        result = _extract_turn_content("assistant", content)
+        assert "[Bash]" in result
+
+    def test_tool_result_string(self):
+        content = [{"type": "tool_result", "content": "command output here"}]
+        result = _extract_turn_content("user", content)
+        assert "[result]" in result
+        assert "command output here" in result
+
+    def test_tool_result_list(self):
+        content = [{"type": "tool_result", "content": [{"type": "text", "text": "output"}]}]
+        result = _extract_turn_content("user", content)
+        assert "[result]" in result
+        assert "output" in result
+
+    def test_empty_list_returns_empty(self):
+        result = _extract_turn_content("assistant", [])
+        assert result == ""
+
+    def test_non_list_non_str_returns_empty(self):
+        result = _extract_turn_content("assistant", 42)
+        assert result == ""
+
+    def test_multiple_items_joined(self):
+        content = [
+            {"type": "text", "text": "First"},
+            {"type": "text", "text": "Second"},
+        ]
+        result = _extract_turn_content("assistant", content)
+        assert "First" in result
+        assert "Second" in result
+
+
+# ---------------------------------------------------------------------------
+# _parse_agent_turns
+# ---------------------------------------------------------------------------
+
+class TestParseAgentTurns:
+    def _write_jsonl(self, tmp_path, lines):
+        p = tmp_path / "session.jsonl"
+        p.write_text("\n".join(json.dumps(l) for l in lines) + "\n")
+        return p
+
+    def _user_msg(self, content, ts="2026-01-01T00:00:00Z"):
+        return {"type": "user", "timestamp": ts, "message": {"content": content}}
+
+    def _assistant_msg(self, content, ts="2026-01-01T00:00:01Z"):
+        return {"type": "assistant", "timestamp": ts, "message": {"content": content}}
+
+    def _system_msg(self, content, ts="2026-01-01T00:00:00Z"):
+        return {"type": "system", "timestamp": ts, "message": {"content": content}}
+
+    def test_returns_user_turn(self, tmp_path):
+        p = self._write_jsonl(tmp_path, [
+            self._user_msg([{"type": "text", "text": "Fix the bug"}]),
+        ])
+        turns = _parse_agent_turns(p, limit=10)
+        assert len(turns) == 1
+        assert turns[0]["role"] == "user"
+        assert "Fix the bug" in turns[0]["content"]
+
+    def test_returns_assistant_turn(self, tmp_path):
+        p = self._write_jsonl(tmp_path, [
+            self._assistant_msg([{"type": "text", "text": "I will fix it"}]),
+        ])
+        turns = _parse_agent_turns(p, limit=10)
+        assert len(turns) == 1
+        assert turns[0]["role"] == "assistant"
+        assert "I will fix it" in turns[0]["content"]
+
+    def test_returns_system_turn(self, tmp_path):
+        p = self._write_jsonl(tmp_path, [
+            self._system_msg("You are a helpful assistant."),
+        ])
+        turns = _parse_agent_turns(p, limit=10)
+        assert len(turns) == 1
+        assert turns[0]["role"] == "system"
+        assert "helpful assistant" in turns[0]["content"]
+
+    def test_returns_multiple_turns_in_order(self, tmp_path):
+        p = self._write_jsonl(tmp_path, [
+            self._user_msg([{"type": "text", "text": "Question"}], "2026-01-01T00:00:00Z"),
+            self._assistant_msg([{"type": "text", "text": "Answer"}], "2026-01-01T00:00:01Z"),
+            self._user_msg([{"type": "text", "text": "Follow up"}], "2026-01-01T00:00:02Z"),
+        ])
+        turns = _parse_agent_turns(p, limit=10)
+        assert len(turns) == 3
+        assert turns[0]["role"] == "user"
+        assert turns[1]["role"] == "assistant"
+        assert turns[2]["role"] == "user"
+
+    def test_skips_empty_content_turns(self, tmp_path):
+        p = self._write_jsonl(tmp_path, [
+            self._user_msg([]),
+            self._user_msg([{"type": "text", "text": "Real message"}]),
+        ])
+        turns = _parse_agent_turns(p, limit=10)
+        assert len(turns) == 1
+        assert "Real message" in turns[0]["content"]
+
+    def test_respects_limit(self, tmp_path):
+        lines = [
+            self._user_msg([{"type": "text", "text": f"msg {i}"}], f"2026-01-01T00:{i:02d}:00Z")
+            for i in range(10)
+        ]
+        p = self._write_jsonl(tmp_path, lines)
+        turns = _parse_agent_turns(p, limit=3)
+        assert len(turns) == 3
+        assert "msg 9" in turns[-1]["content"]
+
+    def test_includes_timestamp(self, tmp_path):
+        p = self._write_jsonl(tmp_path, [
+            self._user_msg([{"type": "text", "text": "Hi"}], "2026-03-11T08:00:00Z"),
+        ])
+        turns = _parse_agent_turns(p, limit=10)
+        assert turns[0]["timestamp"] == "2026-03-11T08:00:00Z"
+
+    def test_returns_empty_for_missing_file(self, tmp_path):
+        result = _parse_agent_turns(tmp_path / "ghost.jsonl", limit=10)
+        assert result == []
+
+    def test_skips_non_conversation_lines(self, tmp_path):
+        p = self._write_jsonl(tmp_path, [
+            {"type": "summary", "timestamp": "2026-01-01T00:00:00Z", "message": {"content": "irrelevant"}},
+            self._user_msg([{"type": "text", "text": "Real turn"}]),
+        ])
+        turns = _parse_agent_turns(p, limit=10)
+        assert len(turns) == 1
+
+    def test_handles_malformed_lines(self, tmp_path):
+        p = tmp_path / "session.jsonl"
+        p.write_text("not json\n" + json.dumps(self._user_msg([{"type": "text", "text": "valid"}])) + "\n")
+        turns = _parse_agent_turns(p, limit=10)
+        assert len(turns) == 1
+
+    def test_assistant_turn_with_tool_use(self, tmp_path):
+        p = self._write_jsonl(tmp_path, [
+            self._assistant_msg([
+                {"type": "text", "text": "Running bash"},
+                {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}},
+            ]),
+        ])
+        turns = _parse_agent_turns(p, limit=10)
+        assert len(turns) == 1
+        assert "Running bash" in turns[0]["content"]
+        assert "[Bash]" in turns[0]["content"]

@@ -20,8 +20,18 @@ from backend.claude_process import (
     _parse_agent_graph,
     _parse_main_agent_metadata,
     _parse_jsonl_log,
+    _parse_agent_turns,
 )
-from backend.schemas import TaskGraphResponse, TaskMetadataResponse, TaskSubagentsResponse, SubagentLogEntry, SessionLogResponse, SessionLogEntry
+from backend.schemas import (
+    TaskGraphResponse,
+    TaskMetadataResponse,
+    TaskSubagentsResponse,
+    SubagentLogEntry,
+    SessionLogResponse,
+    SessionLogEntry,
+    AgentTurn,
+    AgentTurnsResponse,
+)
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
@@ -320,6 +330,95 @@ async def get_task_node_log(task_id: int, node_id: str, limit: int = 50):
             session_file=subagent_file.name,
             entries=[SessionLogEntry(**e) for e in entries],
             total_entries=len(entries),
+        )
+    finally:
+        db_session.close()
+
+
+@router.get("/{task_id}/agent/{agent_id}/log", response_model=AgentTurnsResponse)
+async def get_agent_log(task_id: int, agent_id: str, limit: int = 50):
+    """Get structured turn cards (role + content) for a specific agent in the task graph.
+
+    Returns each conversation turn (user/assistant/system) as a card with role
+    and human-readable content text extracted from the JSONL message.
+
+    For the main agent (agent_id == "main"), reads the feature's own session file.
+    For subagent nodes, looks up the corresponding subagent log file by agent_id.
+
+    Args:
+        task_id: The feature/task ID
+        agent_id: The agent ID — "main" or a subagent UUID/ID
+        limit: Max turns to return (1–200, default 50)
+
+    Returns:
+        AgentTurnsResponse with structured turn cards
+
+    Raises:
+        404: If task not found, no session file, or agent_id not found
+        400: If session ID format is invalid
+    """
+    db_session = get_session()
+    try:
+        feature = db_session.query(Feature).filter(Feature.id == task_id).first()
+
+        if feature is None:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+        if not feature.claude_session_id:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No session file available for task {task_id}"
+            )
+
+        session_id = feature.claude_session_id
+        if '/' in session_id or '\\' in session_id or not session_id.endswith('.jsonl'):
+            raise HTTPException(status_code=400, detail="Invalid session ID format")
+
+        working_dir = str(_deps._current_db_path.parent)
+        projects_dir = _get_claude_projects_dir(working_dir)
+
+        if projects_dir is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Claude projects directory not found"
+            )
+
+        clamped_limit = max(1, min(limit, 200))
+
+        if agent_id == "main":
+            session_file = projects_dir / session_id
+            if not session_file.exists():
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Session file not found: {session_id}"
+                )
+            turns = _parse_agent_turns(session_file, limit=clamped_limit)
+            return AgentTurnsResponse(
+                turns=[AgentTurn(**t) for t in turns],
+                total_turns=len(turns),
+            )
+
+        # Subagent — find the matching log file
+        subagents = _discover_subagent_logs(projects_dir, session_id)
+        match = next((s for s in subagents if s["agent_id"] == agent_id), None)
+
+        if match is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Agent '{agent_id}' not found for task {task_id}"
+            )
+
+        subagent_file = Path(match["file_path"])
+        if not subagent_file.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Subagent log file not found for agent '{agent_id}'"
+            )
+
+        turns = _parse_agent_turns(subagent_file, limit=clamped_limit)
+        return AgentTurnsResponse(
+            turns=[AgentTurn(**t) for t in turns],
+            total_turns=len(turns),
         )
     finally:
         db_session.close()

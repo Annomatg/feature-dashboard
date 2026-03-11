@@ -212,6 +212,105 @@ def _format_tool_call(tool_name: str, tool_input: dict) -> str:
         return tool_name
 
 
+def _extract_turn_content(role: str, content) -> str:
+    """Extract human-readable text from a JSONL message content field."""
+    if isinstance(content, str):
+        return content.strip()[:500]
+
+    if not isinstance(content, list):
+        return ''
+
+    parts = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get('type', '')
+        if item_type == 'text':
+            text = item.get('text', '').strip()
+            if text:
+                parts.append(text[:300])
+        elif item_type == 'thinking':
+            thinking = item.get('thinking', '').strip()
+            if thinking:
+                parts.append(f'[thinking] {thinking[:200]}')
+        elif item_type == 'tool_use':
+            tool_name = item.get('name', 'tool')
+            tool_input = item.get('input', {}) or {}
+            parts.append(f'[{tool_name}] {_format_tool_call(tool_name, tool_input)}')
+        elif item_type == 'tool_result':
+            result_content = item.get('content', '')
+            if isinstance(result_content, str):
+                text = result_content.strip()
+                parts.append(f'[result] {text[:200]}' if text else '[result] (empty)')
+            elif isinstance(result_content, list):
+                for c in result_content:
+                    if isinstance(c, dict) and c.get('type') == 'text':
+                        text = c.get('text', '').strip()
+                        parts.append(f'[result] {text[:200]}' if text else '[result] (empty)')
+                        break
+
+    combined = '\n'.join(parts)
+    return combined[:500] if combined else ''
+
+
+def _parse_agent_turns(jsonl_file: Path, limit: int = 50) -> list[dict]:
+    """Parse a Claude JSONL session file and return structured turn cards.
+
+    Each turn has:
+    - role: 'user' | 'assistant' | 'system'
+    - content: human-readable text extracted from the message content
+    - timestamp: ISO 8601 timestamp
+
+    For large files (>500KB), reads only the last 100KB for performance.
+    Returns turns in chronological order (last `limit` turns).
+    """
+    turns: list[dict] = []
+    file_size = 0
+    try:
+        file_size = jsonl_file.stat().st_size
+    except OSError:
+        return []
+
+    try:
+        with open(jsonl_file, 'r', encoding='utf-8', errors='replace') as f:
+            if file_size > 500_000:
+                f.seek(max(0, file_size - 100_000))
+                f.readline()  # Skip partial first line
+            lines = f.readlines()
+    except (IOError, OSError):
+        return []
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        role = obj.get('type', '')
+        if role not in ('user', 'assistant', 'system'):
+            continue
+
+        timestamp = obj.get('timestamp', '')
+        msg = obj.get('message', {})
+        if not isinstance(msg, dict):
+            continue
+
+        content = msg.get('content', '')
+        content_text = _extract_turn_content(role, content)
+
+        if content_text:
+            turns.append({
+                'role': role,
+                'content': content_text,
+                'timestamp': timestamp,
+            })
+
+    return turns[-limit:] if len(turns) > limit else turns
+
+
 def _parse_jsonl_log(jsonl_file: Path, limit: int = 50) -> list[dict]:
     """Parse a Claude JSONL session file and return the last N meaningful log entries.
 
