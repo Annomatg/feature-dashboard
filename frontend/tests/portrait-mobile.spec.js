@@ -31,6 +31,31 @@ test.beforeEach(async ({ page }) => {
     });
   });
 
+  // Mock AI budget so AiBudgetBadge renders (otherwise it returns null and
+  // the mobile row has zero height, causing the visibility assertion to fail).
+  await page.route('**/api/budget', route => {
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        five_hour: { utilization: 20, resets_formatted: '4h 0m' },
+        seven_day: { utilization: 35, resets_formatted: '5d 12h' },
+      }),
+    });
+  });
+
+  // Mock databases so DatabaseSelector renders (it returns null with ≤ 1 entry).
+  await page.route('**/api/databases', route => {
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        { path: '/data/features.db',  name: 'features',  is_active: true,  exists: true },
+        { path: '/data/features2.db', name: 'features2', is_active: false, exists: true },
+      ]),
+    });
+  });
+
   await page.goto('/');
   await page.waitForSelector('text=FEATURE DASHBOARD', { timeout: 10000 });
 });
@@ -208,7 +233,8 @@ test.describe('Detail panel at 390px portrait', () => {
 
     const box = await panel.boundingBox();
     expect(box).not.toBeNull();
-    expect(box.width).toBeLessThanOrEqual(390);
+    // Allow sub-pixel floating-point tolerance (e.g. 390.00003)
+    expect(box.width).toBeLessThanOrEqual(390.5);
   });
 
   test('no horizontal overflow while detail panel is open', async ({ page }) => {
