@@ -346,30 +346,45 @@ function CommitItem({ commit }) {
   const [info, setInfo] = useState(null)
   const [loading, setLoading] = useState(true)
 
+  const commitHash = commit?.commit_hash
+
   useEffect(() => {
+    if (!commitHash) return
     let cancelled = false
-    fetchCommitInfo(commit.commit_hash)
+    fetchCommitInfo(commitHash)
       .then(data => { if (!cancelled) { setInfo(data); setLoading(false) } })
       .catch(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [commit.commit_hash])
+  }, [commitHash])
 
-  const shortHash = info?.short_hash || commit.commit_hash.slice(0, 7)
+  // Defensive check - render nothing if no commit hash
+  if (!commitHash) return null
+
+  const fullHash = info?.hash || commitHash
   const message = info?.message || (loading ? null : '(unable to resolve)')
+  const author = info?.author
+  const commitDate = info?.date
   const hasError = info?.error && !info.message
 
   return (
     <div
       data-testid="commit-item"
-      className="bg-background rounded p-3 border border-border flex items-start gap-3"
+      className="bg-background rounded p-3 border border-border"
     >
-      <span
-        className="font-mono text-xs px-1.5 py-0.5 rounded bg-surface-light text-primary flex-shrink-0 mt-0.5 select-all"
-        title={commit.commit_hash}
-      >
-        {shortHash}
-      </span>
-      <div className="min-w-0 flex-1">
+      {/* Hash row - full hash, selectable */}
+      <div className="flex items-center gap-2 mb-2">
+        <GitCommit size={12} className="text-primary flex-shrink-0" />
+        <code
+          className="text-xs font-mono text-primary select-all break-all min-w-0"
+          title={fullHash}
+          data-testid="commit-hash"
+        >
+          {fullHash}
+        </code>
+      </div>
+
+      {/* Message */}
+      <div className="min-w-0 mb-2">
         {loading ? (
           <span className="text-xs font-mono text-text-secondary italic animate-pulse">resolving…</span>
         ) : hasError ? (
@@ -377,12 +392,19 @@ function CommitItem({ commit }) {
         ) : (
           <span className="text-sm text-text-primary break-words leading-relaxed">{message}</span>
         )}
-        {commit.created_at && (
-          <p className="text-xs font-mono text-text-secondary mt-1">
-            {new Date(commit.created_at).toLocaleString()}
-          </p>
-        )}
       </div>
+
+      {/* Author and date row */}
+      {!loading && !hasError && (author || commitDate) && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-mono text-text-secondary">
+          {author && (
+            <span data-testid="commit-author">{author}</span>
+          )}
+          {commitDate && (
+            <span data-testid="commit-date">{commitDate}</span>
+          )}
+        </div>
+      )}
     </div>
   )
 }
