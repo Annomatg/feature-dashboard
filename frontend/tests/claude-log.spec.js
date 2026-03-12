@@ -403,8 +403,8 @@ test.describe('Claude Log Section', () => {
           status: 200,
           contentType: 'application/json',
           body: JSON.stringify([
-            { id: 1, priority: 1, category: 'Test', name: 'Test Feature with Description', description: 'desc', steps: [], passes: false, in_progress: false, model: 'sonnet', claude_session_id: null, created_at: null, modified_at: null, completed_at: null, comment_count: 0, recent_log: null },
-            { id: 2, priority: 2, category: 'Test', name: 'Test Feature in Progress', description: 'desc', steps: [], passes: false, in_progress: true, model: 'sonnet', claude_session_id: 'prev-session.jsonl', created_at: null, modified_at: null, completed_at: null, comment_count: 0, recent_log: null },
+            { id: 1, priority: 1, category: 'Test', name: 'Test Feature with Description', description: 'desc', steps: [], passes: false, in_progress: false, model: 'sonnet', claude_session_id: null, created_at: null, modified_at: null, completed_at: null },
+            { id: 2, priority: 2, category: 'Test', name: 'Test Feature in Progress', description: 'desc', steps: [], passes: false, in_progress: true, model: 'sonnet', claude_session_id: 'prev-session.jsonl', created_at: null, modified_at: null, completed_at: null },
           ]),
         })
       );

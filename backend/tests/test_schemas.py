@@ -40,7 +40,7 @@ class TestSchemas:
         )
         assert f.id == 1
         assert f.model == "sonnet"
-        assert f.comment_count == 0
+        assert f.commit_count == 0
 
     def test_auto_pilot_status_response_log_is_list_of_log_entries(self):
         """AutoPilotStatusResponse.log defaults to [] and accepts LogEntry items."""
@@ -62,8 +62,7 @@ class TestSchemas:
             "UpdateFeaturePriorityRequest", "MoveFeatureRequest",
             "ReorderFeatureRequest", "LaunchClaudeRequest", "LaunchClaudeResponse",
             "PlanTasksRequest", "PlanTasksResponse", "SettingsResponse",
-            "UpdateSettingsRequest", "CommentResponse", "CreateCommentRequest",
-            "ClaudeLogLineResponse", "ClaudeLogResponse", "SessionLogEntry",
+            "UpdateSettingsRequest", "ClaudeLogLineResponse", "ClaudeLogResponse", "SessionLogEntry",
             "SessionLogResponse", "AutoPilotStatusResponse", "BudgetPeriodData",
             "BudgetResponse", "InterviewQuestionRequest", "InterviewAnswerRequest",
             "InterviewStartRequest", "LogEntry",

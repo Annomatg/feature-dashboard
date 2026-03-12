@@ -35,7 +35,7 @@ from sqlalchemy.sql.expression import func
 # Add parent directory to path so we can import from api module
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from api.database import Comment, Feature, FeatureCommit, create_database
+from api.database import Feature, FeatureCommit, create_database
 from api.migration import migrate_json_to_sqlite
 
 # Configuration from environment
@@ -520,53 +520,13 @@ def feature_create(
 
 
 @mcp.tool()
-def feature_add_comment(
-    feature_id: Annotated[int, Field(description="The ID of the feature to comment on", ge=1)],
-    content: Annotated[str, Field(description="The comment text to add")]
-) -> str:
-    """Add a comment to a feature to record results, progress, or notes.
-
-    Use this to document what was done, git commit IDs, intermediate states,
-    or any other information relevant to the feature's implementation.
-
-    Args:
-        feature_id: The ID of the feature to comment on
-        content: The comment text
-
-    Returns:
-        JSON with the created comment details, or error if feature not found.
-    """
-    if not content.strip():
-        return json.dumps({"error": "Comment content cannot be empty"})
-
-    session = get_session()
-    try:
-        feature = session.query(Feature).filter(Feature.id == feature_id).first()
-        if feature is None:
-            return json.dumps({"error": f"Feature with ID {feature_id} not found"})
-
-        comment = Comment(feature_id=feature_id, content=content.strip())
-        session.add(comment)
-        session.commit()
-        session.refresh(comment)
-
-        return json.dumps(comment.to_dict(), indent=2)
-    except Exception as e:
-        session.rollback()
-        return json.dumps({"error": str(e)})
-    finally:
-        session.close()
-
-
-@mcp.tool()
 def feature_add_commit(
     feature_id: Annotated[int, Field(description="The ID of the feature to attach the commit to", ge=1)],
     commit_hash: Annotated[str, Field(description="The git commit hash (full or abbreviated) to attach")]
 ) -> str:
     """Attach a git commit ID to a feature to record what was implemented.
 
-    Use this instead of adding a text comment — the frontend will look up
-    the commit message automatically, keeping the database lean.
+    The frontend will look up the commit message automatically, keeping the database lean.
 
     Args:
         feature_id: The ID of the feature to attach the commit to
@@ -594,41 +554,6 @@ def feature_add_commit(
     except Exception as e:
         session.rollback()
         return json.dumps({"error": str(e)})
-    finally:
-        session.close()
-
-
-@mcp.tool()
-def feature_get_comments(
-    feature_id: Annotated[int, Field(description="The ID of the feature to get comments for", ge=1)]
-) -> str:
-    """Get all comments for a feature.
-
-    Returns comments in chronological order (oldest first).
-
-    Args:
-        feature_id: The ID of the feature
-
-    Returns:
-        JSON with: comments (list of comment objects), count (int)
-    """
-    session = get_session()
-    try:
-        feature = session.query(Feature).filter(Feature.id == feature_id).first()
-        if feature is None:
-            return json.dumps({"error": f"Feature with ID {feature_id} not found"})
-
-        comments = (
-            session.query(Comment)
-            .filter(Comment.feature_id == feature_id)
-            .order_by(Comment.created_at.asc())
-            .all()
-        )
-
-        return json.dumps({
-            "comments": [c.to_dict() for c in comments],
-            "count": len(comments)
-        }, indent=2)
     finally:
         session.close()
 

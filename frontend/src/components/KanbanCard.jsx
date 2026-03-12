@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { FileText, GitCommit, MessageSquare } from 'lucide-react'
+import { FileText, GitCommit } from 'lucide-react'
 
 // Detect touch-only devices once at module load time.
 // On touch devices the HTML5 drag-and-drop API is not triggered by touch events,
@@ -31,7 +31,7 @@ function KanbanCard({
   onMobileDragStart,
   /** True while this specific card is being touch-dragged (dims the card in-place) */
   isMobileDragging = false,
-  /** Latest Claude session log text shown instead of recent_log for in-progress features */
+  /** Latest Claude session log text shown for in-progress features */
   claudeLogSnippet = null,
   /** Feature ID the snippet belongs to (only show snippet on this card) */
   claudeLogFeatureId = null,
@@ -187,27 +187,14 @@ function KanbanCard({
               </span>
             </span>
           )}
-          {feature.comment_count > 0 && (
-            <span
-              className="flex items-center gap-0.5"
-              title={`${feature.comment_count} comment${feature.comment_count !== 1 ? 's' : ''}`}
-              data-testid="comment-indicator"
-            >
-              <MessageSquare size={14} style={{ color: `${accentColor}80` }} />
-              <span className="font-mono text-xs" style={{ color: `${accentColor}80` }}>
-                {feature.comment_count}
-              </span>
-            </span>
-          )}
         </div>
       </div>
 
-      {/* Footer: recent log / claude log (left) + steps count (right) */}
+      {/* Footer: claude log (left) + steps count (right) */}
       {(() => {
         // Only show claude log snippet if this card's feature id matches
         const activeSnippet = feature.in_progress && claudeLogSnippet && feature.id === claudeLogFeatureId ? claudeLogSnippet : null
-        const displayText = activeSnippet || feature.recent_log
-        const hasFooter = displayText || (feature.steps && feature.steps.length > 0)
+        const hasFooter = activeSnippet || (feature.steps && feature.steps.length > 0)
         if (!hasFooter) return null
         return (
           <div className="flex items-center gap-2 mt-3">
@@ -218,14 +205,6 @@ function KanbanCard({
                 data-testid="claude-log-snippet"
               >
                 {activeSnippet}
-              </span>
-            ) : feature.recent_log ? (
-              <span
-                className="text-xs text-text-secondary truncate flex-1 min-w-0 italic"
-                title={feature.recent_log}
-                data-testid="recent-log"
-              >
-                {feature.recent_log}
               </span>
             ) : (
               <div className="flex-1 h-px bg-surface-light" />

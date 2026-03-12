@@ -42,9 +42,7 @@ class FeatureResponse(BaseModel):
     created_at: Optional[str] = None
     modified_at: Optional[str] = None
     completed_at: Optional[str] = None
-    comment_count: int = 0
     commit_count: int = 0
-    recent_log: Optional[str] = None
 
 
 class StatsResponse(BaseModel):
@@ -198,23 +196,6 @@ class GitUpdateResponse(BaseModel):
     """Response for POST /api/git/update."""
     push: GitOperationResult
     pull: Optional[GitOperationResult] = None
-
-
-# ---------------------------------------------------------------------------
-# Comment models
-# ---------------------------------------------------------------------------
-
-class CommentResponse(BaseModel):
-    """Comment data response."""
-    id: int
-    feature_id: int
-    content: str
-    created_at: Optional[str] = None
-
-
-class CreateCommentRequest(BaseModel):
-    """Request to add a comment to a feature."""
-    content: str
 
 
 # ---------------------------------------------------------------------------

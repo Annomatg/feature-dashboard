@@ -76,8 +76,6 @@ app = FastAPI(
     version="1.0.0"
 )
 
-from backend.routers import comments as comments_router  # noqa: E402
-app.include_router(comments_router.router)
 from backend.routers import databases as databases_router  # noqa: E402
 app.include_router(databases_router.router)
 from backend.routers import settings as settings_router  # noqa: E402

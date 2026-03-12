@@ -4,8 +4,7 @@ Unit tests for backend/deps.py shared helpers.
 
 Tests all public functions exported from deps.py:
 - get_session()
-- get_comment_counts()
-- get_recent_logs()
+- get_commit_counts()
 - feature_to_response()
 - load_settings()
 - save_settings()
@@ -26,7 +25,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import backend.deps as deps
-from api.database import Comment, Feature, create_database
+from api.database import Feature, FeatureCommit, create_database
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -77,94 +76,54 @@ def test_get_session_returns_working_session(monkeypatch, tmp_db):
         s.close()
 
 
-# ── get_comment_counts ────────────────────────────────────────────────────────
+# ── get_commit_counts ─────────────────────────────────────────────────────────
 
-def test_get_comment_counts_empty_ids(session):
+def test_get_commit_counts_empty_ids(session):
     """Returns empty dict when feature_ids is empty."""
-    result = deps.get_comment_counts(session, [])
+    result = deps.get_commit_counts(session, [])
     assert result == {}
 
 
-def test_get_comment_counts_no_comments(session):
-    """Returns zero counts when features have no comments."""
-    result = deps.get_comment_counts(session, [1, 2])
+def test_get_commit_counts_no_commits(session):
+    """Returns empty dict when features have no commits."""
+    result = deps.get_commit_counts(session, [1, 2])
     assert result == {}
 
 
-def test_get_comment_counts_with_comments(session):
-    """Returns correct comment count per feature."""
+def test_get_commit_counts_with_commits(session):
+    """Returns correct commit count per feature."""
     session.add_all([
-        Comment(feature_id=1, content="comment 1a", ),
-        Comment(feature_id=1, content="comment 1b", ),
-        Comment(feature_id=2, content="comment 2a", ),
+        FeatureCommit(feature_id=1, commit_hash="abc1234"),
+        FeatureCommit(feature_id=1, commit_hash="def5678"),
+        FeatureCommit(feature_id=2, commit_hash="ghi9012"),
     ])
     session.commit()
 
-    result = deps.get_comment_counts(session, [1, 2])
+    result = deps.get_commit_counts(session, [1, 2])
     assert result[1] == 2
     assert result[2] == 1
 
 
-def test_get_comment_counts_ignores_unknown_ids(session):
+def test_get_commit_counts_ignores_unknown_ids(session):
     """Returns only entries for IDs that actually exist."""
-    result = deps.get_comment_counts(session, [999])
+    result = deps.get_commit_counts(session, [999])
     assert result == {}
-
-
-# ── get_recent_logs ───────────────────────────────────────────────────────────
-
-def test_get_recent_logs_empty_ids(session):
-    """Returns empty dict when feature_ids is empty."""
-    result = deps.get_recent_logs(session, [])
-    assert result == {}
-
-
-def test_get_recent_logs_no_comments(session):
-    """Returns empty dict when features have no comments."""
-    result = deps.get_recent_logs(session, [1, 2])
-    assert result == {}
-
-
-def test_get_recent_logs_returns_latest(session):
-    """Returns the content of the most recent (highest id) comment per feature."""
-    session.add_all([
-        Comment(feature_id=1, content="first", ),
-        Comment(feature_id=1, content="second", ),
-    ])
-    session.commit()
-
-    result = deps.get_recent_logs(session, [1])
-    assert result[1] == "second"
 
 
 # ── feature_to_response ───────────────────────────────────────────────────────
 
-def test_feature_to_response_includes_comment_count(session):
-    """feature_to_response populates comment_count from the provided counts dict."""
+def test_feature_to_response_includes_commit_count(session):
+    """feature_to_response populates commit_count from the provided counts dict."""
     feature = session.query(Feature).filter(Feature.id == 1).first()
-    response = deps.feature_to_response(feature, {1: 5})
-    assert response.comment_count == 5
+    response = deps.feature_to_response(feature, {1: 3})
+    assert response.commit_count == 3
 
 
-def test_feature_to_response_defaults_comment_count_to_zero(session):
-    """comment_count defaults to 0 when the feature ID is absent from counts."""
+def test_feature_to_response_defaults_commit_count_to_zero(session):
+    """commit_count defaults to 0 when the feature ID is absent from counts."""
     feature = session.query(Feature).filter(Feature.id == 1).first()
-    response = deps.feature_to_response(feature, {})
-    assert response.comment_count == 0
-
-
-def test_feature_to_response_includes_recent_log(session):
-    """recent_log is populated from the provided recent_logs dict."""
-    feature = session.query(Feature).filter(Feature.id == 1).first()
-    response = deps.feature_to_response(feature, {}, {1: "last note"})
-    assert response.recent_log == "last note"
-
-
-def test_feature_to_response_recent_log_none_when_missing(session):
-    """recent_log is None when the feature ID is absent from recent_logs."""
-    feature = session.query(Feature).filter(Feature.id == 1).first()
-    response = deps.feature_to_response(feature, {})
-    assert response.recent_log is None
+    response = deps.feature_to_response(feature)
+    assert response.commit_count == 0
 
 
 # ── load_settings ─────────────────────────────────────────────────────────────

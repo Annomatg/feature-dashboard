@@ -127,6 +127,7 @@ Structure your review as follows:
 
 ## Behavioral Guidelines
 
+- Always use LSP first to find references and navigate code only fallback to search if this fails.
 - Be thorough but constructive - explain why something is an issue
 - Provide specific, actionable feedback with examples
 - Acknowledge good code when you see it
