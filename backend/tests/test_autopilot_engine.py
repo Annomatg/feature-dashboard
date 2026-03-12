@@ -104,13 +104,14 @@ class TestAutoPilotStateDefaults:
         state = _AutoPilotState()
         assert state.manual_active is False
 
-    def test_log_maxlen_is_100(self):
+    def test_log_has_no_maxlen(self):
+        """Log should grow unbounded - entries must not disappear."""
         state = _AutoPilotState()
-        # Append 120 entries; only last 100 should remain
-        for i in range(120):
+        # Append 150 entries; all should remain (no maxlen limit)
+        for i in range(150):
             _append_log(state, 'info', f"msg {i}")
-        assert len(state.log) == 100
-        assert state.log[-1].message == "msg 119"
+        assert len(state.log) == 150
+        assert state.log[-1].message == "msg 149"
 
 
 # ---------------------------------------------------------------------------

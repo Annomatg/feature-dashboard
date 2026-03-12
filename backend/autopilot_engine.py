@@ -118,7 +118,7 @@ class _AutoPilotState:
         self.current_feature_name: Optional[str] = None
         self.current_feature_model: Optional[str] = None
         self.last_error: Optional[str] = None
-        self.log: deque = deque(maxlen=100)  # LogEntry items, circular buffer
+        self.log: deque = deque()  # LogEntry items, unbounded (user wants to keep all entries)
         self.active_process = None  # subprocess.Popen handle, if any
         self.monitor_task = None  # asyncio.Task handle, if monitoring
         self.consecutive_skip_count: int = 0  # incremented when same feature is returned consecutively
