@@ -4,8 +4,7 @@ ALWAYS read the `project.json` first for tech stack, structure, key files, API e
 
 ## Development Workflow
 
-Always use LSP first to find references and navigate code only fallback to search if this fails.
-
+- **All Phases**: Always use LSP MCPs for python and typescript first to find references and navigate code only fallback to search if this fails.
 - **Review**: Always do a code review after implementation, you can do it in parallel with the tests. Use the `code-review` agent for the review.
 - **Tests**: Use `test-reporter` agent for backend; `playwright-tester` for E2E. Run them in parallel when changes in both areas happened.
 - **Commit**: Use `git-workflow` agent
